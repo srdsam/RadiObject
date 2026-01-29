@@ -1,0 +1,173 @@
+"""Dataframe - a 2D heterogeneous array backed by TileDB."""
+
+from __future__ import annotations
+
+from functools import cached_property
+
+import numpy as np
+import pandas as pd
+import tiledb
+
+from src.ctx import ctx as global_ctx, get_config
+
+# Mandatory index columns for all Dataframes
+INDEX_COLUMNS = ("obs_subject_id", "obs_id")
+
+
+class Dataframe:
+    """A TileDB-backed sparse dataframe indexed by obs_subject_id and obs_id."""
+
+    def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
+        self.uri: str = uri
+        self._ctx: tiledb.Ctx | None = ctx
+
+    def _effective_ctx(self) -> tiledb.Ctx:
+        return self._ctx if self._ctx else global_ctx()
+
+    @cached_property
+    def _schema(self) -> tiledb.ArraySchema:
+        """Cached schema loaded once from disk."""
+        return tiledb.ArraySchema.load(self.uri, ctx=self._effective_ctx())
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """(n_rows, n_columns) dimensions."""
+        with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
+            n_rows = arr.nonempty_domain()[0][1] if arr.nonempty_domain()[0] else 0
+            if isinstance(n_rows, str):
+                n_rows = len(arr.query(attrs=[])[:][INDEX_COLUMNS[0]])
+        n_cols = self._schema.nattr
+        return (n_rows, n_cols)
+
+    @property
+    def index_columns(self) -> tuple[str, str]:
+        """Index column names (dimension names)."""
+        return INDEX_COLUMNS
+
+    @property
+    def columns(self) -> list[str]:
+        """Attribute column names (excluding index columns)."""
+        return [self._schema.attr(i).name for i in range(self._schema.nattr)]
+
+    @property
+    def all_columns(self) -> list[str]:
+        """All column names including index columns."""
+        return list(INDEX_COLUMNS) + self.columns
+
+    @property
+    def dtypes(self) -> dict[str, np.dtype]:
+        """Column data types (attributes only)."""
+        return {self._schema.attr(i).name: self._schema.attr(i).dtype for i in range(self._schema.nattr)}
+
+    def __len__(self) -> int:
+        with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
+            result = arr.query(attrs=[])[:][INDEX_COLUMNS[0]]
+            return len(result)
+
+    def __repr__(self) -> str:
+        return f"Dataframe(uri={self.uri!r}, shape={self.shape}, columns={self.columns})"
+
+    def read(
+        self,
+        columns: list[str] | None = None,
+        value_filter: str | None = None,
+        include_index: bool = True,
+    ) -> pd.DataFrame:
+        """Read data with optional column selection and value filtering."""
+        # Filter out index columns from requested columns (they're dimensions, not attributes)
+        if columns is not None:
+            attrs = [c for c in columns if c not in INDEX_COLUMNS]
+        else:
+            attrs = self.columns
+        with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
+            if value_filter is not None:
+                result = arr.query(cond=value_filter, attrs=attrs)[:]
+            else:
+                result = arr.query(attrs=attrs)[:]
+        data = {col: result[col] for col in attrs}
+        if include_index:
+            for idx_col in INDEX_COLUMNS:
+                # Convert bytes to strings for index columns
+                raw = result[idx_col]
+                data[idx_col] = np.array([v.decode() if isinstance(v, bytes) else str(v) for v in raw])
+        df = pd.DataFrame(data)
+        if include_index:
+            col_order = list(INDEX_COLUMNS) + attrs
+            df = df[col_order]
+        return df
+
+    @staticmethod
+    def _validate_schema(schema: dict[str, np.dtype]) -> None:
+        """Validate column names and types (for non-index attributes)."""
+        for name, dtype in schema.items():
+            if "\x00" in name:
+                raise ValueError(f"Column name contains null byte: {name!r}")
+            if name in INDEX_COLUMNS:
+                raise ValueError(f"Column name conflicts with index column: {name!r}")
+            if not isinstance(dtype, np.dtype):
+                try:
+                    np.dtype(dtype)
+                except TypeError as e:
+                    raise TypeError(f"Invalid dtype for column {name!r}: {dtype}") from e
+
+    @classmethod
+    def create(
+        cls,
+        uri: str,
+        schema: dict[str, np.dtype],
+        ctx: tiledb.Ctx | None = None,
+    ) -> Dataframe:
+        """Create an empty sparse Dataframe indexed by obs_subject_id and obs_id."""
+        cls._validate_schema(schema)
+        effective_ctx = ctx if ctx else global_ctx()
+
+        dims = [
+            tiledb.Dim(name=INDEX_COLUMNS[0], dtype="ascii", ctx=effective_ctx),
+            tiledb.Dim(name=INDEX_COLUMNS[1], dtype="ascii", ctx=effective_ctx),
+        ]
+        domain = tiledb.Domain(*dims, ctx=effective_ctx)
+
+        config = get_config()
+        compression_filter = config.compression.as_filter()
+        compression = tiledb.FilterList([compression_filter]) if compression_filter else tiledb.FilterList()
+        attrs = [
+            tiledb.Attr(name=name, dtype=dtype, filters=compression, ctx=effective_ctx)
+            for name, dtype in schema.items()
+        ]
+
+        array_schema = tiledb.ArraySchema(
+            domain=domain,
+            attrs=attrs,
+            sparse=True,
+            ctx=effective_ctx,
+        )
+        tiledb.Array.create(uri, array_schema, ctx=effective_ctx)
+
+        return cls(uri, ctx=ctx)
+
+    @classmethod
+    def from_pandas(
+        cls,
+        uri: str,
+        df: pd.DataFrame,
+        ctx: tiledb.Ctx | None = None,
+    ) -> Dataframe:
+        """Create a new Dataframe from a pandas DataFrame with obs_subject_id and obs_id columns."""
+        for idx_col in INDEX_COLUMNS:
+            if idx_col not in df.columns:
+                raise ValueError(f"DataFrame must contain index column: {idx_col!r}")
+
+        attr_cols = [col for col in df.columns if col not in INDEX_COLUMNS]
+        schema = {col: df[col].to_numpy().dtype for col in attr_cols}
+        dataframe = cls.create(uri, schema=schema, ctx=ctx)
+
+        effective_ctx = ctx if ctx else global_ctx()
+        with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
+            coords = {
+                INDEX_COLUMNS[0]: df[INDEX_COLUMNS[0]].astype(str).to_numpy(),
+                INDEX_COLUMNS[1]: df[INDEX_COLUMNS[1]].astype(str).to_numpy(),
+            }
+            data = {col: df[col].to_numpy() for col in attr_cols}
+            arr[coords[INDEX_COLUMNS[0]], coords[INDEX_COLUMNS[1]]] = data
+
+        return dataframe

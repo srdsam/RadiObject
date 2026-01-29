@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.vscode
+.pytest_cache
+.ruff_cache
+
+# Virtual environments
+.venv
+
+# Claude
+.claude
+
+# Test data (S3 is source of truth, synced locally)
+test/data/nifti/
+test/data/dicom/
+data/
+
+# Local cache directory
+.cache/radiobject/
