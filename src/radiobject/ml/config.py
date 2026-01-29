@@ -19,7 +19,6 @@ class CacheStrategy(str, Enum):
 
     NONE = "none"
     IN_MEMORY = "in_memory"
-    DISK = "disk"
 
 
 class DatasetConfig(BaseModel):

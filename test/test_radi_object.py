@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 import tiledb
 
-from src.radi_object import RadiObject, RadiObjectView
-from src.volume_collection import VolumeCollection
+from radiobject.radi_object import RadiObject, RadiObjectView
+from radiobject.volume_collection import VolumeCollection
 
 
 class TestRadiObjectCreate:
@@ -207,6 +207,59 @@ class TestRadiObjectProperties:
     def test_len(self, populated_radi_object_module: RadiObject):
         """len(radi) returns number of subjects."""
         assert len(populated_radi_object_module) == 3
+
+
+class TestRadiObjectIndex:
+    """Tests for RadiObject.index property."""
+
+    def test_index_get_index(self, populated_radi_object_module: RadiObject):
+        """index.get_index() maps obs_subject_id to integer index."""
+        for i, subject_id in enumerate(populated_radi_object_module.obs_subject_ids):
+            assert populated_radi_object_module.index.get_index(subject_id) == i
+
+    def test_index_get_key(self, populated_radi_object_module: RadiObject):
+        """index.get_key() maps integer index to obs_subject_id."""
+        for i, expected_id in enumerate(populated_radi_object_module.obs_subject_ids):
+            assert populated_radi_object_module.index.get_key(i) == expected_id
+
+    def test_index_keys(self, populated_radi_object_module: RadiObject):
+        """index.keys returns tuple of all obs_subject_ids."""
+        assert populated_radi_object_module.index.keys == tuple(
+            populated_radi_object_module.obs_subject_ids
+        )
+
+    def test_index_len(self, populated_radi_object_module: RadiObject):
+        """len(index) returns number of subjects."""
+        assert len(populated_radi_object_module.index) == 3
+
+    def test_index_contains(self, populated_radi_object_module: RadiObject):
+        """'obs_subject_id' in index works correctly."""
+        first_id = populated_radi_object_module.obs_subject_ids[0]
+        assert first_id in populated_radi_object_module.index
+        assert "NONEXISTENT" not in populated_radi_object_module.index
+
+    def test_index_roundtrip(self, populated_radi_object_module: RadiObject):
+        """Roundtrip: index.get_key(index.get_index(id)) == id."""
+        first_id = populated_radi_object_module.index.keys[0]
+        idx = populated_radi_object_module.index.get_index(first_id)
+        assert populated_radi_object_module.index.get_key(idx) == first_id
+
+
+class TestRadiObjectObsRowRetrieval:
+    """Tests for get_obs_row_by_obs_subject_id method."""
+
+    def test_get_obs_row_by_obs_subject_id(self, populated_radi_object_module: RadiObject):
+        """Get obs_meta row by obs_subject_id string."""
+        subject_id = populated_radi_object_module.obs_subject_ids[1]
+        row = populated_radi_object_module.get_obs_row_by_obs_subject_id(subject_id)
+        assert row["obs_subject_id"].iloc[0] == subject_id
+
+    def test_get_obs_row_by_index_pattern(self, populated_radi_object_module: RadiObject):
+        """Get obs_meta row by integer index using index.get_key() pattern."""
+        subject_id = populated_radi_object_module.index.get_key(0)
+        row = populated_radi_object_module.get_obs_row_by_obs_subject_id(subject_id)
+        assert "obs_subject_id" in row.columns
+        assert row["obs_subject_id"].iloc[0] == populated_radi_object_module.obs_subject_ids[0]
 
 
 class TestRadiObjectViewFiltering:

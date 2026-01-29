@@ -17,11 +17,11 @@ import tiledb
 
 from data import get_test_data_path
 from data.sync import get_manifest
-from src.volume import Volume
-from src.volume_collection import VolumeCollection
+from radiobject.volume import Volume
+from radiobject.volume_collection import VolumeCollection
 
 if TYPE_CHECKING:
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
 
 # ----- Constants -----
@@ -373,7 +373,7 @@ def populated_radi_object(
     nifti_manifest: list[dict],
 ) -> "RadiObject":
     """Pre-created RadiObject with 3 subjects and 4 modalities from real data."""
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
     uri = str(temp_dir / "populated_radi_object")
     subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
@@ -395,7 +395,7 @@ def populated_radi_object_module(
     volume_collections_module: dict[str, VolumeCollection],
 ) -> "RadiObject":
     """Module-scoped: Pre-created RadiObject with 3 subjects and 4 modalities."""
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
     manifest = _get_manifest("nifti")
     uri = str(temp_dir_module / "populated_radi_object")
@@ -478,7 +478,7 @@ def populated_radi_object_param(
     tiledb_ctx: tiledb.Ctx | None,
 ) -> "RadiObject":
     """Pre-created RadiObject parameterized by storage backend."""
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
     uri = f"{test_base_uri}/populated_radi_object"
     subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
@@ -527,7 +527,7 @@ def prebuilt_radiobject() -> "RadiObject | None":
         return None
 
     try:
-        from src.radi_object import RadiObject
+        from radiobject.radi_object import RadiObject
         vfs = tiledb.VFS(ctx=ctx)
         if not vfs.is_dir(uri):
             return None

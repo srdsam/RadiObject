@@ -8,10 +8,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.query import Query, CollectionQuery, QueryCount, VolumeBatch
-from src.radi_object import RadiObject, RadiObjectView
-from src.volume_collection import VolumeCollection
-from src.volume import Volume
+from radiobject.query import Query, CollectionQuery, QueryCount, VolumeBatch
+from radiobject.radi_object import RadiObject, RadiObjectView
+from radiobject.volume_collection import VolumeCollection
+from radiobject.volume import Volume
 
 
 class TestQueryCreation:

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.dataframe import Dataframe, INDEX_COLUMNS
+from radiobject.dataframe import Dataframe, INDEX_COLUMNS
 
 
 @pytest.fixture

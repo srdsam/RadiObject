@@ -11,13 +11,13 @@ import numpy.typing as npt
 import pandas as pd
 import tiledb
 
-from src.ctx import ctx as global_ctx
-from src.dataframe import Dataframe
-from src.volume import Volume
+from radiobject.ctx import ctx as global_ctx
+from radiobject.dataframe import Dataframe
+from radiobject.volume import Volume
 
 if TYPE_CHECKING:
-    from src.radi_object import RadiObject
-    from src.volume_collection import VolumeCollection
+    from radiobject.radi_object import RadiObject
+    from radiobject.volume_collection import VolumeCollection
 
 
 @dataclass
@@ -345,7 +345,7 @@ class RadiObjectWriter:
 
     def finalize(self) -> RadiObject:
         """Finalize and return the created RadiObject."""
-        from src.radi_object import RadiObject
+        from radiobject.radi_object import RadiObject
 
         if not self._finalized:
             self.__exit__(None, None, None)

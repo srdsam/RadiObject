@@ -8,12 +8,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from ml.cache import BaseCache, InMemoryCache, NoOpCache
-from ml.config import CacheStrategy, DatasetConfig, LoadingMode
-from ml.reader import VolumeReader
+from radiobject.ml.cache import BaseCache, InMemoryCache, NoOpCache
+from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.reader import VolumeReader
 
 if TYPE_CHECKING:
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
 
 class RadiObjectDataset(Dataset):

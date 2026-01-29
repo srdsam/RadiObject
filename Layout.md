@@ -5,33 +5,15 @@ RadiObject/
 ├── .gitignore
 ├── .python-version
 ├── CLAUDE.md
+├── LICENSE
 ├── Lexicon.md
 ├── Performance.md
-├── ReadMe.md
+├── README.md
 ├── pyproject.toml
 ├── uv.lock
 ├── assets/
 │   └── benchmark/
 │       └── .gitkeep
-├── ml/
-│   ├── __init__.py
-│   ├── cache.py
-│   ├── config.py
-│   ├── distributed.py
-│   ├── factory.py
-│   ├── reader.py
-│   ├── datasets/
-│   │   ├── __init__.py
-│   │   ├── multimodal.py
-│   │   ├── patch_dataset.py
-│   │   └── volume_dataset.py
-│   ├── transforms/
-│   │   ├── __init__.py
-│   │   ├── intensity.py
-│   │   └── spatial.py
-│   └── utils/
-│       ├── __init__.py
-│       └── worker_init.py
 ├── notebooks/
 │   ├── config.py
 │   ├── 00_ingest_brats.ipynb
@@ -43,21 +25,45 @@ RadiObject/
 │   ├── 06_ml_training.ipynb
 │   └── framework_benchmark.ipynb
 ├── src/
-│   ├── ctx.py
-│   ├── dataframe.py
-│   ├── imaging_metadata.py
-│   ├── indexing.py
-│   ├── orientation.py
-│   ├── parallel.py
-│   ├── query.py
-│   ├── radi_object.py
-│   ├── streaming.py
-│   ├── utils.py
-│   ├── volume.py
-│   └── volume_collection.py
+│   └── radiobject/
+│       ├── __init__.py
+│       ├── py.typed
+│       ├── ctx.py
+│       ├── dataframe.py
+│       ├── imaging_metadata.py
+│       ├── indexing.py
+│       ├── orientation.py
+│       ├── parallel.py
+│       ├── query.py
+│       ├── radi_object.py
+│       ├── streaming.py
+│       ├── utils.py
+│       ├── volume.py
+│       ├── volume_collection.py
+│       └── ml/
+│           ├── __init__.py
+│           ├── cache.py
+│           ├── config.py
+│           ├── distributed.py
+│           ├── factory.py
+│           ├── reader.py
+│           ├── datasets/
+│           │   ├── __init__.py
+│           │   ├── multimodal.py
+│           │   ├── patch_dataset.py
+│           │   └── volume_dataset.py
+│           ├── transforms/
+│           │   ├── __init__.py
+│           │   ├── intensity.py
+│           │   └── spatial.py
+│           └── utils/
+│               ├── __init__.py
+│               └── worker_init.py
 └── test/
     ├── __init__.py
     ├── conftest.py
+    ├── data/
+    │   └── __init__.py
     ├── test_append.py
     ├── test_dataframe.py
     ├── test_from_niftis.py

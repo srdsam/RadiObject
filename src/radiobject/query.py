@@ -28,12 +28,12 @@ import numpy.typing as npt
 import pandas as pd
 import tiledb
 
-from src.ctx import ctx as global_ctx
-from src.volume import Volume
+from radiobject.ctx import ctx as global_ctx
+from radiobject.volume import Volume
 
 if TYPE_CHECKING:
-    from src.radi_object import RadiObject
-    from src.volume_collection import VolumeCollection
+    from radiobject.radi_object import RadiObject
+    from radiobject.volume_collection import VolumeCollection
 
 
 @dataclass(frozen=True)
@@ -151,7 +151,7 @@ class Query:
         else:
             raise TypeError(f"iloc key must be int, slice, list[int], or bool array")
 
-        ids = [self._source.index_to_obs_subject_id(i) for i in indices]
+        ids = [self._source._index.get_key(i) for i in indices]
         return self.filter_subjects(ids)
 
     def loc(self, key: str | Sequence[str]) -> Query:
@@ -407,7 +407,7 @@ class Query:
             streaming: Use streaming writer for memory efficiency (default: True)
             ctx: TileDB context
         """
-        from src.radi_object import RadiObjectView
+        from radiobject.radi_object import RadiObjectView
 
         subject_mask = self._resolve_final_subject_mask()
         output_collections = self._resolve_output_collections()
@@ -499,7 +499,7 @@ class CollectionQuery:
         n = len(self._source)
         if isinstance(key, int):
             idx = key if key >= 0 else n + key
-            obs_id = self._source.index_to_obs_id(idx)
+            obs_id = self._source._index.get_key(idx)
             return self._copy(volume_ids=frozenset([obs_id]))
         elif isinstance(key, slice):
             indices = list(range(*key.indices(n)))
@@ -510,7 +510,7 @@ class CollectionQuery:
         else:
             raise TypeError(f"iloc key must be int, slice, list[int], or bool array")
 
-        obs_ids = frozenset(self._source.index_to_obs_id(i) for i in indices)
+        obs_ids = frozenset(self._source._index.get_key(i) for i in indices)
         new_ids = obs_ids
         if self._volume_ids is not None:
             new_ids = self._volume_ids & obs_ids
@@ -605,7 +605,7 @@ class CollectionQuery:
         ctx: tiledb.Ctx | None = None,
     ) -> VolumeCollection:
         """Materialize query results as a new VolumeCollection."""
-        from src.streaming import StreamingWriter
+        from radiobject.streaming import StreamingWriter
 
         volume_mask = self._resolve_volume_mask()
         if not volume_mask:

@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ml.config import CacheStrategy, DatasetConfig, LoadingMode
-from ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 
 if TYPE_CHECKING:
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
 
 @pytest.fixture(scope="module")

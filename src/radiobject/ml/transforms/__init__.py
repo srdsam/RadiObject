@@ -2,8 +2,8 @@
 
 from typing import Any, Callable, Sequence
 
-from ml.transforms.intensity import IntensityNormalize, RandomNoise, WindowLevel
-from ml.transforms.spatial import RandomCrop3D, RandomFlip3D, Resample3D
+from radiobject.ml.transforms.intensity import IntensityNormalize, RandomNoise, WindowLevel
+from radiobject.ml.transforms.spatial import RandomCrop3D, RandomFlip3D, Resample3D
 
 
 class Compose:

@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import tiledb
 
-from src.parallel import create_worker_ctx
-from src.volume import Volume
+from radiobject.parallel import create_worker_ctx
+from radiobject.volume import Volume
 
 if TYPE_CHECKING:
-    from src.volume_collection import VolumeCollection
+    from radiobject.volume_collection import VolumeCollection
 
 _PROCESS_CTX_CACHE: dict[tuple[int, str], tiledb.Ctx] = {}
 _CTX_LOCK = threading.Lock()

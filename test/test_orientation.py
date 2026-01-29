@@ -10,7 +10,7 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 import tiledb
 
-from src.orientation import (
+from radiobject.orientation import (
     OrientationInfo,
     detect_dicom_orientation,
     detect_nifti_orientation,
@@ -19,7 +19,7 @@ from src.orientation import (
     orientation_info_to_metadata,
     reorient_to_canonical,
 )
-from src.volume import Volume
+from radiobject.volume import Volume
 
 
 # ----- Test Helpers for Synthetic Orientation Data -----

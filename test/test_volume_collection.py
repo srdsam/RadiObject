@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.volume import Volume
-from src.volume_collection import VolumeCollection
+from radiobject.volume import Volume
+from radiobject.volume_collection import VolumeCollection
 
 
 class TestVolumeCollectionCreate:
@@ -73,7 +73,7 @@ class TestVolumeCollectionFromVolumes:
         collection = VolumeCollection._from_volumes(uri, volumes, obs_data=obs_df)
 
         assert "age" in collection.obs.columns
-        obs_id = collection.index_to_obs_id(0)
+        obs_id = collection.index.get_key(0)
         row = collection.get_obs_row_by_obs_id(obs_id)
         assert row["age"].iloc[0] == 45
 
@@ -217,18 +217,34 @@ class TestVolumeCollectionGetitem:
             populated_collection_module[1.5]
 
 
-class TestVolumeCollectionObsIdMapping:
-    """Tests for obs_id <-> index mapping."""
+class TestVolumeCollectionIndex:
+    """Tests for index property."""
 
-    def test_obs_id_to_index(self, populated_collection_module: VolumeCollection):
-        """Map obs_id to integer index."""
+    def test_index_get_index(self, populated_collection_module: VolumeCollection):
+        """index.get_index() maps obs_id to integer index."""
         for i, obs_id in enumerate(populated_collection_module.obs_ids):
-            assert populated_collection_module.obs_id_to_index(obs_id) == i
+            assert populated_collection_module.index.get_index(obs_id) == i
 
-    def test_index_to_obs_id(self, populated_collection_module: VolumeCollection):
-        """Map integer index to obs_id."""
+    def test_index_get_key(self, populated_collection_module: VolumeCollection):
+        """index.get_key() maps integer index to obs_id."""
         for i, expected_obs_id in enumerate(populated_collection_module.obs_ids):
-            assert populated_collection_module.index_to_obs_id(i) == expected_obs_id
+            assert populated_collection_module.index.get_key(i) == expected_obs_id
+
+    def test_index_keys(self, populated_collection_module: VolumeCollection):
+        """index.keys returns tuple of all obs_ids."""
+        assert populated_collection_module.index.keys == tuple(
+            populated_collection_module.obs_ids
+        )
+
+    def test_index_len(self, populated_collection_module: VolumeCollection):
+        """len(index) returns number of volumes."""
+        assert len(populated_collection_module.index) == 3
+
+    def test_index_contains(self, populated_collection_module: VolumeCollection):
+        """'obs_id' in index works correctly."""
+        first_obs_id = populated_collection_module.obs_ids[0]
+        assert first_obs_id in populated_collection_module.index
+        assert "NONEXISTENT" not in populated_collection_module.index
 
 
 class TestVolumeCollectionObsRows:
@@ -241,8 +257,8 @@ class TestVolumeCollectionObsRows:
         assert row["obs_id"].iloc[0] == obs_id
 
     def test_get_obs_row_by_index_pattern(self, populated_collection_module: VolumeCollection):
-        """Get obs row by integer index using index_to_obs_id pattern."""
-        obs_id = populated_collection_module.index_to_obs_id(0)
+        """Get obs row by integer index using index.get_key() pattern."""
+        obs_id = populated_collection_module.index.get_key(0)
         row = populated_collection_module.get_obs_row_by_obs_id(obs_id)
         assert "obs_id" in row.columns
         assert row["obs_id"].iloc[0] == populated_collection_module.obs_ids[0]

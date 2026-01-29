@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from src.parallel import create_worker_ctx
+from radiobject.parallel import create_worker_ctx
 
 
 def worker_init_fn(worker_id: int) -> None:

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import tiledb
 
-from src.ctx import ctx as global_ctx, get_config
+from radiobject.ctx import ctx as global_ctx, get_config
 
 # Mandatory index columns for all Dataframes
 INDEX_COLUMNS = ("obs_subject_id", "obs_id")

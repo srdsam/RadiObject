@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING
 import torch
 import torch.nn as nn
 
-from ml.config import DatasetConfig, LoadingMode
-from ml.datasets.multimodal import MultiModalDataset
-from ml.datasets.volume_dataset import RadiObjectDataset
-from ml.factory import create_training_dataloader
-from ml.transforms import IntensityNormalize
+from radiobject.ml.config import DatasetConfig, LoadingMode
+from radiobject.ml.datasets.multimodal import MultiModalDataset
+from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.factory import create_training_dataloader
+from radiobject.ml.transforms import IntensityNormalize
 
 if TYPE_CHECKING:
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
 
 class SimpleCNN(nn.Module):

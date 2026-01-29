@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 import tiledb
 
-from src.ctx import SliceOrientation, configure, TileConfig
-from src.volume import Volume
+from radiobject.ctx import SliceOrientation, configure, TileConfig
+from radiobject.volume import Volume
 
 
 class TestVolumeConstruction:

@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING, Any, Callable
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from ml.config import CacheStrategy, DatasetConfig, LoadingMode
-from ml.datasets.volume_dataset import RadiObjectDataset
-from ml.utils.worker_init import worker_init_fn
+from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.utils.worker_init import worker_init_fn
 
 if TYPE_CHECKING:
-    from src.radi_object import RadiObject
+    from radiobject.radi_object import RadiObject
 
 
 def create_distributed_dataloader(

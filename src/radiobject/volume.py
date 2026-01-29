@@ -9,8 +9,8 @@ import nibabel as nib
 import numpy as np
 import tiledb
 
-from src.ctx import ctx as global_ctx, get_config, SliceOrientation
-from src.orientation import (
+from radiobject.ctx import ctx as global_ctx, get_config, SliceOrientation
+from radiobject.orientation import (
     OrientationInfo,
     detect_dicom_orientation,
     detect_nifti_orientation,

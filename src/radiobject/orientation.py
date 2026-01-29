@@ -10,7 +10,7 @@ import nibabel as nib
 import numpy as np
 from pydantic import BaseModel, Field
 
-from src.utils import affine_to_list
+from radiobject.utils import affine_to_list
 
 
 class OrientationInfo(BaseModel):

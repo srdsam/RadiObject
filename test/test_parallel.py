@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.parallel import WriteResult, create_worker_ctx, map_on_threads
-from src.volume import Volume
-from src.volume_collection import VolumeCollection
+from radiobject.parallel import WriteResult, create_worker_ctx, map_on_threads
+from radiobject.volume import Volume
+from radiobject.volume_collection import VolumeCollection
 
 
 class TestMapOnThreads:
@@ -149,7 +149,7 @@ class TestParallelVolumeWrites:
         )
 
         assert "age" in collection.obs.columns
-        obs_id = collection.index_to_obs_id(1)
+        obs_id = collection.index.get_key(1)
         row = collection.get_obs_row_by_obs_id(obs_id)
         assert row["age"].iloc[0] == 52
         assert row["diagnosis"].iloc[0] == "tumor"

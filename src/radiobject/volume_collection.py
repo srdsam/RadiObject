@@ -11,21 +11,21 @@ import numpy.typing as npt
 import pandas as pd
 import tiledb
 
-from src.ctx import ctx as global_ctx
-from src.dataframe import Dataframe
-from src.imaging_metadata import (
+from radiobject.ctx import ctx as global_ctx
+from radiobject.dataframe import Dataframe
+from radiobject.imaging_metadata import (
     NiftiMetadata,
     DicomMetadata,
     extract_nifti_metadata,
     extract_dicom_metadata,
     infer_series_type,
 )
-from src.indexing import Index
-from src.parallel import WriteResult, create_worker_ctx, map_on_threads
-from src.volume import Volume
+from radiobject.indexing import Index
+from radiobject.parallel import WriteResult, create_worker_ctx, map_on_threads
+from radiobject.volume import Volume
 
 if TYPE_CHECKING:
-    from src.query import CollectionQuery
+    from radiobject.query import CollectionQuery
 
 
 def _normalize_index(idx: int, length: int) -> int:
@@ -157,6 +157,17 @@ class VolumeCollection:
         return Index.build(list(obs_data["obs_id"]))
 
     @property
+    def index(self) -> Index:
+        """Volume index for bidirectional ID/position lookups.
+
+        Provides pandas-like index access:
+            vc.index.get_index("obs-123")  # ID to position
+            vc.index.get_key(0)            # position to ID
+            vc.index.keys                  # all obs_ids
+        """
+        return self._index
+
+    @property
     def name(self) -> str | None:
         """Collection name (if set during creation)."""
         return self._metadata.get("name")
@@ -218,14 +229,6 @@ class VolumeCollection:
                 return self.loc[key]
         raise TypeError(f"Key must be int, str, slice, or list, got {type(key)}")
 
-    def obs_id_to_index(self, obs_id: str) -> int:
-        """Map obs_id to integer index."""
-        return self._index.get_index(obs_id)
-
-    def index_to_obs_id(self, idx: int) -> str:
-        """Map integer index to obs_id."""
-        return self._index.get_key(idx)
-
     def validate(self) -> None:
         """Validate internal consistency of the VolumeCollection."""
         obs_data = self.obs.read()
@@ -275,7 +278,7 @@ class VolumeCollection:
             for vol in high_res.iter_volumes():
                 process(vol)
         """
-        from src.query import CollectionQuery
+        from radiobject.query import CollectionQuery
 
         return CollectionQuery(self)
 

@@ -10,8 +10,8 @@ import pytest
 import nibabel as nib
 
 from data import get_test_data_path
-from src.radi_object import RadiObject
-from src.volume_collection import VolumeCollection
+from radiobject.radi_object import RadiObject
+from radiobject.volume_collection import VolumeCollection
 
 
 DATA_DIR = get_test_data_path()

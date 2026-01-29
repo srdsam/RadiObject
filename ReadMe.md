@@ -4,7 +4,7 @@
 
 **Why?** The two standard formats for radiology data (NIfTI and DICOM) are challenging to use for analysis at scale. They must be read from local disk and don't fully support partial reads. 
 
-**Why TileDB?** TileDB supports cloud-native object stores, partial reads, and a hierarchical format (for organising multiple volumes into an atlas).
+**Why TileDB?** TileDB supports cloud-native object stores, partial reads, and a hierarchical format (for organising multiple volumes into an atlas). *The limitation being, transform/filter operations are less smooth UX given that the in-memory TileDB data is tied directly to the on-disk TileDB data.*
 
 ## Design
 
@@ -67,7 +67,8 @@ The TileDB entities are a public property of each given entity. This allows dire
 RadiObject uses a global configuration pattern to manage TileDB settings. The context is lazily built from configuration and automatically invalidated when settings change. It is important to optimize the context for a given usecase.
 
 ```python
-from src.ctx import ctx, configure, TileConfig, SliceOrientation
+from radiobject import ctx, configure
+from radiobject.ctx import TileConfig, SliceOrientation
 
 # Use defaults
 array = tiledb.open(uri, ctx=ctx())

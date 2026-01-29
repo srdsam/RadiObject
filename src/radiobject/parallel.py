@@ -9,7 +9,7 @@ from typing import TypeVar
 
 import tiledb
 
-from src.ctx import get_config
+from radiobject.ctx import get_config
 
 T = TypeVar("T")
 R = TypeVar("R")

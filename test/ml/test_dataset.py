@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from ml.cache import InMemoryCache
-from ml.config import DatasetConfig, LoadingMode
-from ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.cache import InMemoryCache
+from radiobject.ml.config import DatasetConfig, LoadingMode
+from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 
 
 class TestRadiObjectDataset:

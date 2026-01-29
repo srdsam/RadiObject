@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.streaming import StreamingWriter, RadiObjectWriter
-from src.radi_object import RadiObject
-from src.volume_collection import VolumeCollection
+from radiobject.streaming import StreamingWriter, RadiObjectWriter
+from radiobject.radi_object import RadiObject
+from radiobject.volume_collection import VolumeCollection
 
 
 class TestStreamingWriterBasic:

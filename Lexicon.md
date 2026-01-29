@@ -439,6 +439,8 @@ Where:
 
 | Term | Definition |
 |------|------------|
+| **index** | Public property exposing the bidirectional Index for ID/position lookups (e.g., `radi.index.get_index("sub-01")`, `radi.index.get_key(0)`, `radi.index.keys`) |
+| **Index** | Immutable dataclass providing bidirectional mapping between string IDs and integer positions. Methods: `get_index(key)`, `get_key(idx)`, `keys` property |
 | **iloc** | Integer-location based indexer for selecting subjects (RadiObject) or volumes (VolumeCollection) by position |
 | **loc** | Label-based indexer for selecting by obs_subject_id (RadiObject) or obs_id (VolumeCollection) |
 | **boolean mask indexing** | Filtering using a numpy boolean array (e.g., `radi.iloc[mask]` where mask is `np.ndarray[bool]`) |
@@ -447,6 +449,8 @@ Where:
 | **tail()** | Return view of last n subjects |
 | **sample()** | Return view of n randomly sampled subjects with optional seed for reproducibility |
 | **select_collections()** | Filter RadiObject or RadiObjectView to include only specified collections |
+| **get_obs_row_by_obs_subject_id()** | Retrieve obs_meta row by subject ID (RadiObject) |
+| **get_obs_row_by_obs_id()** | Retrieve obs row by volume ID (VolumeCollection) |
 
 ### RadiObject Query Builder (Pipeline Mode)
 
@@ -535,6 +539,9 @@ Where:
 | **worker_init_fn** | DataLoader worker initializer that creates per-worker TileDB contexts |
 | **create_training_dataloader** | Factory function producing configured DataLoader with shuffle, pin_memory, persistent_workers |
 | **create_distributed_dataloader** | Factory for DDP-compatible DataLoader with DistributedSampler |
+| **patches_per_volume** | Number of random patches extracted per volume per epoch (default: 1) |
+| **persistent_workers** | DataLoader setting to keep worker processes alive between epochs for faster iteration |
+| **pin_memory** | DataLoader setting to copy tensors into CUDA pinned memory for faster GPU transfer |
 
 ### RadiObject Orientation Terminology
 

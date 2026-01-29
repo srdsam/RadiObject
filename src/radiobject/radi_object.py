@@ -13,20 +13,20 @@ import numpy.typing as npt
 import pandas as pd
 import tiledb
 
-from src.ctx import ctx as global_ctx
-from src.dataframe import Dataframe
-from src.imaging_metadata import (
+from radiobject.ctx import ctx as global_ctx
+from radiobject.dataframe import Dataframe
+from radiobject.imaging_metadata import (
     extract_nifti_metadata,
     extract_dicom_metadata,
     infer_series_type,
 )
-from src.indexing import Index
-from src.parallel import WriteResult, create_worker_ctx, map_on_threads
-from src.volume import Volume
-from src.volume_collection import VolumeCollection, _normalize_index
+from radiobject.indexing import Index
+from radiobject.parallel import WriteResult, create_worker_ctx, map_on_threads
+from radiobject.volume import Volume
+from radiobject.volume_collection import VolumeCollection, _normalize_index
 
 if TYPE_CHECKING:
-    from src.query import Query
+    from radiobject.query import Query
 
 
 class _SubjectILocIndexer:
@@ -129,17 +129,26 @@ class RadiObject:
         return Index.build(list(data["obs_subject_id"]))
 
     @property
+    def index(self) -> Index:
+        """Subject index for bidirectional ID/position lookups.
+
+        Provides pandas-like index access:
+            radi.index.get_index("sub-01")  # ID to position
+            radi.index.get_key(0)           # position to ID
+            radi.index.keys                 # all subject IDs
+        """
+        return self._index
+
+    @property
     def obs_subject_ids(self) -> list[str]:
         """All obs_subject_id values in index order."""
         return list(self._index.keys)
 
-    def obs_subject_id_to_index(self, obs_subject_id: str) -> int:
-        """Map obs_subject_id to integer index."""
-        return self._index.get_index(obs_subject_id)
-
-    def index_to_obs_subject_id(self, idx: int) -> str:
-        """Map integer index to obs_subject_id."""
-        return self._index.get_key(idx)
+    def get_obs_row_by_obs_subject_id(self, obs_subject_id: str) -> pd.DataFrame:
+        """Get obs_meta row by obs_subject_id string identifier."""
+        df = self.obs_meta.read()
+        filtered = df[df["obs_subject_id"] == obs_subject_id].reset_index(drop=True)
+        return filtered
 
     # ===== VolumeCollections =====
 
@@ -211,7 +220,7 @@ class RadiObject:
                 .to_radi_object("s3://bucket/subset", streaming=True)
             )
         """
-        from src.query import Query
+        from radiobject.query import Query
 
         return Query(self)
 
@@ -219,7 +228,7 @@ class RadiObject:
 
     def _filter_by_indices(self, indices: list[int]) -> RadiObjectView:
         """Create a view filtered to specific subject indices."""
-        subject_ids = [self.index_to_obs_subject_id(i) for i in indices]
+        subject_ids = [self._index.get_key(i) for i in indices]
         return RadiObjectView(
             source=self,
             obs_subject_ids=subject_ids,
@@ -995,7 +1004,7 @@ class RadiObjectView:
             query = view.to_query()  # Bridge to pipeline mode
             new_radi = query.filter("age > 40").to_radi_object("...", streaming=True)
         """
-        from src.query import Query
+        from radiobject.query import Query
 
         return Query(
             self._source,
@@ -1094,7 +1103,7 @@ class RadiObjectView:
         Memory-efficient alternative to to_radi_object() that writes volumes
         one at a time instead of loading all into memory.
         """
-        from src.streaming import RadiObjectWriter
+        from radiobject.streaming import RadiObjectWriter
 
         obs_meta_df = self.obs_meta
 

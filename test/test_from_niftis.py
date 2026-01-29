@@ -10,13 +10,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.imaging_metadata import (
+from radiobject.imaging_metadata import (
     extract_nifti_metadata,
     infer_series_type,
     KNOWN_SERIES_TYPES,
 )
-from src.radi_object import RadiObject
-from src.volume_collection import VolumeCollection
+from radiobject.radi_object import RadiObject
+from radiobject.volume_collection import VolumeCollection
 
 
 # ----- Fixtures -----

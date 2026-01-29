@@ -8,10 +8,10 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from ml.reader import VolumeReader
+from radiobject.ml.reader import VolumeReader
 
 if TYPE_CHECKING:
-    from src.volume_collection import VolumeCollection
+    from radiobject.volume_collection import VolumeCollection
 
 
 class PatchVolumeDataset(Dataset):
