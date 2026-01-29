@@ -14,10 +14,10 @@ import tiledb
 from radiobject.ctx import ctx as global_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.imaging_metadata import (
-    NiftiMetadata,
     DicomMetadata,
-    extract_nifti_metadata,
+    NiftiMetadata,
     extract_dicom_metadata,
+    extract_nifti_metadata,
     infer_series_type,
 )
 from radiobject.indexing import Index
@@ -307,6 +307,7 @@ class VolumeCollection:
         niftis: Sequence[tuple[str | Path, str]] | None = None,
         dicom_dirs: Sequence[tuple[str | Path, str]] | None = None,
         reorient: bool | None = None,
+        progress: bool = False,
     ) -> None:
         """Append new volumes atomically.
 
@@ -316,6 +317,7 @@ class VolumeCollection:
             niftis: List of (nifti_path, obs_subject_id) tuples
             dicom_dirs: List of (dicom_dir, obs_subject_id) tuples
             reorient: Reorient to canonical orientation (None uses config default)
+            progress: Show tqdm progress bar during volume writes
 
         Example:
             radi.T1w.append(
@@ -334,9 +336,9 @@ class VolumeCollection:
         current_count = len(self)
 
         if niftis is not None:
-            self._append_niftis(niftis, reorient, effective_ctx, current_count)
+            self._append_niftis(niftis, reorient, effective_ctx, current_count, progress)
         else:
-            self._append_dicoms(dicom_dirs, reorient, effective_ctx, current_count)
+            self._append_dicoms(dicom_dirs, reorient, effective_ctx, current_count, progress)
 
         # Invalidate cached properties
         for prop in ("_index", "_metadata"):
@@ -349,6 +351,7 @@ class VolumeCollection:
         reorient: bool | None,
         effective_ctx: tiledb.Ctx,
         start_index: int,
+        progress: bool = False,
     ) -> None:
         """Internal: append NIfTI files to this collection."""
         # Extract metadata and validate dimensions
@@ -396,7 +399,8 @@ class VolumeCollection:
             (start_index + i, path, sid, meta, st)
             for i, (path, sid, meta, st) in enumerate(metadata_list)
         ]
-        results = map_on_threads(write_volume, write_args)
+        desc = f"Writing {self.name or 'volumes'}"
+        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
 
         failures = [r for r in results if not r.success]
         if failures:
@@ -439,6 +443,7 @@ class VolumeCollection:
         reorient: bool | None,
         effective_ctx: tiledb.Ctx,
         start_index: int,
+        progress: bool = False,
     ) -> None:
         """Internal: append DICOM series to this collection."""
         metadata_list: list[tuple[Path, str, DicomMetadata]] = []
@@ -486,7 +491,8 @@ class VolumeCollection:
             (start_index + i, path, sid, meta)
             for i, (path, sid, meta) in enumerate(metadata_list)
         ]
-        results = map_on_threads(write_volume, write_args)
+        desc = f"Writing {self.name or 'volumes'}"
+        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
 
         failures = [r for r in results if not r.success]
         if failures:
@@ -648,6 +654,7 @@ class VolumeCollection:
         valid_subject_ids: set[str] | None = None,
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
+        progress: bool = False,
     ) -> VolumeCollection:
         """Create VolumeCollection from NIfTI files with full metadata capture.
 
@@ -659,6 +666,7 @@ class VolumeCollection:
             valid_subject_ids: Optional whitelist for FK validation
             name: Collection name (stored in metadata)
             ctx: TileDB context
+            progress: Show tqdm progress bar during volume writes
 
         Returns:
             VolumeCollection with obs containing NIfTI metadata
@@ -744,7 +752,8 @@ class VolumeCollection:
             (idx, path, sid, meta, st)
             for idx, (path, sid, meta, st) in enumerate(metadata_list)
         ]
-        results = map_on_threads(write_volume, write_args)
+        desc = f"Writing {name or 'volumes'}"
+        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
 
         failures = [r for r in results if not r.success]
         if failures:
@@ -787,6 +796,7 @@ class VolumeCollection:
         valid_subject_ids: set[str] | None = None,
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
+        progress: bool = False,
     ) -> VolumeCollection:
         """Create VolumeCollection from DICOM series with full metadata capture.
 
@@ -798,6 +808,7 @@ class VolumeCollection:
             valid_subject_ids: Optional whitelist for FK validation
             name: Collection name (stored in metadata)
             ctx: TileDB context
+            progress: Show tqdm progress bar during volume writes
 
         Returns:
             VolumeCollection with obs containing DICOM metadata
@@ -883,7 +894,8 @@ class VolumeCollection:
             (idx, path, sid, meta)
             for idx, (path, sid, meta) in enumerate(metadata_list)
         ]
-        results = map_on_threads(write_volume, write_args)
+        desc = f"Writing {name or 'volumes'}"
+        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
 
         failures = [r for r in results if not r.success]
         if failures:

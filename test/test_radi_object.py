@@ -392,41 +392,37 @@ class TestRadiObjectRoundtrip:
 
 
 class TestS3Integration:
-    """Essential S3 integration tests. Business logic tested locally; these verify S3 I/O."""
+    """Essential S3 integration tests. Business logic tested locally; these verify S3 I/O.
+
+    These tests use S3-specific fixtures that skip at fixture level if S3 is
+    unavailable, preventing fixture setup pollution when running the full test suite.
+    """
 
     def test_create_empty(
         self,
-        radi_object_uri_param: str,
-        tiledb_ctx: tiledb.Ctx | None,
-        storage_backend: str,
+        s3_radi_object_uri: str,
+        s3_tiledb_ctx: tiledb.Ctx,
     ):
         """Verify empty RadiObject can be created on S3."""
-        if storage_backend != "s3":
-            pytest.skip("S3 test only")
-
-        radi = RadiObject._create(radi_object_uri_param, ctx=tiledb_ctx)
+        radi = RadiObject._create(s3_radi_object_uri, ctx=s3_tiledb_ctx)
 
         assert len(radi) == 0
         assert radi.n_collections == 0
 
     def test_from_volume_collections(
         self,
-        test_base_uri: str,
-        volume_collections_param: dict[str, VolumeCollection],
+        s3_test_base_uri: str,
+        s3_volume_collections: dict[str, VolumeCollection],
         nifti_manifest: list[dict],
-        tiledb_ctx: tiledb.Ctx | None,
-        storage_backend: str,
+        s3_tiledb_ctx: tiledb.Ctx,
     ):
         """Verify RadiObject can be built from VolumeCollections on S3."""
-        if storage_backend != "s3":
-            pytest.skip("S3 test only")
-
         subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
         obs_meta_df = pd.DataFrame({"obs_subject_id": subject_ids})
 
-        uri = f"{test_base_uri}/radi_object"
+        uri = f"{s3_test_base_uri}/radi_object"
         radi = RadiObject._from_volume_collections(
-            uri, collections=volume_collections_param, obs_meta=obs_meta_df, ctx=tiledb_ctx
+            uri, collections=s3_volume_collections, obs_meta=obs_meta_df, ctx=s3_tiledb_ctx
         )
 
         assert len(radi) == 3
@@ -434,62 +430,48 @@ class TestS3Integration:
 
     def test_roundtrip(
         self,
-        test_base_uri: str,
-        volume_collections_param: dict[str, VolumeCollection],
+        s3_test_base_uri: str,
+        s3_volume_collections: dict[str, VolumeCollection],
         nifti_manifest: list[dict],
-        tiledb_ctx: tiledb.Ctx | None,
-        storage_backend: str,
+        s3_tiledb_ctx: tiledb.Ctx,
     ):
         """Verify RadiObject persists and can be reopened from S3."""
-        if storage_backend != "s3":
-            pytest.skip("S3 test only")
-
         subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
         obs_meta_df = pd.DataFrame({"obs_subject_id": subject_ids, "age": [45, 52, 38]})
 
-        uri = f"{test_base_uri}/roundtrip_radi"
+        uri = f"{s3_test_base_uri}/roundtrip_radi"
         RadiObject._from_volume_collections(
-            uri, collections=volume_collections_param, obs_meta=obs_meta_df, ctx=tiledb_ctx
+            uri, collections=s3_volume_collections, obs_meta=obs_meta_df, ctx=s3_tiledb_ctx
         )
 
-        reopened = RadiObject(uri, ctx=tiledb_ctx)
+        reopened = RadiObject(uri, ctx=s3_tiledb_ctx)
 
         assert len(reopened) == 3
         assert "flair" in reopened.collection_names
 
     def test_iloc_and_loc(
         self,
-        populated_radi_object_param: RadiObject,
-        storage_backend: str,
+        s3_populated_radi_object: RadiObject,
     ):
         """Verify iloc/loc indexing works on S3."""
-        if storage_backend != "s3":
-            pytest.skip("S3 test only")
-
-        # Test iloc
-        view = populated_radi_object_param.iloc[0]
+        view = s3_populated_radi_object.iloc[0]
         assert len(view) == 1
 
-        # Test loc
-        subject_ids = populated_radi_object_param.obs_subject_ids
-        view = populated_radi_object_param.loc[subject_ids[1]]
+        subject_ids = s3_populated_radi_object.obs_subject_ids
+        view = s3_populated_radi_object.loc[subject_ids[1]]
         assert view.obs_subject_ids == [subject_ids[1]]
 
     def test_view_materialization(
         self,
-        test_base_uri: str,
-        populated_radi_object_param: RadiObject,
-        tiledb_ctx: tiledb.Ctx | None,
-        storage_backend: str,
+        s3_test_base_uri: str,
+        s3_populated_radi_object: RadiObject,
+        s3_tiledb_ctx: tiledb.Ctx,
     ):
         """Verify view materialization works on S3."""
-        if storage_backend != "s3":
-            pytest.skip("S3 test only")
-
-        subject_ids = populated_radi_object_param.obs_subject_ids
-        view = populated_radi_object_param.iloc[[0, 2]]
-        new_uri = f"{test_base_uri}/materialized_radi"
-        new_radi = view.to_radi_object(new_uri, ctx=tiledb_ctx)
+        subject_ids = s3_populated_radi_object.obs_subject_ids
+        view = s3_populated_radi_object.iloc[[0, 2]]
+        new_uri = f"{s3_test_base_uri}/materialized_radi"
+        new_radi = view.to_radi_object(new_uri, ctx=s3_tiledb_ctx)
 
         assert len(new_radi) == 2
         assert new_radi.obs_subject_ids == [subject_ids[0], subject_ids[2]]

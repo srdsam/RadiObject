@@ -366,6 +366,27 @@ def volume_collections_module(temp_dir_module: Path) -> dict[str, VolumeCollecti
 
 # ----- RadiObject Fixtures -----
 
+
+def _create_radi_object(
+    uri: str,
+    collections: dict[str, VolumeCollection],
+    manifest: list[dict],
+    ctx: tiledb.Ctx | None = None,
+) -> "RadiObject":
+    """Factory function for creating RadiObject instances."""
+    from radiobject.radi_object import RadiObject
+
+    subject_ids = [entry["sample_id"] for entry in manifest[:3]]
+    obs_meta_df = pd.DataFrame({"obs_subject_id": subject_ids})
+
+    return RadiObject._from_volume_collections(
+        uri,
+        collections=collections,
+        obs_meta=obs_meta_df,
+        ctx=ctx,
+    )
+
+
 @pytest.fixture
 def populated_radi_object(
     temp_dir: Path,
@@ -373,20 +394,8 @@ def populated_radi_object(
     nifti_manifest: list[dict],
 ) -> "RadiObject":
     """Pre-created RadiObject with 3 subjects and 4 modalities from real data."""
-    from radiobject.radi_object import RadiObject
-
     uri = str(temp_dir / "populated_radi_object")
-    subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
-
-    obs_meta_df = pd.DataFrame({
-        "obs_subject_id": subject_ids,
-    })
-
-    return RadiObject._from_volume_collections(
-        uri,
-        collections=volume_collections,
-        obs_meta=obs_meta_df,
-    )
+    return _create_radi_object(uri, volume_collections, nifti_manifest)
 
 
 @pytest.fixture(scope="module")
@@ -395,116 +404,81 @@ def populated_radi_object_module(
     volume_collections_module: dict[str, VolumeCollection],
 ) -> "RadiObject":
     """Module-scoped: Pre-created RadiObject with 3 subjects and 4 modalities."""
-    from radiobject.radi_object import RadiObject
-
     manifest = _get_manifest("nifti")
     uri = str(temp_dir_module / "populated_radi_object")
-    subject_ids = [entry["sample_id"] for entry in manifest[:3]]
-
-    obs_meta_df = pd.DataFrame({
-        "obs_subject_id": subject_ids,
-    })
-
-    return RadiObject._from_volume_collections(
-        uri,
-        collections=volume_collections_module,
-        obs_meta=obs_meta_df,
-    )
+    return _create_radi_object(uri, volume_collections_module, manifest)
 
 
-# ----- Storage Backend Parameterized Fixtures -----
+# ----- S3-Only Fixtures -----
+# These fixtures skip at fixture level if S3 is not available,
+# preventing fixture setup pollution when running the full test suite.
 
-@pytest.fixture(params=["local", "s3"])
-def storage_backend(request: pytest.FixtureRequest) -> StorageBackend:
-    """Parameterized storage backend (local or s3)."""
-    backend: StorageBackend = request.param
-    if backend == "s3" and not _s3_bucket_accessible(S3_TEST_BUCKET):
+_S3_AVAILABLE: bool | None = None
+
+
+def _is_s3_available() -> bool:
+    """Check S3 availability (cached to avoid repeated subprocess calls)."""
+    global _S3_AVAILABLE
+    if _S3_AVAILABLE is None:
+        _S3_AVAILABLE = _s3_bucket_accessible(S3_TEST_BUCKET)
+    return _S3_AVAILABLE
+
+
+@pytest.fixture
+def s3_tiledb_ctx() -> tiledb.Ctx:
+    """TileDB context for S3 tests. Skips if S3 unavailable."""
+    if not _is_s3_available():
         pytest.skip(
             f"S3 bucket '{S3_TEST_BUCKET}' not accessible. "
             "Configure AWS credentials: aws configure"
         )
-    return backend
+    ctx = _get_s3_ctx()
+    if ctx is None:
+        pytest.skip("Failed to create S3 TileDB context")
+    return ctx
 
 
 @pytest.fixture
-def tiledb_ctx(storage_backend: StorageBackend) -> tiledb.Ctx | None:
-    """TileDB context for the current storage backend."""
-    if storage_backend == "s3":
-        return _get_s3_ctx()
-    return None
-
-
-@pytest.fixture
-def test_base_uri(
-    storage_backend: StorageBackend,
-    temp_dir: Path,
+def s3_test_base_uri(
+    s3_tiledb_ctx: tiledb.Ctx,
 ) -> Generator[str, None, None]:
-    """Base URI for test data, parameterized by storage backend."""
-    if storage_backend == "local":
-        yield str(temp_dir)
-    else:
-        test_id = uuid.uuid4().hex[:8]
-        s3_uri = f"s3://{S3_TEST_BUCKET}/{S3_TEST_PREFIX}/{test_id}"
-        yield s3_uri
-        _delete_s3_uri(s3_uri)
+    """Base URI for S3 test data. Skips if S3 unavailable."""
+    test_id = uuid.uuid4().hex[:8]
+    s3_uri = f"s3://{S3_TEST_BUCKET}/{S3_TEST_PREFIX}/{test_id}"
+    yield s3_uri
+    _delete_s3_uri(s3_uri)
 
 
 @pytest.fixture
-def radi_object_uri_param(test_base_uri: str) -> str:
-    """URI for a test RadiObject, parameterized by storage backend."""
-    return f"{test_base_uri}/test_radi_object"
+def s3_radi_object_uri(s3_test_base_uri: str) -> str:
+    """URI for a test RadiObject on S3."""
+    return f"{s3_test_base_uri}/test_radi_object"
 
 
 @pytest.fixture
-def volume_collections_param(
-    storage_backend: StorageBackend,
-    test_base_uri: str,
+def s3_volume_collections(
+    s3_test_base_uri: str,
     temp_dir: Path,
     nifti_manifest: list[dict],
-    tiledb_ctx: tiledb.Ctx | None,
+    s3_tiledb_ctx: tiledb.Ctx,
 ) -> dict[str, VolumeCollection]:
-    """Create 2 VolumeCollections parameterized by storage backend."""
+    """Create 2 VolumeCollections on S3."""
     modalities = ["flair", "T1w"]
     return _build_volume_collections(
-        temp_dir, nifti_manifest, modalities, uri_prefix=test_base_uri, ctx=tiledb_ctx
+        temp_dir, nifti_manifest, modalities, uri_prefix=s3_test_base_uri, ctx=s3_tiledb_ctx
     )
 
 
 @pytest.fixture
-def populated_radi_object_param(
-    test_base_uri: str,
-    volume_collections_param: dict[str, VolumeCollection],
+def s3_populated_radi_object(
+    s3_test_base_uri: str,
+    s3_volume_collections: dict[str, VolumeCollection],
     nifti_manifest: list[dict],
-    tiledb_ctx: tiledb.Ctx | None,
+    s3_tiledb_ctx: tiledb.Ctx,
 ) -> "RadiObject":
-    """Pre-created RadiObject parameterized by storage backend."""
-    from radiobject.radi_object import RadiObject
-
-    uri = f"{test_base_uri}/populated_radi_object"
-    subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
-
-    obs_meta_df = pd.DataFrame({"obs_subject_id": subject_ids})
-
-    return RadiObject._from_volume_collections(
-        uri,
-        collections=volume_collections_param,
-        obs_meta=obs_meta_df,
-        ctx=tiledb_ctx,
-    )
-
-
-@pytest.fixture
-def populated_collection_param(
-    storage_backend: StorageBackend,
-    test_base_uri: str,
-    temp_dir: Path,
-    nifti_manifest: list[dict],
-    tiledb_ctx: tiledb.Ctx | None,
-) -> VolumeCollection:
-    """Pre-created VolumeCollection with real data, parameterized by storage backend."""
-    volumes = _load_nifti_volumes(temp_dir, nifti_manifest, num=3, channel=0, modality="flair")
-    uri = f"{test_base_uri}/populated_collection"
-    return VolumeCollection._from_volumes(uri, volumes, ctx=tiledb_ctx)
+    """Pre-created RadiObject on S3."""
+    uri = f"{s3_test_base_uri}/populated_radi_object"
+    return _create_radi_object(uri, s3_volume_collections, nifti_manifest, ctx=s3_tiledb_ctx)
 
 
 # ----- Pre-built S3 RadiObject Fixture -----

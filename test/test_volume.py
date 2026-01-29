@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
@@ -12,6 +13,8 @@ import tiledb
 
 from radiobject.ctx import SliceOrientation, configure, TileConfig
 from radiobject.volume import Volume
+
+logger = logging.getLogger(__name__)
 
 
 class TestVolumeConstruction:
@@ -240,7 +243,7 @@ class TestVolumeCustomContext:
 
 
 class TestVolumePerformance:
-    """Performance tests with timing output. Run with -s to see throughput."""
+    """Performance tests with timing output. Run with --log-cli-level=INFO to see throughput."""
 
     def test_write_throughput_3d(self, temp_dir: Path) -> None:
         shape = (128, 128, 64)
@@ -253,8 +256,8 @@ class TestVolumePerformance:
         duration = time.perf_counter() - start
 
         throughput = size_mb / duration
-        print(f"\n  Write 3D: {size_mb:.2f} MB in {duration:.3f}s ({throughput:.2f} MB/s)")
-        assert duration < 30  # Sanity check
+        logger.info("Write 3D: %.2f MB in %.3fs (%.2f MB/s)", size_mb, duration, throughput)
+        assert duration < 30
 
     def test_read_throughput_3d(self, temp_dir: Path) -> None:
         shape = (128, 128, 64)
@@ -269,7 +272,7 @@ class TestVolumePerformance:
         duration = time.perf_counter() - start
 
         throughput = size_mb / duration
-        print(f"\n  Read 3D: {size_mb:.2f} MB in {duration:.3f}s ({throughput:.2f} MB/s)")
+        logger.info("Read 3D: %.2f MB in %.3fs (%.2f MB/s)", size_mb, duration, throughput)
         assert duration < 30
 
     def test_axial_slice_throughput(self, temp_dir: Path) -> None:
@@ -279,7 +282,7 @@ class TestVolumePerformance:
         Volume.from_numpy(uri, data)
         vol = Volume(uri)
         slice_count = 64
-        slice_size_mb = (128 * 128 * 4) / (1024 * 1024)  # Single slice size
+        slice_size_mb = (128 * 128 * 4) / (1024 * 1024)
 
         start = time.perf_counter()
         for z in range(slice_count):
@@ -288,7 +291,7 @@ class TestVolumePerformance:
 
         total_mb = slice_size_mb * slice_count
         throughput = total_mb / duration
-        print(f"\n  Axial slices ({slice_count}x): {total_mb:.2f} MB in {duration:.3f}s ({throughput:.2f} MB/s)")
+        logger.info("Axial slices (%dx): %.2f MB in %.3fs (%.2f MB/s)", slice_count, total_mb, duration, throughput)
         assert duration < 60
 
     def test_write_throughput_4d(self, temp_dir: Path) -> None:
@@ -302,5 +305,5 @@ class TestVolumePerformance:
         duration = time.perf_counter() - start
 
         throughput = size_mb / duration
-        print(f"\n  Write 4D: {size_mb:.2f} MB in {duration:.3f}s ({throughput:.2f} MB/s)")
+        logger.info("Write 4D: %.2f MB in %.3fs (%.2f MB/s)", size_mb, duration, throughput)
         assert duration < 60

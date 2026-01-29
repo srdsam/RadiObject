@@ -39,6 +39,8 @@ def map_on_threads(
     fn: Callable[[T], R],
     items: Iterable[T],
     max_workers: int | None = None,
+    progress: bool = False,
+    desc: str | None = None,
 ) -> list[R]:
     """Execute fn on each item using thread pool, preserving order."""
     items_list = list(items)
@@ -52,7 +54,14 @@ def map_on_threads(
         futures = {
             executor.submit(fn, item): idx for idx, item in enumerate(items_list)
         }
-        for future in as_completed(futures):
+
+        completed = as_completed(futures)
+        if progress:
+            from tqdm.auto import tqdm
+
+            completed = tqdm(completed, total=len(futures), desc=desc, unit="vol")
+
+        for future in completed:
             idx = futures[future]
             results[idx] = future.result()
 

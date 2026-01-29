@@ -48,10 +48,14 @@ def ml_dataset_cached(populated_radi_object_module: "RadiObject") -> RadiObjectD
 
 
 @pytest.fixture
-def ml_dataset_param(populated_radi_object_param: "RadiObject") -> RadiObjectDataset:
-    """RadiObjectDataset parameterized by storage backend (local + S3)."""
+def ml_dataset_param(s3_populated_radi_object: "RadiObject") -> RadiObjectDataset:
+    """RadiObjectDataset on S3 backend.
+
+    Note: This fixture only runs on S3 since local tests are covered by
+    ml_dataset fixture. If S3 is unavailable, the test is skipped.
+    """
     config = DatasetConfig(
         loading_mode=LoadingMode.FULL_VOLUME,
         modalities=["flair", "T1w"],
     )
-    return RadiObjectDataset(populated_radi_object_param, config)
+    return RadiObjectDataset(s3_populated_radi_object, config)

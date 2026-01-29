@@ -67,6 +67,7 @@ RadiObject/
     ├── test_append.py
     ├── test_dataframe.py
     ├── test_from_niftis.py
+    ├── test_indexing.py
     ├── test_orientation.py
     ├── test_parallel.py
     ├── test_query.py
@@ -78,8 +79,11 @@ RadiObject/
         ├── __init__.py
         ├── conftest.py
         ├── test_dataset.py
+        ├── test_distributed.py
         ├── test_performance.py
-        └── test_training.py
+        ├── test_reader.py
+        ├── test_training.py
+        └── test_transforms.py
 ```
 
 ## Excluded (gitignored)

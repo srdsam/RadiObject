@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,8 @@ from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
+
+logger = logging.getLogger(__name__)
 
 
 class TestLoadingPerformance:
@@ -26,7 +29,7 @@ class TestLoadingPerformance:
             _ = ml_dataset[i]
         elapsed = time.perf_counter() - start
 
-        print(f"\n3 full volumes loaded in {elapsed:.2f}s ({elapsed/3:.2f}s per volume)")
+        logger.info("3 full volumes loaded in %.2fs (%.2fs per volume)", elapsed, elapsed / 3)
         assert elapsed < 30
 
     def test_patch_extraction_time(self, ml_dataset_patch: RadiObjectDataset) -> None:
@@ -39,7 +42,7 @@ class TestLoadingPerformance:
             _ = ml_dataset_patch[i]
         elapsed = time.perf_counter() - start
 
-        print(f"\n{n_patches} patches extracted in {elapsed:.2f}s ({elapsed/n_patches:.3f}s per patch)")
+        logger.info("%d patches extracted in %.2fs (%.3fs per patch)", n_patches, elapsed, elapsed / n_patches)
         assert elapsed < 15
 
 
@@ -74,8 +77,8 @@ class TestCachePerformance:
             _ = dataset_cached[0]
         cached_time = time.perf_counter() - start
 
-        print(f"\nUncached: {uncached_time:.3f}s, Cached: {cached_time:.3f}s")
-        print(f"Speedup: {uncached_time / cached_time:.1f}x")
+        speedup = uncached_time / cached_time if cached_time > 0 else float("inf")
+        logger.info("Uncached: %.3fs, Cached: %.3fs, Speedup: %.1fx", uncached_time, cached_time, speedup)
 
         assert cached_time < uncached_time
 
@@ -91,7 +94,7 @@ class TestCachePerformance:
         total = cache.hits + cache.misses
         hit_rate = cache.hits / total if total > 0 else 0
 
-        print(f"\nCache hits: {cache.hits}, misses: {cache.misses}, hit rate: {hit_rate:.1%}")
+        logger.info("Cache hits: %d, misses: %d, hit rate: %.1f%%", cache.hits, cache.misses, hit_rate * 100)
         assert hit_rate > 0.5
 
 
@@ -125,7 +128,7 @@ class TestMultiWorkerPerformance:
             _ = batch["image"]
         elapsed = time.perf_counter() - start
 
-        print(f"\nnum_workers={num_workers}: {elapsed:.2f}s total")
+        logger.info("num_workers=%d: %.2fs total", num_workers, elapsed)
 
 
 class TestParameterizedPerformance:
@@ -139,5 +142,5 @@ class TestParameterizedPerformance:
         _ = ml_dataset_param[0]
         latency = time.perf_counter() - start
 
-        print(f"\nSingle volume load latency: {latency:.3f}s")
+        logger.info("Single volume load latency: %.3fs", latency)
         assert latency < 10

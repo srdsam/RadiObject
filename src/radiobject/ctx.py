@@ -165,8 +165,14 @@ class RadiObjectConfig(BaseModel):
             self.compression.level = max_level
         return self
 
-    def to_tiledb_config(self) -> tiledb.Config:
-        """Convert to TileDB Config object."""
+    def to_tiledb_config(self, include_s3_credentials: bool = False) -> tiledb.Config:
+        """Convert to TileDB Config object.
+
+        Args:
+            include_s3_credentials: If True, fetch AWS credentials from boto3.
+                This is off by default to avoid expensive/failing credential
+                lookups for local-only operations.
+        """
         cfg = tiledb.Config()
 
         # Memory settings
@@ -174,7 +180,7 @@ class RadiObjectConfig(BaseModel):
         cfg["sm.compute_concurrency_level"] = str(self.io.concurrency)
         cfg["sm.io_concurrency_level"] = str(self.io.concurrency)
 
-        # S3 settings
+        # S3 settings (configuration only, no credential lookup)
         cfg["vfs.s3.region"] = self.s3.region
         cfg["vfs.s3.use_virtual_addressing"] = (
             "true" if self.s3.use_virtual_addressing else "false"
@@ -186,21 +192,33 @@ class RadiObjectConfig(BaseModel):
         if self.s3.endpoint:
             cfg["vfs.s3.endpoint_override"] = self.s3.endpoint
 
-        # Get AWS credentials from boto3 session (supports SSO, IAM roles, env vars, etc.)
-        session = boto3.Session()
-        credentials = session.get_credentials()
-        if credentials:
-            frozen = credentials.get_frozen_credentials()
-            cfg["vfs.s3.aws_access_key_id"] = frozen.access_key
-            cfg["vfs.s3.aws_secret_access_key"] = frozen.secret_key
-            if frozen.token:
-                cfg["vfs.s3.aws_session_token"] = frozen.token
+        # Fetch AWS credentials only when explicitly requested
+        if include_s3_credentials:
+            self._add_s3_credentials(cfg)
 
         return cfg
 
-    def to_tiledb_ctx(self) -> tiledb.Ctx:
-        """Convert to TileDB Ctx object."""
-        return tiledb.Ctx(self.to_tiledb_config())
+    def _add_s3_credentials(self, cfg: tiledb.Config) -> None:
+        """Add AWS credentials to config from boto3 session."""
+        try:
+            session = boto3.Session()
+            credentials = session.get_credentials()
+            if credentials:
+                frozen = credentials.get_frozen_credentials()
+                cfg["vfs.s3.aws_access_key_id"] = frozen.access_key
+                cfg["vfs.s3.aws_secret_access_key"] = frozen.secret_key
+                if frozen.token:
+                    cfg["vfs.s3.aws_session_token"] = frozen.token
+        except Exception:
+            pass  # AWS credentials unavailable; S3 operations will fail
+
+    def to_tiledb_ctx(self, include_s3_credentials: bool = False) -> tiledb.Ctx:
+        """Convert to TileDB Ctx object.
+
+        Args:
+            include_s3_credentials: If True, fetch AWS credentials from boto3.
+        """
+        return tiledb.Ctx(self.to_tiledb_config(include_s3_credentials))
 
 
 # Global mutable configuration

@@ -81,9 +81,9 @@ class TestTrainingIntegration:
         model.train()
         epoch_loss = 0.0
         batch_count = 0
-        for batch in loader:
+        for i, batch in enumerate(loader):
             images = batch["image"]
-            targets = torch.zeros(images.shape[0], dtype=torch.long)
+            targets = torch.tensor([i % 2], dtype=torch.long)
 
             optimizer.zero_grad()
             outputs = model(images)

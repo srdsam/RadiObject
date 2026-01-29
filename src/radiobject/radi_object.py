@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections import defaultdict
 from functools import cached_property
 from pathlib import Path
@@ -16,8 +15,8 @@ import tiledb
 from radiobject.ctx import ctx as global_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.imaging_metadata import (
-    extract_nifti_metadata,
     extract_dicom_metadata,
+    extract_nifti_metadata,
     infer_series_type,
 )
 from radiobject.indexing import Index
@@ -302,6 +301,7 @@ class RadiObject:
         dicom_dirs: Sequence[tuple[str | Path, str]] | None = None,
         obs_meta: pd.DataFrame | None = None,
         reorient: bool | None = None,
+        progress: bool = False,
     ) -> None:
         """Append new subjects and their volumes atomically.
 
@@ -314,6 +314,7 @@ class RadiObject:
             obs_meta: Subject-level metadata for NEW subjects. Required if any
                       obs_subject_ids don't already exist. Must contain obs_subject_id column.
             reorient: Reorient to canonical orientation (None uses config default)
+            progress: Show tqdm progress bar during volume writes
 
         Example:
             # Append new subjects with their scans
@@ -393,9 +394,9 @@ class RadiObject:
 
         # Process and group input files
         if niftis is not None:
-            self._append_niftis(niftis, reorient, effective_ctx)
+            self._append_niftis(niftis, reorient, effective_ctx, progress)
         else:
-            self._append_dicoms(dicom_dirs, reorient, effective_ctx)
+            self._append_dicoms(dicom_dirs, reorient, effective_ctx, progress)
 
         # Invalidate cached properties
         for prop in ("_index", "_metadata", "collection_names"):
@@ -407,6 +408,7 @@ class RadiObject:
         niftis: Sequence[tuple[str | Path, str]],
         reorient: bool | None,
         effective_ctx: tiledb.Ctx,
+        progress: bool = False,
     ) -> None:
         """Internal: append NIfTI files to existing collections or create new ones."""
         # Extract metadata and group by (shape, series_type)
@@ -426,7 +428,13 @@ class RadiObject:
         collections_uri = f"{self.uri}/collections"
         existing_collections = set(self.collection_names)
 
-        for (shape, series_type), items in groups.items():
+        groups_iter = groups.items()
+        if progress:
+            from tqdm.auto import tqdm
+
+            groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
+
+        for (shape, series_type), items in groups_iter:
             # Find or create collection
             collection_name = series_type
             if collection_name in existing_collections:
@@ -438,7 +446,7 @@ class RadiObject:
             if collection_name in existing_collections:
                 # Append to existing
                 vc = self.collection(collection_name)
-                vc.append(niftis=items, reorient=reorient)
+                vc.append(niftis=items, reorient=reorient, progress=progress)
             else:
                 # Create new collection
                 vc_uri = f"{collections_uri}/{collection_name}"
@@ -449,6 +457,7 @@ class RadiObject:
                     validate_dimensions=True,
                     name=collection_name,
                     ctx=self._ctx,
+                    progress=progress,
                 )
                 with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
                     grp.add(vc_uri, name=collection_name)
@@ -461,6 +470,7 @@ class RadiObject:
         dicom_dirs: Sequence[tuple[str | Path, str]],
         reorient: bool | None,
         effective_ctx: tiledb.Ctx,
+        progress: bool = False,
     ) -> None:
         """Internal: append DICOM series to existing collections or create new ones."""
         file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
@@ -480,7 +490,13 @@ class RadiObject:
         collections_uri = f"{self.uri}/collections"
         existing_collections = set(self.collection_names)
 
-        for (shape, modality), items in groups.items():
+        groups_iter = groups.items()
+        if progress:
+            from tqdm.auto import tqdm
+
+            groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
+
+        for (shape, modality), items in groups_iter:
             collection_name = modality
             if collection_name in existing_collections:
                 vc = self.collection(collection_name)
@@ -489,7 +505,7 @@ class RadiObject:
 
             if collection_name in existing_collections:
                 vc = self.collection(collection_name)
-                vc.append(dicom_dirs=items, reorient=reorient)
+                vc.append(dicom_dirs=items, reorient=reorient, progress=progress)
             else:
                 vc_uri = f"{collections_uri}/{collection_name}"
                 VolumeCollection.from_dicoms(
@@ -499,6 +515,7 @@ class RadiObject:
                     validate_dimensions=True,
                     name=collection_name,
                     ctx=self._ctx,
+                    progress=progress,
                 )
                 with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
                     grp.add(vc_uri, name=collection_name)
@@ -641,6 +658,7 @@ class RadiObject:
         obs_meta: pd.DataFrame | None = None,
         reorient: bool | None = None,
         ctx: tiledb.Ctx | None = None,
+        progress: bool = False,
     ) -> RadiObject:
         """Create RadiObject from NIfTI files with automatic grouping.
 
@@ -654,6 +672,7 @@ class RadiObject:
             obs_meta: Subject-level metadata (user-provided). Must contain obs_subject_id column.
             reorient: Reorient to canonical orientation (None uses config default)
             ctx: TileDB context
+            progress: Show tqdm progress bar during volume writes
 
         Example:
             radi = RadiObject.from_niftis(
@@ -724,7 +743,13 @@ class RadiObject:
         collections: dict[str, VolumeCollection] = {}
         used_names: set[str] = set()
 
-        for (shape, series_type), items in groups.items():
+        groups_iter = groups.items()
+        if progress:
+            from tqdm.auto import tqdm
+
+            groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
+
+        for (shape, series_type), items in groups_iter:
             # Generate unique collection name
             collection_name = series_type
             if collection_name in used_names:
@@ -741,6 +766,7 @@ class RadiObject:
                 validate_dimensions=True,
                 name=collection_name,
                 ctx=ctx,
+                progress=progress,
             )
             collections[collection_name] = vc
 
@@ -794,6 +820,7 @@ class RadiObject:
         obs_meta: pd.DataFrame | None = None,
         reorient: bool | None = None,
         ctx: tiledb.Ctx | None = None,
+        progress: bool = False,
     ) -> RadiObject:
         """Create RadiObject from DICOM series with automatic grouping.
 
@@ -807,6 +834,7 @@ class RadiObject:
             obs_meta: Subject-level metadata (user-provided). Must contain obs_subject_id column.
             reorient: Reorient to canonical orientation (None uses config default)
             ctx: TileDB context
+            progress: Show tqdm progress bar during volume writes
 
         Example:
             radi = RadiObject.from_dicoms(
@@ -876,7 +904,13 @@ class RadiObject:
         collections: dict[str, VolumeCollection] = {}
         used_names: set[str] = set()
 
-        for (shape, modality), items in groups.items():
+        groups_iter = groups.items()
+        if progress:
+            from tqdm.auto import tqdm
+
+            groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
+
+        for (shape, modality), items in groups_iter:
             # Generate unique collection name
             collection_name = modality
             if collection_name in used_names:
@@ -893,6 +927,7 @@ class RadiObject:
                 validate_dimensions=True,
                 name=collection_name,
                 ctx=ctx,
+                progress=progress,
             )
             collections[collection_name] = vc
 
