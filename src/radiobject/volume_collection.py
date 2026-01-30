@@ -42,6 +42,20 @@ def generate_obs_id(obs_subject_id: str, series_type: str) -> str:
     return f"{obs_subject_id}_{series_type}"
 
 
+def _write_volumes_parallel(
+    write_fn,
+    write_args: list,
+    progress: bool,
+    desc: str,
+) -> list[WriteResult]:
+    """Common helper for parallel volume writes with error handling."""
+    results = map_on_threads(write_fn, write_args, progress=progress, desc=desc)
+    failures = [r for r in results if not r.success]
+    if failures:
+        raise RuntimeError(f"Volume write failed: {failures[0].error}")
+    return results
+
+
 class _ILocIndexer:
     """Integer-location based indexer for VolumeCollection (like pandas .iloc)."""
 
@@ -399,12 +413,9 @@ class VolumeCollection:
             (start_index + i, path, sid, meta, st)
             for i, (path, sid, meta, st) in enumerate(metadata_list)
         ]
-        desc = f"Writing {self.name or 'volumes'}"
-        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
-
-        failures = [r for r in results if not r.success]
-        if failures:
-            raise RuntimeError(f"Volume write failed: {failures[0].error}")
+        results = _write_volumes_parallel(
+            write_volume, write_args, progress, f"Writing {self.name or 'volumes'}"
+        )
 
         # Register volumes with group
         with tiledb.Group(f"{self.uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
@@ -491,12 +502,9 @@ class VolumeCollection:
             (start_index + i, path, sid, meta)
             for i, (path, sid, meta) in enumerate(metadata_list)
         ]
-        desc = f"Writing {self.name or 'volumes'}"
-        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
-
-        failures = [r for r in results if not r.success]
-        if failures:
-            raise RuntimeError(f"Volume write failed: {failures[0].error}")
+        results = _write_volumes_parallel(
+            write_volume, write_args, progress, f"Writing {self.name or 'volumes'}"
+        )
 
         # Register volumes with group
         with tiledb.Group(f"{self.uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
@@ -617,11 +625,7 @@ class VolumeCollection:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
         write_args = [(idx, obs_id, vol) for idx, (obs_id, vol) in enumerate(volumes)]
-        results = map_on_threads(write_volume, write_args)
-
-        failures = [r for r in results if not r.success]
-        if failures:
-            raise RuntimeError(f"Volume write failed: {failures[0].error}")
+        results = _write_volumes_parallel(write_volume, write_args, progress=False, desc="Writing volumes")
 
         with tiledb.Group(f"{uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
             for result in results:
@@ -752,12 +756,9 @@ class VolumeCollection:
             (idx, path, sid, meta, st)
             for idx, (path, sid, meta, st) in enumerate(metadata_list)
         ]
-        desc = f"Writing {name or 'volumes'}"
-        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
-
-        failures = [r for r in results if not r.success]
-        if failures:
-            raise RuntimeError(f"Volume write failed: {failures[0].error}")
+        results = _write_volumes_parallel(
+            write_volume, write_args, progress, f"Writing {name or 'volumes'}"
+        )
 
         # Register volumes with group
         with tiledb.Group(f"{uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
@@ -894,12 +895,9 @@ class VolumeCollection:
             (idx, path, sid, meta)
             for idx, (path, sid, meta) in enumerate(metadata_list)
         ]
-        desc = f"Writing {name or 'volumes'}"
-        results = map_on_threads(write_volume, write_args, progress=progress, desc=desc)
-
-        failures = [r for r in results if not r.success]
-        if failures:
-            raise RuntimeError(f"Volume write failed: {failures[0].error}")
+        results = _write_volumes_parallel(
+            write_volume, write_args, progress, f"Writing {name or 'volumes'}"
+        )
 
         # Register volumes with group
         with tiledb.Group(f"{uri}/volumes", "w", ctx=effective_ctx) as vol_grp:

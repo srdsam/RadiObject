@@ -22,7 +22,11 @@ from radiobject.imaging_metadata import (
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, create_worker_ctx, map_on_threads
 from radiobject.volume import Volume
-from radiobject.volume_collection import VolumeCollection, _normalize_index
+from radiobject.volume_collection import (
+    VolumeCollection,
+    _normalize_index,
+    _write_volumes_parallel,
+)
 
 if TYPE_CHECKING:
     from radiobject.query import Query
@@ -1262,11 +1266,7 @@ def _copy_volume_collection(
             return WriteResult(idx, new_vol_uri, obs_id, success=False, error=e)
 
     write_args = [(idx, obs_id, src.iloc[idx]) for idx, obs_id in enumerate(src.obs_ids)]
-    results = map_on_threads(write_volume, write_args)
-
-    failures = [r for r in results if not r.success]
-    if failures:
-        raise RuntimeError(f"Volume copy failed: {failures[0].error}")
+    results = _write_volumes_parallel(write_volume, write_args, progress=False, desc="Copying volumes")
 
     with tiledb.Group(f"{dst_uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
         for result in results:
@@ -1330,11 +1330,7 @@ def _copy_filtered_volume_collection(
         (new_idx, orig_idx, src.obs_ids[orig_idx])
         for new_idx, orig_idx in enumerate(selected_indices)
     ]
-    results = map_on_threads(write_volume, write_args)
-
-    failures = [r for r in results if not r.success]
-    if failures:
-        raise RuntimeError(f"Filtered volume copy failed: {failures[0].error}")
+    results = _write_volumes_parallel(write_volume, write_args, progress=False, desc="Filtering volumes")
 
     with tiledb.Group(f"{dst_uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
         for result in results:

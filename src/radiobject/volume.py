@@ -131,6 +131,25 @@ class Volume:
                 return arr[x, y, z, t][VOXELS_ATTR]
             return arr[x, y, z][VOXELS_ATTR]
 
+    def __getitem__(self, key: tuple[slice, ...] | slice) -> np.ndarray:
+        """NumPy-like indexing for partial reads.
+
+        Example:
+            vol[10:20, :, :]      # X slice
+            vol[:, :, 50:51]      # Single axial slice
+            vol[::2, ::2, ::2]    # Downsampled read
+        """
+        if isinstance(key, slice):
+            key = (key,)
+        if not isinstance(key, tuple):
+            raise TypeError(f"Index must be slice or tuple of slices, got {type(key)}")
+
+        # Pad with full slices if needed
+        key = key + (slice(None),) * (self.ndim - len(key))
+
+        with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
+            return arr[key][VOXELS_ATTR]
+
     # ===== Analysis Methods =====
 
     def get_statistics(
@@ -145,16 +164,18 @@ class Volume:
             Dictionary with mean, std, min, max, median, and requested percentiles
         """
         data = self.to_numpy()
+        flat = data.ravel()  # Single flatten operation
         stats = {
-            "mean": float(np.mean(data)),
-            "std": float(np.std(data)),
-            "min": float(np.min(data)),
-            "max": float(np.max(data)),
-            "median": float(np.median(data)),
+            "mean": float(flat.mean()),
+            "std": float(flat.std()),
+            "min": float(flat.min()),
+            "max": float(flat.max()),
+            "median": float(np.median(flat)),
         }
         if percentiles:
-            for p in percentiles:
-                stats[f"p{int(p)}"] = float(np.percentile(data, p))
+            pct_values = np.percentile(flat, percentiles)  # Single percentile call
+            for p, v in zip(percentiles, pct_values):
+                stats[f"p{int(p)}"] = float(v)
         return stats
 
     def compute_histogram(

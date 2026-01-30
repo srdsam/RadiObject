@@ -252,31 +252,42 @@ class Query:
     ) -> frozenset[str]:
         """Resolve volume-level filters to a set of obs_ids for a collection.
 
-        This applies:
-        1. Subject mask (volumes must belong to matching subjects)
-        2. Collection-specific filter expression on obs
+        Uses TileDB dimension slicing for efficient subject filtering,
+        combined with QueryCondition for attribute filters.
         """
         vc = self._source.collection(collection_name)
-        obs_df = vc.obs.read()
+        effective_ctx = vc.obs._effective_ctx()
 
-        # Filter to volumes belonging to matching subjects
-        matching = obs_df[obs_df["obs_subject_id"].isin(subject_mask)]
+        # Build query with dimension slicing for subject_mask
+        with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
+            # Use multi-index for efficient dimension-based filtering
+            subject_list = list(subject_mask) if subject_mask else None
 
-        # Apply collection-specific filter if present
-        if collection_name in self._collection_filters:
-            expr = self._collection_filters[collection_name]
-            # Re-query with filter
-            filtered = vc.obs.read(value_filter=expr)
-            filtered_ids = set(filtered["obs_id"])
-            matching = matching[matching["obs_id"].isin(filtered_ids)]
+            if subject_list:
+                # Query only rows matching subject_mask using dimension slicing
+                query = arr.query(dims=["obs_subject_id", "obs_id"])
+                if collection_name in self._collection_filters:
+                    query = query.cond(self._collection_filters[collection_name])
+                result = query.multi_index[subject_list, :]
+            else:
+                # No subject filter - apply attribute filter only
+                if collection_name in self._collection_filters:
+                    result = arr.query(cond=self._collection_filters[collection_name])[:]
+                else:
+                    result = arr.query(attrs=[])[:]["obs_id"]
+                    return frozenset(
+                        v.decode() if isinstance(v, bytes) else str(v) for v in result
+                    )
 
-        return frozenset(matching["obs_id"])
+            obs_ids = result["obs_id"]
+            return frozenset(
+                v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids
+            )
 
     def _resolve_final_subject_mask(self) -> frozenset[str]:
         """Resolve to final subject mask after applying all filters.
 
-        If collection filters are specified, only subjects with matching
-        volumes in those collections are included.
+        Uses TileDB dimension queries to efficiently find subjects with matching volumes.
         """
         subject_mask = self._resolve_subject_mask()
 
@@ -288,13 +299,19 @@ class Query:
             for coll_name in self._collection_filters:
                 if coll_name not in self._source.collection_names:
                     continue
-                volume_mask = self._resolve_volume_mask(coll_name, subject_mask)
 
-                # Get subject_ids for these volumes
                 vc = self._source.collection(coll_name)
-                obs_df = vc.obs.read()
-                matching_vols = obs_df[obs_df["obs_id"].isin(volume_mask)]
-                subjects_with_matching_volumes |= set(matching_vols["obs_subject_id"])
+                effective_ctx = vc.obs._effective_ctx()
+                expr = self._collection_filters[coll_name]
+
+                # Query with attribute filter, only request obs_subject_id dimension
+                with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
+                    result = arr.query(cond=expr, dims=["obs_subject_id"], attrs=[])[:]
+                    subject_ids = result["obs_subject_id"]
+                    for sid in subject_ids:
+                        s = sid.decode() if isinstance(sid, bytes) else str(sid)
+                        if s in subject_mask:
+                            subjects_with_matching_volumes.add(s)
 
             subject_mask = subject_mask & frozenset(subjects_with_matching_volumes)
 
@@ -549,25 +566,35 @@ class CollectionQuery:
     # =========================================================================
 
     def _resolve_volume_mask(self) -> frozenset[str]:
-        """Resolve all filters to a set of obs_ids."""
-        all_ids = set(self._source.obs_ids)
+        """Resolve all filters to a set of obs_ids using TileDB-native queries."""
+        effective_ctx = self._source.obs._effective_ctx()
 
-        # Apply explicit volume_ids filter
+        with tiledb.open(self._source.obs.uri, "r", ctx=effective_ctx) as arr:
+            # Build query based on filters
+            if self._subject_ids is not None and self._volume_query is not None:
+                # Both subject and attribute filters - use dimension slicing + QueryCondition
+                query = arr.query(cond=self._volume_query, dims=["obs_id"])
+                result = query.multi_index[list(self._subject_ids), :]
+            elif self._subject_ids is not None:
+                # Subject filter only - use dimension slicing
+                result = arr.query(dims=["obs_id"]).multi_index[list(self._subject_ids), :]
+            elif self._volume_query is not None:
+                # Attribute filter only - use QueryCondition
+                result = arr.query(cond=self._volume_query, dims=["obs_id"])[:]
+            else:
+                # No filters - return all obs_ids
+                result = arr.query(dims=["obs_id"], attrs=[])[:]
+
+            obs_ids = result["obs_id"]
+            all_ids = frozenset(
+                v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids
+            )
+
+        # Apply explicit volume_ids filter (intersection with pre-specified IDs)
         if self._volume_ids is not None:
             all_ids &= self._volume_ids
 
-        # Apply subject_ids filter
-        if self._subject_ids is not None:
-            obs_df = self._source.obs.read()
-            matching = obs_df[obs_df["obs_subject_id"].isin(self._subject_ids)]
-            all_ids &= set(matching["obs_id"])
-
-        # Apply query expression
-        if self._volume_query is not None:
-            filtered = self._source.obs.read(value_filter=self._volume_query)
-            all_ids &= set(filtered["obs_id"])
-
-        return frozenset(all_ids)
+        return all_ids
 
     # =========================================================================
     # MATERIALIZATION

@@ -54,10 +54,11 @@ class Dataframe:
         """All column names including index columns."""
         return list(INDEX_COLUMNS) + self.columns
 
-    @property
+    @cached_property
     def dtypes(self) -> dict[str, np.dtype]:
         """Column data types (attributes only)."""
-        return {self._schema.attr(i).name: self._schema.attr(i).dtype for i in range(self._schema.nattr)}
+        schema = self._schema
+        return {schema.attr(i).name: schema.attr(i).dtype for i in range(schema.nattr)}
 
     def __len__(self) -> int:
         with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
