@@ -74,9 +74,7 @@ class TestWriteResult:
     def test_failure_result(self):
         """Failed write result captures error."""
         err = ValueError("test error")
-        result = WriteResult(
-            index=0, uri="/path/to/vol", obs_id="PAT001", success=False, error=err
-        )
+        result = WriteResult(index=0, uri="/path/to/vol", obs_id="PAT001", success=False, error=err)
         assert result.success is False
         assert result.error is err
 
@@ -144,9 +142,7 @@ class TestParallelVolumeWrites:
         )
 
         collection_uri = str(temp_dir / "parallel_collection_obs")
-        collection = VolumeCollection._from_volumes(
-            collection_uri, volumes, obs_data=obs_df
-        )
+        collection = VolumeCollection._from_volumes(collection_uri, volumes, obs_data=obs_df)
 
         assert "age" in collection.obs.columns
         obs_id = collection.index.get_key(1)

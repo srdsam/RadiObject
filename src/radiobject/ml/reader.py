@@ -35,7 +35,8 @@ class VolumeReader:
         self._uri = collection.uri
         self._base_ctx_config = ctx.config() if ctx else None
         self._config_hash = _config_hash(self._base_ctx_config)
-        self._shape = collection.shape
+        self._shape = collection.shape  # May be None for heterogeneous collections
+        self._is_uniform = collection.is_uniform
         self._obs_ids = list(collection.obs_ids)
 
     def _get_ctx(self) -> tiledb.Ctx:
@@ -55,9 +56,14 @@ class VolumeReader:
         return Volume(volume_uri, ctx=self._get_ctx())
 
     @property
-    def shape(self) -> tuple[int, int, int]:
-        """Volume dimensions (X, Y, Z)."""
+    def shape(self) -> tuple[int, int, int] | None:
+        """Volume dimensions (X, Y, Z) if uniform, None if heterogeneous."""
         return self._shape
+
+    @property
+    def is_uniform(self) -> bool:
+        """Whether all volumes have the same shape."""
+        return self._is_uniform
 
     def __len__(self) -> int:
         """Number of volumes."""

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import tiledb
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
-import tiledb
 
 from radiobject.orientation import (
     OrientationInfo,
@@ -21,20 +21,22 @@ from radiobject.orientation import (
 )
 from radiobject.volume import Volume
 
-
 # ----- Test Helpers for Synthetic Orientation Data -----
+
 
 def create_synthetic_nifti_ras(temp_dir: Path) -> Path:
     """Create a synthetic NIfTI file in RAS (canonical) orientation."""
     rng = np.random.default_rng(42)
     data = rng.random((32, 32, 16), dtype=np.float32)
 
-    affine = np.array([
-        [1.0, 0.0, 0.0, -16.0],
-        [0.0, 1.0, 0.0, -16.0],
-        [0.0, 0.0, 1.0, -8.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ])
+    affine = np.array(
+        [
+            [1.0, 0.0, 0.0, -16.0],
+            [0.0, 1.0, 0.0, -16.0],
+            [0.0, 0.0, 1.0, -8.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
     img = nib.Nifti1Image(data, affine)
     img.header.set_sform(affine, code=1)
 
@@ -48,12 +50,14 @@ def create_synthetic_nifti_lps(temp_dir: Path) -> Path:
     rng = np.random.default_rng(42)
     data = rng.random((32, 32, 16), dtype=np.float32)
 
-    affine = np.array([
-        [-1.0, 0.0, 0.0, 16.0],
-        [0.0, -1.0, 0.0, 16.0],
-        [0.0, 0.0, 1.0, -8.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ])
+    affine = np.array(
+        [
+            [-1.0, 0.0, 0.0, 16.0],
+            [0.0, -1.0, 0.0, 16.0],
+            [0.0, 0.0, 1.0, -8.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
     img = nib.Nifti1Image(data, affine)
     img.header.set_sform(affine, code=1)
 
@@ -220,9 +224,7 @@ class TestReorientation:
         data = np.asarray(img.dataobj)
         affine = img.affine
 
-        reoriented_data, reoriented_affine = reorient_to_canonical(
-            data, affine, target="RAS"
-        )
+        reoriented_data, reoriented_affine = reorient_to_canonical(data, affine, target="RAS")
 
         reoriented_img = nib.Nifti1Image(reoriented_data, reoriented_affine)
         info = detect_nifti_orientation(reoriented_img)
@@ -237,9 +239,7 @@ class TestReorientation:
         original_data = np.asarray(img.dataobj)
         original_sum = np.sum(original_data)
 
-        reoriented_data, _ = reorient_to_canonical(
-            original_data, img.affine, target="RAS"
-        )
+        reoriented_data, _ = reorient_to_canonical(original_data, img.affine, target="RAS")
 
         assert np.isclose(np.sum(reoriented_data), original_sum, rtol=1e-5)
 

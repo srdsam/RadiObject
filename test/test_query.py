@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import pytest
 
-from radiobject.query import Query, CollectionQuery, QueryCount, VolumeBatch
-from radiobject.radi_object import RadiObject, RadiObjectView
-from radiobject.volume_collection import VolumeCollection
+from radiobject.query import CollectionQuery, Query, QueryCount, VolumeBatch
+from radiobject.radi_object import RadiObject
 from radiobject.volume import Volume
+from radiobject.volume_collection import VolumeCollection
 
 
 class TestQueryCreation:
@@ -112,7 +110,10 @@ class TestQuerySubjectFilters:
         q2 = populated_radi_object_module.query().sample(2, seed=42)
 
         assert len(q1) == 2
-        assert q1.to_obs_meta()["obs_subject_id"].tolist() == q2.to_obs_meta()["obs_subject_id"].tolist()
+        assert (
+            q1.to_obs_meta()["obs_subject_id"].tolist()
+            == q2.to_obs_meta()["obs_subject_id"].tolist()
+        )
 
 
 class TestQueryCollectionFilters:
@@ -231,6 +232,72 @@ class TestQueryIterBatches:
         batch = next(query.iter_batches(batch_size=2))
 
         assert len(batch.subject_ids) == 2
+
+
+class TestQueryMap:
+    """Tests for map() transform method."""
+
+    def test_map_applies_transform(
+        self,
+        temp_dir: Path,
+        populated_radi_object: RadiObject,
+    ):
+        """map() applies transform function during materialization."""
+        import numpy as np
+
+        query = populated_radi_object.query().head(1).select_collections(["T1w"])
+        original_vol = next(query.iter_volumes())
+        original_data = original_vol.to_numpy()
+
+        # Double the values
+        new_uri = str(temp_dir / "query_map_transform")
+        new_radi = query.map(lambda v: v * 2).to_radi_object(new_uri)
+
+        new_vol = next(iter(new_radi.T1w))
+        new_data = new_vol.to_numpy()
+
+        np.testing.assert_array_almost_equal(new_data, original_data * 2)
+
+    def test_map_chained_composes(
+        self,
+        temp_dir: Path,
+        populated_radi_object: RadiObject,
+    ):
+        """Chained map() calls compose transforms in order."""
+        import numpy as np
+
+        query = populated_radi_object.query().head(1).select_collections(["T1w"])
+        original_vol = next(query.iter_volumes())
+        original_data = original_vol.to_numpy()
+
+        # Chain: double, then add 10
+        new_uri = str(temp_dir / "query_map_chained")
+        new_radi = query.map(lambda v: v * 2).map(lambda v: v + 10).to_radi_object(new_uri)
+
+        new_vol = next(iter(new_radi.T1w))
+        new_data = new_vol.to_numpy()
+
+        np.testing.assert_array_almost_equal(new_data, original_data * 2 + 10)
+
+    def test_map_without_transform_unchanged(
+        self,
+        temp_dir: Path,
+        populated_radi_object: RadiObject,
+    ):
+        """Query without map() preserves original data."""
+        import numpy as np
+
+        query = populated_radi_object.query().head(1).select_collections(["T1w"])
+        original_vol = next(query.iter_volumes())
+        original_data = original_vol.to_numpy()
+
+        new_uri = str(temp_dir / "query_no_transform")
+        new_radi = query.to_radi_object(new_uri)
+
+        new_vol = next(iter(new_radi.T1w))
+        new_data = new_vol.to_numpy()
+
+        np.testing.assert_array_equal(new_data, original_data)
 
 
 class TestQueryToRadiObject:
@@ -388,6 +455,51 @@ class TestCollectionQueryMaterialization:
 
         assert isinstance(new_vc, VolumeCollection)
         assert len(new_vc) == 2
+
+
+class TestCollectionQueryMap:
+    """Tests for CollectionQuery.map() transform method."""
+
+    def test_map_applies_transform(
+        self,
+        temp_dir: Path,
+        populated_collection: VolumeCollection,
+    ):
+        """map() applies transform function during materialization."""
+        import numpy as np
+
+        query = populated_collection.query().head(1)
+        original_vol = next(query.iter_volumes())
+        original_data = original_vol.to_numpy()
+
+        new_uri = str(temp_dir / "coll_map_transform")
+        new_vc = query.map(lambda v: v * 3).to_volume_collection(new_uri)
+
+        new_vol = next(iter(new_vc))
+        new_data = new_vol.to_numpy()
+
+        np.testing.assert_array_almost_equal(new_data, original_data * 3)
+
+    def test_map_chained_composes(
+        self,
+        temp_dir: Path,
+        populated_collection: VolumeCollection,
+    ):
+        """Chained map() calls compose transforms in order."""
+        import numpy as np
+
+        query = populated_collection.query().head(1)
+        original_vol = next(query.iter_volumes())
+        original_data = original_vol.to_numpy()
+
+        # Chain: triple, then subtract 5
+        new_uri = str(temp_dir / "coll_map_chained")
+        new_vc = query.map(lambda v: v * 3).map(lambda v: v - 5).to_volume_collection(new_uri)
+
+        new_vol = next(iter(new_vc))
+        new_data = new_vol.to_numpy()
+
+        np.testing.assert_array_almost_equal(new_data, original_data * 3 - 5)
 
 
 class TestCollectionQueryConvenience:

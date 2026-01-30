@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
@@ -15,9 +14,11 @@ from radiobject.ctx import ctx as global_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.volume import Volume
 
+# Scalar value types storable in TileDB obs attributes
+AttrValue = int | float | bool | str
+
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
-    from radiobject.volume_collection import VolumeCollection
 
 
 @dataclass
@@ -29,7 +30,7 @@ class _PendingVolume:
     obs_id: str
     obs_subject_id: str
     data: npt.NDArray[np.floating]
-    attrs: dict[str, Any]
+    attrs: dict[str, AttrValue]
 
 
 class StreamingWriter:
@@ -39,7 +40,14 @@ class StreamingWriter:
     one at a time, keeping memory usage bounded.
 
     Example:
+        # Uniform shape collection
         with StreamingWriter(uri, shape=(256, 256, 128)) as writer:
+            for nifti_path, subject_id in niftis:
+                data = load_nifti(nifti_path)
+                writer.write_volume(data, obs_id=f"{subject_id}_T1w", obs_subject_id=subject_id)
+
+        # Heterogeneous shape collection (raw ingestion)
+        with StreamingWriter(uri) as writer:
             for nifti_path, subject_id in niftis:
                 data = load_nifti(nifti_path)
                 writer.write_volume(data, obs_id=f"{subject_id}_T1w", obs_subject_id=subject_id)
@@ -48,18 +56,18 @@ class StreamingWriter:
     def __init__(
         self,
         uri: str,
-        shape: tuple[int, int, int],
+        shape: tuple[int, int, int] | None = None,
         obs_schema: dict[str, np.dtype] | None = None,
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
     ):
         self.uri = uri
-        self.shape = shape
+        self.shape = shape  # None = heterogeneous shapes allowed
         self.obs_schema = obs_schema or {}
         self.name = name
         self._ctx = ctx
         self._volume_count = 0
-        self._obs_rows: list[dict[str, Any]] = []
+        self._obs_rows: list[dict[str, AttrValue]] = []
         self._initialized = False
         self._finalized = False
 
@@ -84,9 +92,10 @@ class StreamingWriter:
 
         # Set initial metadata (n_volumes=0, will update on finalize)
         with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["x_dim"] = self.shape[0]
-            grp.meta["y_dim"] = self.shape[1]
-            grp.meta["z_dim"] = self.shape[2]
+            if self.shape is not None:
+                grp.meta["x_dim"] = self.shape[0]
+                grp.meta["y_dim"] = self.shape[1]
+                grp.meta["z_dim"] = self.shape[2]
             grp.meta["n_volumes"] = 0
             if self.name is not None:
                 grp.meta["name"] = self.name
@@ -101,12 +110,12 @@ class StreamingWriter:
         data: npt.NDArray[np.floating],
         obs_id: str,
         obs_subject_id: str,
-        **attrs: Any,
+        **attrs: AttrValue,
     ) -> None:
         """Write a single volume to the collection.
 
         Args:
-            data: Volume data array (must match shape)
+            data: Volume data array (must match shape if uniform collection)
             obs_id: Unique identifier for this volume
             obs_subject_id: Subject identifier (foreign key)
             **attrs: Additional obs attributes matching obs_schema
@@ -116,7 +125,8 @@ class StreamingWriter:
         if self._finalized:
             raise RuntimeError("StreamingWriter already finalized")
 
-        if data.shape[:3] != self.shape:
+        # Only validate shape if collection requires uniform dimensions
+        if self.shape is not None and data.shape[:3] != self.shape:
             raise ValueError(
                 f"Volume shape {data.shape[:3]} doesn't match collection shape {self.shape}"
             )
@@ -140,7 +150,7 @@ class StreamingWriter:
         self._volume_count += 1
 
     def write_batch(
-        self, volumes: list[tuple[npt.NDArray[np.floating], str, str, dict[str, Any]]]
+        self, volumes: list[tuple[npt.NDArray[np.floating], str, str, dict[str, AttrValue]]]
     ) -> None:
         """Write multiple volumes at once.
 
@@ -221,6 +231,7 @@ class RadiObjectWriter:
         self._subject_count = 0
         self._initialized = False
         self._finalized = False
+        self._all_obs_ids: set[str] = set()  # Track obs_ids across all collections
 
     def _effective_ctx(self) -> tiledb.Ctx:
         return self._ctx if self._ctx else global_ctx()
@@ -268,11 +279,7 @@ class RadiObjectWriter:
         obs_meta_uri = f"{self.uri}/obs_meta"
 
         obs_subject_ids = df["obs_subject_id"].astype(str).to_numpy()
-        obs_ids = (
-            df["obs_id"].astype(str).to_numpy()
-            if "obs_id" in df.columns
-            else obs_subject_ids
-        )
+        obs_ids = df["obs_id"].astype(str).to_numpy() if "obs_id" in df.columns else obs_subject_ids
 
         with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
             attr_data = {
@@ -287,14 +294,14 @@ class RadiObjectWriter:
     def add_collection(
         self,
         name: str,
-        shape: tuple[int, int, int],
+        shape: tuple[int, int, int] | None = None,
         obs_schema: dict[str, np.dtype] | None = None,
     ) -> StreamingWriter:
         """Add a new collection and return a StreamingWriter for it.
 
         Args:
             name: Collection name (e.g., "T1w", "FLAIR")
-            shape: Volume dimensions (X, Y, Z)
+            shape: Volume dimensions (X, Y, Z). None for heterogeneous shapes.
             obs_schema: Schema for volume-level obs attributes
 
         Returns:
@@ -364,7 +371,7 @@ class _CollectionStreamingWriter(StreamingWriter):
     def __init__(
         self,
         uri: str,
-        shape: tuple[int, int, int],
+        shape: tuple[int, int, int] | None,
         obs_schema: dict[str, np.dtype] | None,
         name: str,
         ctx: tiledb.Ctx | None,
@@ -372,6 +379,22 @@ class _CollectionStreamingWriter(StreamingWriter):
     ):
         super().__init__(uri, shape, obs_schema, name, ctx)
         self._parent = parent
+
+    def write_volume(
+        self,
+        data: npt.NDArray[np.floating],
+        obs_id: str,
+        obs_subject_id: str,
+        **attrs: AttrValue,
+    ) -> None:
+        """Write a volume, checking obs_id uniqueness across all collections."""
+        if obs_id in self._parent._all_obs_ids:
+            raise ValueError(
+                f"obs_id '{obs_id}' already exists in RadiObject. "
+                f"obs_id must be unique across all collections."
+            )
+        self._parent._all_obs_ids.add(obs_id)
+        super().write_volume(data, obs_id, obs_subject_id, **attrs)
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Finalize and register with parent."""

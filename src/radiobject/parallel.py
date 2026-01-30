@@ -14,8 +14,6 @@ from radiobject.ctx import get_config
 T = TypeVar("T")
 R = TypeVar("R")
 
-DEFAULT_MAX_WORKERS = 4
-
 
 @dataclass(frozen=True)
 class WriteResult:
@@ -47,13 +45,12 @@ def map_on_threads(
     if not items_list:
         return []
 
-    workers = max_workers or min(DEFAULT_MAX_WORKERS, len(items_list))
+    default_workers = get_config().io.max_workers
+    workers = max_workers or min(default_workers, len(items_list))
     results: list[R | None] = [None] * len(items_list)
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(fn, item): idx for idx, item in enumerate(items_list)
-        }
+        futures = {executor.submit(fn, item): idx for idx, item in enumerate(items_list)}
 
         completed = as_completed(futures)
         if progress:

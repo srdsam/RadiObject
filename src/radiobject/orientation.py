@@ -85,9 +85,7 @@ def detect_nifti_orientation(img: nib.Nifti1Image) -> OrientationInfo:
 
     if sform_code > 0:
         affine = img.get_sform()
-        source: Literal["nifti_sform", "nifti_qform", "dicom_iop", "identity"] = (
-            "nifti_sform"
-        )
+        source: Literal["nifti_sform", "nifti_qform", "dicom_iop", "identity"] = "nifti_sform"
     elif qform_code > 0:
         affine = img.get_qform()
         source = "nifti_qform"
@@ -129,9 +127,7 @@ def detect_dicom_orientation(series_path: Path) -> OrientationInfo:
     if not dicom_files:
         # Try without extension filtering
         dicom_files = sorted(
-            f
-            for f in series_path.iterdir()
-            if f.is_file() and not f.name.startswith(".")
+            f for f in series_path.iterdir() if f.is_file() and not f.name.startswith(".")
         )
 
     if not dicom_files:

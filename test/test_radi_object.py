@@ -46,9 +46,11 @@ class TestRadiObjectFromVolumeCollections:
         """Create RadiObject from existing VolumeCollections."""
         uri = str(temp_dir / "from_vc_test")
         subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
-        obs_meta_df = pd.DataFrame({
-            "obs_subject_id": subject_ids,
-        })
+        obs_meta_df = pd.DataFrame(
+            {
+                "obs_subject_id": subject_ids,
+            }
+        )
 
         radi = RadiObject._from_volume_collections(
             uri,
@@ -70,11 +72,13 @@ class TestRadiObjectFromVolumeCollections:
         """Create RadiObject with additional obs_meta metadata."""
         uri = str(temp_dir / "from_vc_obs_test")
         subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
-        obs_meta_df = pd.DataFrame({
-            "obs_subject_id": subject_ids,
-            "age": [45, 52, 38],
-            "diagnosis": ["healthy", "tumor", "healthy"],
-        })
+        obs_meta_df = pd.DataFrame(
+            {
+                "obs_subject_id": subject_ids,
+                "age": [45, 52, 38],
+                "diagnosis": ["healthy", "tumor", "healthy"],
+            }
+        )
 
         radi = RadiObject._from_volume_collections(
             uri,
@@ -358,10 +362,12 @@ class TestRadiObjectRoundtrip:
         """Create RadiObject and verify data persists after reopening."""
         uri = str(temp_dir / "roundtrip_test")
         subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
-        obs_meta_df = pd.DataFrame({
-            "obs_subject_id": subject_ids,
-            "age": [45, 52, 38],
-        })
+        obs_meta_df = pd.DataFrame(
+            {
+                "obs_subject_id": subject_ids,
+                "age": [45, 52, 38],
+            }
+        )
 
         RadiObject._from_volume_collections(
             uri,

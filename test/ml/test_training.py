@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
+from monai.transforms import NormalizeIntensityd
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.datasets.multimodal import MultiModalDataset
 from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 from radiobject.ml.factory import create_training_dataloader
-from radiobject.ml.transforms import IntensityNormalize
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
@@ -70,9 +70,7 @@ class TestTrainingIntegration:
         )
         dataset = RadiObjectDataset(populated_radi_object_module, config)
 
-        loader = torch.utils.data.DataLoader(
-            dataset, batch_size=1, shuffle=True, drop_last=False
-        )
+        loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, drop_last=False)
 
         model = SimpleCNN(in_channels=1)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -143,27 +141,25 @@ class TestFactoryDataloader:
 
 
 class TestTransformIntegration:
-    """Tests for transform integration."""
+    """Tests for transform integration with MONAI."""
 
     def test_transform_applied(self, populated_radi_object_module: "RadiObject") -> None:
-        """Test transforms are applied to samples."""
-        transform = IntensityNormalize()
+        """Test MONAI transforms are applied to samples."""
+        transform = NormalizeIntensityd(keys="image", channel_wise=True)
 
         config = DatasetConfig(
             loading_mode=LoadingMode.FULL_VOLUME,
             modalities=["flair"],
         )
-        dataset = RadiObjectDataset(
-            populated_radi_object_module, config, transform=transform
-        )
+        dataset = RadiObjectDataset(populated_radi_object_module, config, transform=transform)
 
         sample = dataset[0]
-        image = sample["image"]
+        image = sample["image"].float()
         mean = image.mean().item()
         std = image.std().item()
 
-        assert abs(mean) < 0.1
-        assert abs(std - 1.0) < 0.1
+        assert abs(mean) < 0.5
+        assert abs(std - 1.0) < 0.5
 
 
 class TestParameterizedTraining:

@@ -97,7 +97,13 @@ class IOConfig(BaseModel):
         default=4,
         ge=1,
         le=64,
-        description="Number of parallel I/O threads",
+        description="Number of TileDB internal I/O threads",
+    )
+    max_workers: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        description="Max parallel workers for volume I/O operations",
     )
 
 
@@ -109,6 +115,9 @@ class S3Config(BaseModel):
     use_virtual_addressing: bool = Field(default=True)
     max_parallel_ops: int = Field(default=8, ge=1)
     multipart_part_size_mb: int = Field(default=50, ge=5)
+    include_credentials: bool = Field(
+        default=True, description="Include AWS credentials from boto3 session"
+    )
 
 
 class OrientationConfig(BaseModel):
@@ -182,18 +191,14 @@ class RadiObjectConfig(BaseModel):
 
         # S3 settings (configuration only, no credential lookup)
         cfg["vfs.s3.region"] = self.s3.region
-        cfg["vfs.s3.use_virtual_addressing"] = (
-            "true" if self.s3.use_virtual_addressing else "false"
-        )
+        cfg["vfs.s3.use_virtual_addressing"] = "true" if self.s3.use_virtual_addressing else "false"
         cfg["vfs.s3.max_parallel_ops"] = str(self.s3.max_parallel_ops)
-        cfg["vfs.s3.multipart_part_size"] = str(
-            self.s3.multipart_part_size_mb * 1024 * 1024
-        )
+        cfg["vfs.s3.multipart_part_size"] = str(self.s3.multipart_part_size_mb * 1024 * 1024)
         if self.s3.endpoint:
             cfg["vfs.s3.endpoint_override"] = self.s3.endpoint
 
-        # Fetch AWS credentials only when explicitly requested
-        if include_s3_credentials:
+        # Fetch AWS credentials if configured or explicitly requested
+        if include_s3_credentials or self.s3.include_credentials:
             self._add_s3_credentials(cfg)
 
         return cfg

@@ -32,6 +32,7 @@ RadiObject/
 │       ├── dataframe.py
 │       ├── imaging_metadata.py
 │       ├── indexing.py
+│       ├── ingest.py
 │       ├── orientation.py
 │       ├── parallel.py
 │       ├── query.py
@@ -47,15 +48,14 @@ RadiObject/
 │           ├── distributed.py
 │           ├── factory.py
 │           ├── reader.py
+│           ├── compat/
+│           │   ├── __init__.py
+│           │   └── torchio.py
 │           ├── datasets/
 │           │   ├── __init__.py
 │           │   ├── multimodal.py
 │           │   ├── patch_dataset.py
 │           │   └── volume_dataset.py
-│           ├── transforms/
-│           │   ├── __init__.py
-│           │   ├── intensity.py
-│           │   └── spatial.py
 │           └── utils/
 │               ├── __init__.py
 │               └── worker_init.py
@@ -68,11 +68,13 @@ RadiObject/
     ├── test_dataframe.py
     ├── test_from_niftis.py
     ├── test_indexing.py
+    ├── test_ingest.py
     ├── test_orientation.py
     ├── test_parallel.py
     ├── test_query.py
     ├── test_radi_object.py
     ├── test_streaming.py
+    ├── test_threading_investigation.py
     ├── test_volume_collection.py
     ├── test_volume.py
     └── ml/
@@ -82,8 +84,9 @@ RadiObject/
         ├── test_distributed.py
         ├── test_performance.py
         ├── test_reader.py
+        ├── test_threading_ml.py
         ├── test_training.py
-        └── test_transforms.py
+        └── test_compat.py
 ```
 
 ## Excluded (gitignored)

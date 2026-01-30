@@ -51,26 +51,3 @@ class NoOpCache(BaseCache):
 
     def clear(self) -> None:
         pass
-
-
-class InMemoryCache(BaseCache):
-    """Simple in-memory dictionary cache."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._cache: dict[int, Any] = {}
-
-    def get(self, key: int) -> Any | None:
-        if key in self._cache:
-            self._hits += 1
-            return self._cache[key]
-        self._misses += 1
-        return None
-
-    def set(self, key: int, value: Any) -> None:
-        self._cache[key] = value
-
-    def clear(self) -> None:
-        self._cache.clear()
-        self._hits = 0
-        self._misses = 0

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from radiobject.dataframe import Dataframe, INDEX_COLUMNS
+from radiobject.dataframe import INDEX_COLUMNS, Dataframe
 
 
 @pytest.fixture
@@ -20,13 +20,15 @@ def dataframe_uri(temp_dir: Path) -> str:
 @pytest.fixture
 def sample_pandas_df() -> pd.DataFrame:
     """Sample pandas DataFrame with mandatory index columns and heterogeneous attributes."""
-    return pd.DataFrame({
-        "obs_subject_id": ["subj_1", "subj_2", "subj_3", "subj_4", "subj_5"],
-        "obs_id": ["vol_1", "vol_2", "vol_3", "vol_4", "vol_5"],
-        "age": np.array([45, 67, 32, 58, 41], dtype=np.int32),
-        "tumor_volume": np.array([12.5, 8.3, 15.2, 9.1, 11.8], dtype=np.float64),
-        "survival_months": np.array([24.5, 18.2, 36.1, 12.8, 29.3], dtype=np.float64),
-    })
+    return pd.DataFrame(
+        {
+            "obs_subject_id": ["subj_1", "subj_2", "subj_3", "subj_4", "subj_5"],
+            "obs_id": ["vol_1", "vol_2", "vol_3", "vol_4", "vol_5"],
+            "age": np.array([45, 67, 32, 58, 41], dtype=np.int32),
+            "tumor_volume": np.array([12.5, 8.3, 15.2, 9.1, 11.8], dtype=np.float64),
+            "survival_months": np.array([24.5, 18.2, 36.1, 12.8, 29.3], dtype=np.float64),
+        }
+    )
 
 
 class TestDataframeConstruction:
@@ -96,17 +98,13 @@ class TestDataframeFromPandas:
         assert len(result) == len(sample_pandas_df)
         assert set(result.columns) == set(sample_pandas_df.columns)
         for col in ["age", "tumor_volume", "survival_months"]:
-            np.testing.assert_array_almost_equal(
-                result[col].values, sample_pandas_df[col].values
-            )
+            np.testing.assert_array_almost_equal(result[col].values, sample_pandas_df[col].values)
 
 
 class TestDataframeReadToPandas:
     """Tests for read conversion to pandas DataFrame."""
 
-    def test_read_full(
-        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
-    ) -> None:
+    def test_read_full(self, dataframe_uri: str, sample_pandas_df: pd.DataFrame) -> None:
         df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
         result = df.read()
 
@@ -132,9 +130,7 @@ class TestDataframeReadToPandas:
         assert "obs_id" in result.columns
         assert "age" in result.columns
 
-    def test_read_exclude_index(
-        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
-    ) -> None:
+    def test_read_exclude_index(self, dataframe_uri: str, sample_pandas_df: pd.DataFrame) -> None:
         df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
         result = df.read(columns=["age"], include_index=False)
 
@@ -146,9 +142,7 @@ class TestDataframeReadToPandas:
 class TestDataframeRead:
     """Tests for partial read functionality."""
 
-    def test_read_all(
-        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
-    ) -> None:
+    def test_read_all(self, dataframe_uri: str, sample_pandas_df: pd.DataFrame) -> None:
         df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
         data = df.read()
 
@@ -164,8 +158,7 @@ class TestDataframeRead:
 
         assert list(data.columns) == ["tumor_volume"]
         np.testing.assert_array_almost_equal(
-            data["tumor_volume"].values,
-            sample_pandas_df["tumor_volume"].values
+            data["tumor_volume"].values, sample_pandas_df["tumor_volume"].values
         )
 
     def test_read_preserves_index_column_order(

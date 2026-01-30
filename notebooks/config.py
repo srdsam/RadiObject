@@ -8,9 +8,9 @@ BRATS_URI = "s3://souzy-scratch/radiobject/brats-tutorial"
 
 # MSD Lung data (notebooks 05-06)
 # Options:
-#   S3:    "s3://souzy-scratch/msd-lung/radiobject"
+#   S3:    "s3://souzy-scratch/msd-lung/radiobject-2mm"
 #   Local: "./data/msd-lung"
-MSD_LUNG_URI = "s3://souzy-scratch/msd-lung/radiobject"
+MSD_LUNG_URI = "s3://souzy-scratch/msd-lung/radiobject-2mm"
 
 # S3 region (ignored for local paths)
 # Note: The souzy-scratch bucket is in us-east-2

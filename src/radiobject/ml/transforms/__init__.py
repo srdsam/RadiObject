@@ -8,6 +8,8 @@ from typing import Any, Callable, Sequence
 
 from monai.transforms import (
     Compose as _MonaiCompose,
+)
+from monai.transforms import (
     NormalizeIntensityd,
     RandFlipd,
     RandGaussianNoised,
@@ -83,8 +85,7 @@ class RandomFlip3D:
 
     def __init__(self, axes: tuple[int, ...] = (0, 1, 2), prob: float = 0.5):
         self._transforms = [
-            RandFlipd(keys=["image"], spatial_axis=axis, prob=prob)
-            for axis in axes
+            RandFlipd(keys=["image"], spatial_axis=axis, prob=prob) for axis in axes
         ]
         self._compose = _MonaiCompose(self._transforms)
 

@@ -41,8 +41,28 @@ def create_training_dataloader(
         persistent_workers: Keep workers alive between epochs.
         value_filter: TileDB filter for subject selection.
         transform: Transform function applied to each sample.
+            MONAI dict transforms (e.g., RandFlipd) work directly.
         cache_strategy: Caching strategy (NONE, IN_MEMORY).
         patches_per_volume: Number of patches to extract per volume per epoch.
+
+    Example with MONAI transforms::
+
+        from monai.transforms import Compose, RandFlipd, NormalizeIntensityd
+
+        transform = Compose([
+            NormalizeIntensityd(keys="image"),
+            RandFlipd(keys="image", prob=0.5, spatial_axis=[0, 1, 2]),
+        ])
+        loader = create_training_dataloader(radi, transform=transform)
+
+    Example with TorchIO (use RadiObjectSubjectsDataset instead)::
+
+        from radiobject.ml import RadiObjectSubjectsDataset
+        import torchio as tio
+
+        transform = tio.Compose([tio.ZNormalization(), tio.RandomFlip()])
+        dataset = RadiObjectSubjectsDataset(radi, modalities=["T1w"], transform=transform)
+        loader = DataLoader(dataset, batch_size=4)
     """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
 
@@ -84,7 +104,27 @@ def create_validation_dataloader(
     value_filter: str | None = None,
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> DataLoader:
-    """Create a DataLoader configured for validation (no shuffle, no drop_last)."""
+    """Create a DataLoader configured for validation (no shuffle, no drop_last).
+
+    Args:
+        radi_object: RadiObject to load data from.
+        modalities: List of collection names to load. None uses all.
+        label_column: Column name in obs_meta for labels.
+        batch_size: Samples per batch.
+        patch_size: If provided, extract patches of this size.
+        num_workers: DataLoader worker processes.
+        pin_memory: Pin tensors to CUDA memory.
+        value_filter: TileDB filter for subject selection.
+        transform: Transform function applied to each sample.
+            MONAI dict transforms work directly.
+
+    Example::
+
+        from monai.transforms import Compose, NormalizeIntensityd
+
+        transform = Compose([NormalizeIntensityd(keys="image")])
+        loader = create_validation_dataloader(radi, transform=transform)
+    """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
 
     config = DatasetConfig(
@@ -119,7 +159,23 @@ def create_inference_dataloader(
     pin_memory: bool = True,
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> DataLoader:
-    """Create a DataLoader configured for inference (full volumes, no shuffle)."""
+    """Create a DataLoader configured for inference (full volumes, no shuffle).
+
+    Args:
+        radi_object: RadiObject to load data from.
+        modalities: List of collection names to load. None uses all.
+        batch_size: Samples per batch.
+        num_workers: DataLoader worker processes.
+        pin_memory: Pin tensors to CUDA memory.
+        transform: Transform function applied to each sample.
+
+    Example::
+
+        from monai.transforms import NormalizeIntensityd
+
+        transform = NormalizeIntensityd(keys="image")
+        loader = create_inference_dataloader(radi, transform=transform)
+    """
     config = DatasetConfig(
         loading_mode=LoadingMode.FULL_VOLUME,
         modalities=modalities,

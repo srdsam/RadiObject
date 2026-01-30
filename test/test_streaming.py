@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from radiobject.streaming import StreamingWriter, RadiObjectWriter
 from radiobject.radi_object import RadiObject
+from radiobject.streaming import RadiObjectWriter, StreamingWriter
 from radiobject.volume_collection import VolumeCollection
 
 
@@ -179,9 +179,11 @@ class TestRadiObjectWriterBasic:
         shape = (32, 32, 16)
 
         with RadiObjectWriter(uri) as writer:
-            obs_meta_df = pd.DataFrame({
-                "obs_subject_id": ["sub-001"],
-            })
+            obs_meta_df = pd.DataFrame(
+                {
+                    "obs_subject_id": ["sub-001"],
+                }
+            )
             writer.write_obs_meta(obs_meta_df)
 
             with writer.add_collection("T1w", shape=shape) as coll_writer:
@@ -199,9 +201,11 @@ class TestRadiObjectWriterBasic:
         shape = (32, 32, 16)
 
         with RadiObjectWriter(uri) as writer:
-            obs_meta_df = pd.DataFrame({
-                "obs_subject_id": ["sub-001", "sub-002"],
-            })
+            obs_meta_df = pd.DataFrame(
+                {
+                    "obs_subject_id": ["sub-001", "sub-002"],
+                }
+            )
             writer.write_obs_meta(obs_meta_df)
 
             with writer.add_collection("T1w", shape=shape) as coll_writer:
@@ -235,11 +239,13 @@ class TestRadiObjectWriterObsMeta:
         }
 
         with RadiObjectWriter(uri, obs_meta_schema=obs_meta_schema) as writer:
-            obs_meta_df = pd.DataFrame({
-                "obs_subject_id": ["sub-001", "sub-002"],
-                "age": [45, 52],
-                "diagnosis": ["healthy", "tumor"],
-            })
+            obs_meta_df = pd.DataFrame(
+                {
+                    "obs_subject_id": ["sub-001", "sub-002"],
+                    "age": [45, 52],
+                    "diagnosis": ["healthy", "tumor"],
+                }
+            )
             writer.write_obs_meta(obs_meta_df)
 
             with writer.add_collection("T1w", shape=shape) as coll_writer:

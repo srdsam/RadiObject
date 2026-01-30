@@ -64,12 +64,14 @@ class TestVolumeCollectionFromVolumes:
         obs_ids = [v[0] for v in volumes]
         subject_ids = [obs_id.rsplit("_", 1)[0] for obs_id in obs_ids]
 
-        obs_df = pd.DataFrame({
-            "obs_subject_id": subject_ids,
-            "obs_id": obs_ids,
-            "age": [45, 52, 38],
-            "diagnosis": ["healthy", "tumor", "healthy"],
-        })
+        obs_df = pd.DataFrame(
+            {
+                "obs_subject_id": subject_ids,
+                "obs_id": obs_ids,
+                "age": [45, 52, 38],
+                "diagnosis": ["healthy", "tumor", "healthy"],
+            }
+        )
         collection = VolumeCollection._from_volumes(uri, volumes, obs_data=obs_df)
 
         assert "age" in collection.obs.columns
@@ -232,9 +234,7 @@ class TestVolumeCollectionIndex:
 
     def test_index_keys(self, populated_collection_module: VolumeCollection):
         """index.keys returns tuple of all obs_ids."""
-        assert populated_collection_module.index.keys == tuple(
-            populated_collection_module.obs_ids
-        )
+        assert populated_collection_module.index.keys == tuple(populated_collection_module.obs_ids)
 
     def test_index_len(self, populated_collection_module: VolumeCollection):
         """len(index) returns number of volumes."""
@@ -284,12 +284,32 @@ class TestVolumeCollectionProperties:
         obs_ids = populated_collection_module.obs_ids
         assert len(obs_ids) == 3
 
+
+class TestVolumeCollectionMap:
+    """Tests for VolumeCollection.map() transform method."""
+
+    def test_vc_map_applies_transform(
+        self,
+        temp_dir: Path,
+        populated_collection: VolumeCollection,
+    ):
+        """VolumeCollection.map() applies transform during materialization."""
+        original_vol = populated_collection.iloc[0]
+        original_data = original_vol.to_numpy()
+
+        new_uri = str(temp_dir / "vc_map_transform")
+        new_vc = populated_collection.map(lambda v: v * 5).to_volume_collection(new_uri)
+
+        new_vol = next(iter(new_vc))
+        new_data = new_vol.to_numpy()
+
+        np.testing.assert_array_almost_equal(new_data, original_data * 5)
+
+
 class TestVolumeCollectionRoundtrip:
     """Integration tests for complete workflows."""
 
-    def test_from_volumes_roundtrip(
-        self, temp_dir: Path, volumes: list[tuple[str, Volume]]
-    ):
+    def test_from_volumes_roundtrip(self, temp_dir: Path, volumes: list[tuple[str, Volume]]):
         """Create from volumes and verify data roundtrip."""
         uri = str(temp_dir / "roundtrip_test")
         VolumeCollection._from_volumes(uri, volumes)

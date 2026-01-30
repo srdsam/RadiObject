@@ -431,9 +431,12 @@ Where:
 | **ObsMeta** | Subject-level observational metadata Dataframe in RadiObject, indexed by obs_subject_id |
 | **VolumeCollection** | A TileDB Group organizing multiple Volumes with consistent X/Y/Z dimensions |
 | **Volume** | A single 3D or 4D radiology acquisition backed by TileDB dense array |
-| **obs_id** | Unique string identifier for a Volume within a VolumeCollection (stored in TileDB metadata) |
+| **obs_id** | Unique string identifier for a Volume, unique across entire RadiObject (stored in TileDB metadata) |
 | **obs** | Volume-level observation dataframe containing per-volume metadata, indexed by obs_id with obs_subject_id as foreign key |
 | **Dataframe** | A TileDB-backed 2D heterogeneous array for tabular data |
+| **all_obs_ids** | RadiObject property returning all obs_ids across all collections (for uniqueness validation) |
+| **get_volume()** | RadiObject method returning a Volume by obs_id from any collection |
+| **rename_collection()** | RadiObject method to rename a collection within the TileDB group |
 
 ### RadiObject Indexing & Filtering Terminology
 
@@ -443,8 +446,11 @@ Where:
 | **Index** | Immutable dataclass providing bidirectional mapping between string IDs and integer positions. Methods: `get_index(key)`, `get_key(idx)`, `keys` property |
 | **iloc** | Integer-location based indexer for selecting subjects (RadiObject) or volumes (VolumeCollection) by position |
 | **loc** | Label-based indexer for selecting by obs_subject_id (RadiObject) or obs_id (VolumeCollection) |
+| **__iter__ (VolumeCollection)** | Iterator yielding Volume objects in index order. Enables `for vol in collection:` syntax |
 | **boolean mask indexing** | Filtering using a numpy boolean array (e.g., `radi.iloc[mask]` where mask is `np.ndarray[bool]`) |
 | **filter()** | Filter subjects using TileDB QueryCondition expression on obs_meta (e.g., `radi.filter("age > 40")`) |
+| **__getitem__** | Bracket indexing for RadiObject subjects by obs_subject_id. Alias for .loc[] (e.g., `radi["BraTS001"]`) |
+| **describe()** | Return summary string showing subjects, collections, shapes, and label distributions |
 | **head()** | Return view of first n subjects |
 | **tail()** | Return view of last n subjects |
 | **sample()** | Return view of n randomly sampled subjects with optional seed for reproducibility |
@@ -471,6 +477,8 @@ Where:
 | **to_obs_meta()** | Materialize filtered obs_meta DataFrame |
 | **to_obs()** | Materialize filtered obs DataFrame (CollectionQuery) |
 | **to_numpy_stack()** | Load all matching volumes as stacked numpy array (N, X, Y, Z) |
+| **map()** | Apply transform function to each volume during materialization. Composes with previous transforms |
+| **TransformFn** | Type alias for volume transform: `Callable[[np.ndarray], np.ndarray]` (X, Y, Z) -> (X', Y', Z') |
 | **VolumeBatch** | Dataclass containing stacked numpy arrays per collection and subject IDs for ML training |
 | **QueryCount** | Dataclass containing n_subjects and per-collection volume counts |
 
@@ -512,8 +520,9 @@ Where:
 
 | Term | Definition |
 |------|------------|
-| **from_niftis** | Factory method for bulk NIfTI ingestion with automatic metadata extraction and dimension-based grouping |
+| **from_niftis** | Factory method for bulk NIfTI ingestion with raw data storage (no preprocessing). Groups by modality or explicit collection_name |
 | **from_dicoms** | Factory method for bulk DICOM ingestion with automatic metadata extraction and modality-based grouping |
+| **collection_name** | Optional from_niftis param to place all volumes in a single named collection. If None, auto-groups by inferred modality |
 | **NiftiMetadata** | Pydantic model capturing NIfTI header fields (dimensions, voxel spacing, orientation, scaling) for obs storage |
 | **DicomMetadata** | Pydantic model capturing DICOM header fields (pixel spacing, modality, acquisition parameters) for obs storage |
 | **infer_series_type** | Function that determines series type (T1w, FLAIR, etc.) from BIDS filename patterns and header description |
@@ -522,6 +531,33 @@ Where:
 | **scl_slope/scl_inter** | NIfTI intensity scaling parameters: real_value = stored_value * scl_slope + scl_inter |
 | **auto_grouping** | Automatic organization of input files into VolumeCollections based on (shape, series_type) tuple |
 | **FK_constraint** | Foreign key validation ensuring obs_subject_ids in VolumeCollection.obs reference valid subjects in RadiObject.obs_meta |
+
+### RadiObject Transformation Terminology
+
+| Term | Definition |
+|------|------------|
+| **map()** | VolumeCollection method that applies a transform function to each volume during materialization. Returns CollectionQuery |
+| **TransformFn** | Transform function signature: (np.ndarray) -> np.ndarray. Input is 3D volume, output can have different shape |
+| **is_uniform** | VolumeCollection property returning True if all volumes have the same shape |
+| **heterogeneous shapes** | Collection allowing volumes with different dimensions (supported after raw ingestion or when transform changes shape) |
+
+### RadiObject Bulk Ingestion Terminology
+
+| Term | Definition |
+|------|------------|
+| **NiftiSource** | Frozen dataclass representing NIfTI file with optional paired label (image_path, subject_id, label_path) |
+| **IngestConfig** | Frozen dataclass configuring ingestion pipeline (resample_to, pad_to, derive_labels, batch_size) |
+| **discover_nifti_pairs** | Function discovering NIfTI files in directory and optionally pairing with labels by filename |
+| **compute_target_shape** | First-pass function computing target shape for padding (header-only, no data load) |
+| **process_volumes_sequential** | Generator processing volumes one at a time with memory cleanup |
+| **process_volumes_parallel** | Function processing volumes using ProcessPoolExecutor for CPU-bound resampling |
+| **derive_labels** | from_niftis param mapping column names to functions that derive values from label masks |
+| **has_any_nonzero** | Helper function checking if label mask has any non-zero voxels |
+| **count_nonzero_voxels** | Helper function counting non-zero voxels in label mask |
+| **unique_label_count** | Helper function counting unique non-zero labels in mask |
+| **ProcessedVolume** | Dataclass containing processed volume data with derived labels and shape metadata |
+| **image_dir** | from_niftis param specifying directory containing image NIfTIs |
+| **label_dir** | from_niftis param specifying optional directory containing label NIfTIs |
 
 ### RadiObject ML Training Terminology
 
@@ -542,6 +578,10 @@ Where:
 | **patches_per_volume** | Number of random patches extracted per volume per epoch (default: 1) |
 | **persistent_workers** | DataLoader setting to keep worker processes alive between epochs for faster iteration |
 | **pin_memory** | DataLoader setting to copy tensors into CUDA pinned memory for faster GPU transfer |
+| **RadiObjectSubjectsDataset** | TorchIO-compatible Dataset yielding tio.Subject objects for TorchIO Queue integration and patch-based training |
+| **Compose** | Transform composition utility. Uses MONAI Compose if available, falls back to TorchIO Compose, then minimal fallback |
+| **MONAI dict transforms** | MONAI transforms that operate on dict[str, Any] (e.g., NormalizeIntensityd, RandFlipd). Work directly with RadiObjectDataset output |
+| **TorchIO Subject transforms** | TorchIO transforms that operate on tio.Subject objects. Require RadiObjectSubjectsDataset for integration |
 
 ### RadiObject Orientation Terminology
 

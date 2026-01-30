@@ -20,20 +20,22 @@ Key Concepts:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterator, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Iterator, Sequence
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import tiledb
 
-from radiobject.ctx import ctx as global_ctx
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
     from radiobject.volume_collection import VolumeCollection
+
+# Transform function signature: numpy array in, numpy array out (shape may differ)
+TransformFn = Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]
 
 
 @dataclass(frozen=True)
@@ -85,12 +87,15 @@ class Query:
         collection_filters: dict[str, str] | None = None,  # collection_name -> query expr
         # Output scope
         output_collections: frozenset[str] | None = None,
+        # Transform function applied during materialization
+        transform_fn: TransformFn | None = None,
     ):
         self._source = source
         self._subject_ids = subject_ids
         self._subject_query = subject_query
         self._collection_filters = collection_filters or {}
         self._output_collections = output_collections
+        self._transform_fn = transform_fn
 
     def _copy(self, **kwargs) -> Query:
         """Create a copy with modified fields."""
@@ -100,6 +105,7 @@ class Query:
             subject_query=kwargs.get("subject_query", self._subject_query),
             collection_filters=kwargs.get("collection_filters", self._collection_filters),
             output_collections=kwargs.get("output_collections", self._output_collections),
+            transform_fn=kwargs.get("transform_fn", self._transform_fn),
         )
 
     # =========================================================================
@@ -149,7 +155,7 @@ class Query:
         elif isinstance(key, list):
             indices = [i if i >= 0 else n + i for i in key]
         else:
-            raise TypeError(f"iloc key must be int, slice, list[int], or bool array")
+            raise TypeError("iloc key must be int, slice, list[int], or bool array")
 
         ids = [self._source._index.get_key(i) for i in indices]
         return self.filter_subjects(ids)
@@ -223,6 +229,45 @@ class Query:
         return self._copy(output_collections=new_collections)
 
     # =========================================================================
+    # TRANSFORM (applied during materialization)
+    # =========================================================================
+
+    def map(self, fn: TransformFn) -> Query:
+        """Apply transform to each volume during materialization.
+
+        The transform function receives a numpy array and returns a numpy array.
+        Transform is applied lazily when volumes are materialized via
+        to_radi_object() or to_volume_collection().
+
+        Multiple map() calls compose: query.map(f1).map(f2) applies f1 then f2.
+
+        Args:
+            fn: Function taking numpy array (X, Y, Z) and returning numpy array.
+                Can change shape (e.g., resampling to different dimensions).
+
+        Returns:
+            New Query with transform applied
+
+        Example:
+            # Double all voxel values
+            query.map(lambda v: v * 2).to_radi_object(uri)
+
+            # Resample to uniform shape with MONAI
+            from monai.transforms import Spacing
+            spacing = Spacing(pixdim=(2.0, 2.0, 2.0))
+            query.map(lambda v: spacing(v[np.newaxis, ...])[0]).to_radi_object(uri)
+        """
+        if self._transform_fn is not None:
+            # Compose transforms: apply previous transform, then new one
+            prev_fn = self._transform_fn
+
+            def composed_fn(v: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
+                return fn(prev_fn(v))
+
+            return self._copy(transform_fn=composed_fn)
+        return self._copy(transform_fn=fn)
+
+    # =========================================================================
     # MASK RESOLUTION
     # =========================================================================
 
@@ -275,14 +320,10 @@ class Query:
                     result = arr.query(cond=self._collection_filters[collection_name])[:]
                 else:
                     result = arr.query(attrs=[])[:]["obs_id"]
-                    return frozenset(
-                        v.decode() if isinstance(v, bytes) else str(v) for v in result
-                    )
+                    return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in result)
 
             obs_ids = result["obs_id"]
-            return frozenset(
-                v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids
-            )
+            return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
 
     def _resolve_final_subject_mask(self) -> frozenset[str]:
         """Resolve to final subject mask after applying all filters.
@@ -321,9 +362,7 @@ class Query:
         """Resolve which collections to include in output."""
         if self._output_collections is not None:
             return tuple(
-                name
-                for name in self._source.collection_names
-                if name in self._output_collections
+                name for name in self._source.collection_names if name in self._output_collections
             )
         return self._source.collection_names
 
@@ -347,9 +386,7 @@ class Query:
         """Return filtered obs_meta DataFrame."""
         subject_mask = self._resolve_final_subject_mask()
         obs_meta = self._source.obs_meta.read()
-        return obs_meta[obs_meta["obs_subject_id"].isin(subject_mask)].reset_index(
-            drop=True
-        )
+        return obs_meta[obs_meta["obs_subject_id"].isin(subject_mask)].reset_index(drop=True)
 
     def iter_volumes(self, collection_name: str | None = None) -> Iterator[Volume]:
         """Iterate over volumes matching the query.
@@ -419,25 +456,92 @@ class Query:
     ) -> RadiObject:
         """Materialize query results as a new RadiObject.
 
+        If a transform was set via map(), it is applied to each volume
+        during materialization. If the transform changes volume shapes,
+        the output collection becomes heterogeneous.
+
         Args:
             uri: Target URI for the new RadiObject
             streaming: Use streaming writer for memory efficiency (default: True)
             ctx: TileDB context
         """
-        from radiobject.radi_object import RadiObjectView
+        from radiobject.radi_object import RadiObject, RadiObjectView
+        from radiobject.streaming import RadiObjectWriter
 
         subject_mask = self._resolve_final_subject_mask()
         output_collections = self._resolve_output_collections()
 
-        view = RadiObjectView(
-            source=self._source,
-            obs_subject_ids=list(subject_mask),
-            collection_names=list(output_collections),
-        )
+        # If no transform, delegate to RadiObjectView for efficiency
+        if self._transform_fn is None:
+            view = RadiObjectView(
+                source=self._source,
+                obs_subject_ids=list(subject_mask),
+                collection_names=list(output_collections),
+            )
+            if streaming:
+                return view.to_radi_object_streaming(uri, ctx=ctx)
+            return view.to_radi_object(uri, ctx=ctx)
 
-        if streaming:
-            return view.to_radi_object_streaming(uri, ctx=ctx)
-        return view.to_radi_object(uri, ctx=ctx)
+        # With transform: use streaming writer and apply transform to each volume
+        # Build filtered obs_meta
+        obs_meta_df = self._source.obs_meta.read()
+        filtered_obs_meta = obs_meta_df[
+            obs_meta_df["obs_subject_id"].isin(subject_mask)
+        ].reset_index(drop=True)
+
+        obs_meta_schema: dict[str, np.dtype] = {}
+        for col in filtered_obs_meta.columns:
+            if col in ("obs_subject_id", "obs_id"):
+                continue
+            dtype = filtered_obs_meta[col].to_numpy().dtype
+            if dtype == np.dtype("O"):
+                dtype = np.dtype("U64")
+            obs_meta_schema[col] = dtype
+
+        with RadiObjectWriter(uri, obs_meta_schema=obs_meta_schema, ctx=ctx) as writer:
+            writer.write_obs_meta(filtered_obs_meta)
+
+            for coll_name in output_collections:
+                src_collection = self._source.collection(coll_name)
+                volume_mask = self._resolve_volume_mask(coll_name, subject_mask)
+
+                if not volume_mask:
+                    continue
+
+                # Get obs data for filtered volumes
+                obs_df = src_collection.obs.read()
+                filtered_obs = obs_df[obs_df["obs_id"].isin(volume_mask)]
+
+                # Extract obs schema
+                obs_schema: dict[str, np.dtype] = {}
+                for col in src_collection.obs.columns:
+                    if col in ("obs_id", "obs_subject_id"):
+                        continue
+                    obs_schema[col] = src_collection.obs.dtypes[col]
+
+                # Transform may change shape, so output is heterogeneous (shape=None)
+                with writer.add_collection(
+                    coll_name, shape=None, obs_schema=obs_schema
+                ) as coll_writer:
+                    for _, row in filtered_obs.iterrows():
+                        obs_id = row["obs_id"]
+                        vol = src_collection.loc[obs_id]
+                        data = vol.to_numpy()
+
+                        # Apply transform
+                        data = self._transform_fn(data)
+
+                        attrs = {
+                            k: v for k, v in row.items() if k not in ("obs_id", "obs_subject_id")
+                        }
+                        coll_writer.write_volume(
+                            data=data,
+                            obs_id=obs_id,
+                            obs_subject_id=row["obs_subject_id"],
+                            **attrs,
+                        )
+
+        return RadiObject(uri, ctx=ctx)
 
     def __len__(self) -> int:
         """Number of subjects matching the query."""
@@ -476,11 +580,13 @@ class CollectionQuery:
         volume_ids: frozenset[str] | None = None,
         volume_query: str | None = None,
         subject_ids: frozenset[str] | None = None,
+        transform_fn: TransformFn | None = None,
     ):
         self._source = source
         self._volume_ids = volume_ids
         self._volume_query = volume_query
         self._subject_ids = subject_ids
+        self._transform_fn = transform_fn
 
     def _copy(self, **kwargs) -> CollectionQuery:
         """Create a copy with modified fields."""
@@ -489,6 +595,7 @@ class CollectionQuery:
             volume_ids=kwargs.get("volume_ids", self._volume_ids),
             volume_query=kwargs.get("volume_query", self._volume_query),
             subject_ids=kwargs.get("subject_ids", self._subject_ids),
+            transform_fn=kwargs.get("transform_fn", self._transform_fn),
         )
 
     # =========================================================================
@@ -525,7 +632,7 @@ class CollectionQuery:
         elif isinstance(key, list):
             indices = [i if i >= 0 else n + i for i in key]
         else:
-            raise TypeError(f"iloc key must be int, slice, list[int], or bool array")
+            raise TypeError("iloc key must be int, slice, list[int], or bool array")
 
         obs_ids = frozenset(self._source._index.get_key(i) for i in indices)
         new_ids = obs_ids
@@ -562,6 +669,48 @@ class CollectionQuery:
         return self._copy(volume_ids=frozenset(sampled))
 
     # =========================================================================
+    # TRANSFORM (applied during materialization)
+    # =========================================================================
+
+    def map(self, fn: TransformFn) -> CollectionQuery:
+        """Apply transform to each volume during materialization.
+
+        The transform function receives a numpy array and returns a numpy array.
+        Transform is applied lazily when volumes are materialized via
+        to_volume_collection().
+
+        Multiple map() calls compose: query.map(f1).map(f2) applies f1 then f2.
+
+        Args:
+            fn: Function taking numpy array (X, Y, Z) and returning numpy array.
+                Can change shape (e.g., resampling to different dimensions).
+
+        Returns:
+            New CollectionQuery with transform applied
+
+        Example:
+            # Double all voxel values
+            query.map(lambda v: v * 2).to_volume_collection(uri)
+
+            # Resample to uniform shape
+            def resample(v):
+                from scipy.ndimage import zoom
+                target = (128, 128, 128)
+                factors = tuple(t / s for t, s in zip(target, v.shape))
+                return zoom(v, factors, order=1)
+            query.map(resample).to_volume_collection(uri)
+        """
+        if self._transform_fn is not None:
+            # Compose transforms: apply previous transform, then new one
+            prev_fn = self._transform_fn
+
+            def composed_fn(v: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
+                return fn(prev_fn(v))
+
+            return self._copy(transform_fn=composed_fn)
+        return self._copy(transform_fn=fn)
+
+    # =========================================================================
     # MASK RESOLUTION
     # =========================================================================
 
@@ -586,9 +735,7 @@ class CollectionQuery:
                 result = arr.query(dims=["obs_id"], attrs=[])[:]
 
             obs_ids = result["obs_id"]
-            all_ids = frozenset(
-                v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids
-            )
+            all_ids = frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
 
         # Apply explicit volume_ids filter (intersection with pre-specified IDs)
         if self._volume_ids is not None:
@@ -631,7 +778,12 @@ class CollectionQuery:
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
     ) -> VolumeCollection:
-        """Materialize query results as a new VolumeCollection."""
+        """Materialize query results as a new VolumeCollection.
+
+        If a transform was set via map(), it is applied to each volume
+        during materialization. If the transform changes volume shapes,
+        the output collection becomes heterogeneous (shape=None).
+        """
         from radiobject.streaming import StreamingWriter
 
         volume_mask = self._resolve_volume_mask()
@@ -648,23 +800,28 @@ class CollectionQuery:
                 continue
             obs_schema[col] = self._source.obs.dtypes[col]
 
+        # If transform is set, output is heterogeneous (shape may change)
+        output_shape = None if self._transform_fn is not None else self._source.shape
+
         with StreamingWriter(
             uri=uri,
-            shape=self._source.shape,
+            shape=output_shape,
             obs_schema=obs_schema,
             name=collection_name,
             ctx=ctx,
         ) as writer:
             for obs_id in sorted(volume_mask):
                 vol = self._source.loc[obs_id]
+                data = vol.to_numpy()
+
+                # Apply transform if set
+                if self._transform_fn is not None:
+                    data = self._transform_fn(data)
+
                 obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
-                attrs = {
-                    k: v
-                    for k, v in obs_row.items()
-                    if k not in ("obs_id", "obs_subject_id")
-                }
+                attrs = {k: v for k, v in obs_row.items() if k not in ("obs_id", "obs_subject_id")}
                 writer.write_volume(
-                    data=vol.to_numpy(),
+                    data=data,
                     obs_id=obs_id,
                     obs_subject_id=obs_row["obs_subject_id"],
                     **attrs,

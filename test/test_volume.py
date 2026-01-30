@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import tiledb
 
-from radiobject.ctx import SliceOrientation, configure, TileConfig
+from radiobject.ctx import SliceOrientation, TileConfig, configure
 from radiobject.volume import Volume
 
 logger = logging.getLogger(__name__)
@@ -115,9 +115,7 @@ class TestVolumeFromNifti:
         img = nib.load(nifti_4d_path)
         assert vol.shape == img.shape
 
-    def test_from_nifti_accepts_path_object(
-        self, temp_dir: Path, nifti_3d_path: Path
-    ) -> None:
+    def test_from_nifti_accepts_path_object(self, temp_dir: Path, nifti_3d_path: Path) -> None:
         uri = str(temp_dir / "vol_from_path")
         vol = Volume.from_nifti(uri, nifti_3d_path)
 
@@ -194,7 +192,9 @@ class TestVolumeSlicing:
         y_start, y_end = 8, min(24, array_4d.shape[1])
         z_start, z_end = 4, min(12, array_4d.shape[2])
 
-        result = vol.slice(slice(0, x_end), slice(y_start, y_end), slice(z_start, z_end), slice(1, 3))
+        result = vol.slice(
+            slice(0, x_end), slice(y_start, y_end), slice(z_start, z_end), slice(1, 3)
+        )
         expected = array_4d[0:x_end, y_start:y_end, z_start:z_end, 1:3]
         assert result.shape == expected.shape
         np.testing.assert_array_almost_equal(result, expected)
@@ -223,9 +223,7 @@ class TestVolumeToNumpy:
 class TestVolumeCustomContext:
     """Tests for custom tiledb.Ctx parameter."""
 
-    def test_create_with_custom_ctx(
-        self, temp_dir: Path, custom_tiledb_ctx: tiledb.Ctx
-    ) -> None:
+    def test_create_with_custom_ctx(self, temp_dir: Path, custom_tiledb_ctx: tiledb.Ctx) -> None:
         uri = str(temp_dir / "vol_custom_ctx")
         vol = Volume.create(uri, shape=(32, 32, 16), ctx=custom_tiledb_ctx)
 
@@ -291,7 +289,13 @@ class TestVolumePerformance:
 
         total_mb = slice_size_mb * slice_count
         throughput = total_mb / duration
-        logger.info("Axial slices (%dx): %.2f MB in %.3fs (%.2f MB/s)", slice_count, total_mb, duration, throughput)
+        logger.info(
+            "Axial slices (%dx): %.2f MB in %.3fs (%.2f MB/s)",
+            slice_count,
+            total_mb,
+            duration,
+            throughput,
+        )
         assert duration < 60
 
     def test_write_throughput_4d(self, temp_dir: Path) -> None:

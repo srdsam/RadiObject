@@ -11,13 +11,12 @@ import pandas as pd
 import pytest
 
 from radiobject.imaging_metadata import (
+    KNOWN_SERIES_TYPES,
     extract_nifti_metadata,
     infer_series_type,
-    KNOWN_SERIES_TYPES,
 )
 from radiobject.radi_object import RadiObject
 from radiobject.volume_collection import VolumeCollection
-
 
 # ----- Fixtures -----
 
@@ -295,11 +294,13 @@ class TestRadiObjectFromNiftis:
         self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
     ) -> None:
         uri = str(temp_dir / "radi_user_meta")
-        obs_meta = pd.DataFrame({
-            "obs_subject_id": ["sub-01", "sub-02", "sub-03"],
-            "age": [45, 52, 38],
-            "sex": ["M", "F", "M"],
-        })
+        obs_meta = pd.DataFrame(
+            {
+                "obs_subject_id": ["sub-01", "sub-02", "sub-03"],
+                "age": [45, 52, 38],
+                "sex": ["M", "F", "M"],
+            }
+        )
 
         radi = RadiObject.from_niftis(
             uri=uri,
@@ -315,10 +316,12 @@ class TestRadiObjectFromNiftis:
         self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
     ) -> None:
         uri = str(temp_dir / "radi_fk_valid")
-        obs_meta = pd.DataFrame({
-            "obs_subject_id": ["sub-01", "sub-02", "sub-03"],
-            "age": [45, 52, 38],
-        })
+        obs_meta = pd.DataFrame(
+            {
+                "obs_subject_id": ["sub-01", "sub-02", "sub-03"],
+                "age": [45, 52, 38],
+            }
+        )
 
         radi = RadiObject.from_niftis(
             uri=uri,
@@ -334,10 +337,12 @@ class TestRadiObjectFromNiftis:
     ) -> None:
         uri = str(temp_dir / "radi_fk_invalid")
         # obs_meta only has sub-01, but niftis include sub-02 and sub-03
-        obs_meta = pd.DataFrame({
-            "obs_subject_id": ["sub-01"],
-            "age": [45],
-        })
+        obs_meta = pd.DataFrame(
+            {
+                "obs_subject_id": ["sub-01"],
+                "age": [45],
+            }
+        )
 
         with pytest.raises(ValueError, match="obs_subject_ids.*not found in obs_meta"):
             RadiObject.from_niftis(
@@ -351,9 +356,11 @@ class TestRadiObjectFromNiftis:
     ) -> None:
         uri = str(temp_dir / "radi_missing_col")
         # obs_meta without obs_subject_id column
-        obs_meta = pd.DataFrame({
-            "patient_id": ["sub-01", "sub-02", "sub-03"],
-        })
+        obs_meta = pd.DataFrame(
+            {
+                "patient_id": ["sub-01", "sub-02", "sub-03"],
+            }
+        )
 
         with pytest.raises(ValueError, match="obs_subject_id"):
             RadiObject.from_niftis(
@@ -365,7 +372,7 @@ class TestRadiObjectFromNiftis:
     def test_empty_niftis_raises(self, temp_dir: Path) -> None:
         uri = str(temp_dir / "radi_empty")
 
-        with pytest.raises(ValueError, match="At least one NIfTI"):
+        with pytest.raises(ValueError, match="No NIfTI files found"):
             RadiObject.from_niftis(uri=uri, niftis=[])
 
     def test_metadata_captured_in_collection_obs(

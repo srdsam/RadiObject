@@ -126,7 +126,7 @@ def _get_manifest(data_type: Literal["nifti", "dicom"]) -> list[dict]:
     except FileNotFoundError:
         pytest.skip(
             f"{data_type.upper()} manifest not found. "
-            "Run: python -c \"from data import sync_test_data; sync_test_data()\""
+            'Run: python -c "from data import sync_test_data; sync_test_data()"'
         )
 
 
@@ -186,10 +186,12 @@ def _build_volume_collections(
             vol = Volume.from_numpy(vol_uri, data)
             vol.set_obs_id(obs_id)
             volumes.append((obs_id, vol))
-            obs_data_rows.append({
-                "obs_id": obs_id,
-                "obs_subject_id": subj_id,
-            })
+            obs_data_rows.append(
+                {
+                    "obs_id": obs_id,
+                    "obs_subject_id": subj_id,
+                }
+            )
 
         obs_df = pd.DataFrame(obs_data_rows)
         vc_uri = f"{uri_prefix}/vc_{modality}" if uri_prefix else str(temp_dir / f"vc_{modality}")
@@ -200,6 +202,7 @@ def _build_volume_collections(
 
 
 # ----- Core Fixtures -----
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
@@ -249,6 +252,7 @@ def custom_tiledb_ctx() -> tiledb.Ctx:
 
 # ----- Manifest Fixtures -----
 
+
 @pytest.fixture
 def nifti_manifest() -> list[dict]:
     """Load NIfTI manifest.json."""
@@ -262,6 +266,7 @@ def dicom_manifest() -> list[dict]:
 
 
 # ----- Path Fixtures -----
+
 
 @pytest.fixture
 def sample_nifti_image(nifti_manifest: list[dict]) -> Path:
@@ -302,6 +307,7 @@ def nifti_3d_path(nifti_manifest: list[dict]) -> Path:
 
 # ----- Array Fixtures -----
 
+
 @pytest.fixture
 def array_4d(nifti_4d_path: Path) -> np.ndarray:
     """Load first MSD BraTS 4D image as numpy array."""
@@ -317,6 +323,7 @@ def array_3d(nifti_3d_path: Path) -> np.ndarray:
 
 
 # ----- Volume Fixtures -----
+
 
 @pytest.fixture
 def volumes(temp_dir: Path, nifti_manifest: list[dict]) -> list[tuple[str, Volume]]:
@@ -348,6 +355,7 @@ def populated_collection_module(
 
 
 # ----- VolumeCollection Fixtures -----
+
 
 @pytest.fixture
 def volume_collections(temp_dir: Path, nifti_manifest: list[dict]) -> dict[str, VolumeCollection]:
@@ -483,6 +491,7 @@ def s3_populated_radi_object(
 
 # ----- Pre-built S3 RadiObject Fixture -----
 
+
 @pytest.fixture(scope="session")
 def prebuilt_radiobject() -> "RadiObject | None":
     """Pre-built RadiObject from S3 for fast tests (3 BRATS subjects).
@@ -502,6 +511,7 @@ def prebuilt_radiobject() -> "RadiObject | None":
 
     try:
         from radiobject.radi_object import RadiObject
+
         vfs = tiledb.VFS(ctx=ctx)
         if not vfs.is_dir(uri):
             return None

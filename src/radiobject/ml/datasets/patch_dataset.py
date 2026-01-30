@@ -48,13 +48,9 @@ class PatchVolumeDataset(Dataset):
 
         rng = np.random.default_rng(seed=idx)
 
-        max_start = tuple(
-            max(0, self._volume_shape[i] - self._patch_size[i])
-            for i in range(3)
-        )
+        max_start = tuple(max(0, self._volume_shape[i] - self._patch_size[i]) for i in range(3))
         start = tuple(
-            rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0
-            for i in range(3)
+            rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
         )
 
         data = self._reader.read_patch(volume_idx, start, self._patch_size)

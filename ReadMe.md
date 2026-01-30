@@ -10,40 +10,111 @@
 
 Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes.
 
+### TileDB Structure
+
+The hierarchy maps to TileDB primitives (Groups and Arrays) with explicit dimensions and attributes:
+
 ```
-RadiObject
-├── ObsMeta                           # Observational metadata per patient
-│   └── (indexed per patient)         # Patient height, weight....
+RadiObject (TileDB Group)
+├── metadata: { subject_count, n_collections }
 │
-├── VolumeCollection                  # Collection of volumes (e.g., all T1w scans)
-│   │                                 # Enforces consistent X/Y/Z dimensions
-│   │
-│   ├── Obs                           # Observational metadata per volume/scan
-│   │   └── (indexed per volume)      # Acquisition params, labels...
-│   │
-│   └── Volume[]                      # Individual 3D volumes
-│       ├── Volume[0]
-│       │   └── Tile[]                # Segmented chunks - handled by TileDB
-│       │       ├── Tile[0,0,0]
-│       │       ├── Tile[0,0,1]
-│       │       └── ...
-│       ├── Volume[1]
-│       │   └── Tile[]
-│       └── ...
+├── obs_meta (Sparse Array) ────────────────────────────────────────────────┐
+│   │                                                                        │
+│   │  DIMENSIONS (Indexes):                                                 │
+│   │    dim[0]: obs_subject_id  (ascii)  <- Primary subject identifier      │
+│   │    dim[1]: obs_id          (ascii)  <- Observation identifier          │
+│   │                                                                        │
+│   │  ATTRIBUTES (Data):                                                    │
+│   │    User-defined columns (age, sex, diagnosis, labels, etc.)            │
+│   └────────────────────────────────────────────────────────────────────────┘
+│
+└── collections (TileDB Group)
+    │
+    ├── T1w (VolumeCollection - TileDB Group)
+    │   ├── metadata: { n_volumes, name, [x_dim, y_dim, z_dim]? }
+    │   │              └── shape fields only present if collection is uniform
+    │   │
+    │   ├── obs (Sparse Array) ─────────────────────────────────────────────┐
+    │   │   │                                                                │
+    │   │   │  DIMENSIONS (Indexes):                                         │
+    │   │   │    dim[0]: obs_subject_id  (ascii)  <- FK to RadiObject.obs_meta
+    │   │   │    dim[1]: obs_id          (ascii)  <- Unique volume ID        │
+    │   │   │                                                                │
+    │   │   │  ATTRIBUTES (Data):                                            │
+    │   │   │    series_type      <- "T1w", "FLAIR", etc.                    │
+    │   │   │    voxel_spacing    <- "(1.0, 1.0, 1.0)" per-volume spacing    │
+    │   │   │    dimensions       <- "(240, 240, 155)" per-volume shape      │
+    │   │   │    axcodes, affine_json, datatype, bitpix, ...                 │
+    │   │   └────────────────────────────────────────────────────────────────┘
+    │   │
+    │   └── volumes (TileDB Group)
+    │       │
+    │       ├── 0 (Volume - Dense Array) ───────────────────────────────────┐
+    │       │   │  Each volume has its OWN shape (can differ across volumes) │
+    │       │   │                                                            │
+    │       │   │  DIMENSIONS (Indexes):                                     │
+    │       │   │    dim[0]: x  (int32, 0..X-1)                              │
+    │       │   │    dim[1]: y  (int32, 0..Y-1)                              │
+    │       │   │    dim[2]: z  (int32, 0..Z-1)                              │
+    │       │   │   [dim[3]: t  (int32, 0..T-1)]  <- 4D volumes only         │
+    │       │   │                                                            │
+    │       │   │  ATTRIBUTES (Data):                                        │
+    │       │   │    voxels  (float32/int16)  <- Intensity values            │
+    │       │   │                                                            │
+    │       │   │  METADATA: obs_id, slice_orientation, orientation info     │
+    │       │   └────────────────────────────────────────────────────────────┘
+    │       │
+    │       ├── 1 (Volume) ...  <- may have different shape than Volume[0]
+    │       └── N (Volume) ...
+    │
+    ├── FLAIR (VolumeCollection) ...
+    └── seg (VolumeCollection) ...
 ```
 
-| Component | Description |
-|-----------|-------------|
-| **Tile** | Segmented chunk of a volume for partial reads |
-| **Volume** | A single 3D acquisition (maps to DICOM Series) |
-| **VolumeCollection** | Collection of volumes of a given type (e.g., all T1w) with consistent X/Y/Z dimensions |
-| **Obs** | Observational metadata aligned on the index of each volume |
-| **ObsMeta** | Observational metadata aligned on the index of each subject |
+### Key Relationships
 
-| Index | Description |
-|-----------|-------------|
-| **obs_id** | Index on each individual 'series' - present in `Obs` |
-| **obs_subject_id** | Index on each 'subject' - present in `Obs` and `ObsMeta` |
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           INDEX RELATIONSHIPS                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  RadiObject.obs_meta                     VolumeCollection.obs                │
+│  ┌────────────────────┐                  ┌─────────────────────┐             │
+│  │ obs_subject_id (D) │<────────────────>│ obs_subject_id (D)  │  FK         │
+│  │ obs_id         (D) │                  │ obs_id          (D) │             │
+│  │ age            (A) │                  │ series_type     (A) │             │
+│  │ sex            (A) │                  │ voxel_spacing   (A) │             │
+│  │ tumor_grade    (A) │                  │ dimensions      (A) │             │
+│  └────────────────────┘                  └─────────────────────┘             │
+│         │                                          │                         │
+│         │ 1:N relationship                         │ 1:1 relationship        │
+│         │ (one subject, many obs)                  │                         │
+│         v                                          v                         │
+│  ┌──────────────────────────────────────────────────────────────┐           │
+│  │                        Volume (Dense Array)                   │           │
+│  │  ┌──────────────────────────────────────────────────────┐    │           │
+│  │  │  DIMENSIONS: x, y, z [, t]                           │    │           │
+│  │  │  ATTRIBUTES: voxels                                  │    │           │
+│  │  │  METADATA:   obs_id (links to obs dataframe)         │    │           │
+│  │  └──────────────────────────────────────────────────────┘    │           │
+│  └──────────────────────────────────────────────────────────────┘           │
+│                                                                              │
+│  (D) = Dimension    (A) = Attribute                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+| Component | TileDB Type | Dimensions (Indexes) | Attributes (Data) |
+|-----------|-------------|----------------------|-------------------|
+| **RadiObject** | Group | — | metadata: subject_count, n_collections |
+| **obs_meta** | Sparse Array | `obs_subject_id`, `obs_id` | User-defined (age, labels, etc.) |
+| **VolumeCollection** | Group | — | metadata: n_volumes, name, [shape]? |
+| **obs** | Sparse Array | `obs_subject_id`, `obs_id` | series_type, voxel_spacing, **dimensions**, etc. |
+| **Volume** | Dense Array | `x`, `y`, `z` [, `t`] | `voxels` (intensity values) |
+
+**Note on shapes:**
+- **Uniform collections**: `x_dim, y_dim, z_dim` stored in group metadata; `is_uniform=True`
+- **Heterogeneous collections**: No shape in group metadata; each volume's shape stored in `obs.dimensions`
+- **4D volumes**: Temporal dimension (`t`) is per-volume; not tracked at collection level
 
 ## Organisation
 

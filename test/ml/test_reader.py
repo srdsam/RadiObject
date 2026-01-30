@@ -34,18 +34,14 @@ class TestVolumeReaderBasic:
 class TestVolumeReaderReadFull:
     """Tests for VolumeReader.read_full."""
 
-    def test_read_full_returns_array(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_full_returns_array(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
         data = reader.read_full(0)
 
         assert isinstance(data, np.ndarray)
         assert data.shape == (240, 240, 155)
 
-    def test_read_full_all_volumes(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_full_all_volumes(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
 
         for i in range(len(reader)):
@@ -56,25 +52,19 @@ class TestVolumeReaderReadFull:
 class TestVolumeReaderReadPatch:
     """Tests for VolumeReader.read_patch."""
 
-    def test_read_patch_basic(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_patch_basic(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
         patch = reader.read_patch(0, start=(0, 0, 0), size=(64, 64, 64))
 
         assert patch.shape == (64, 64, 64)
 
-    def test_read_patch_offset(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_patch_offset(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
         patch = reader.read_patch(0, start=(10, 20, 30), size=(32, 32, 32))
 
         assert patch.shape == (32, 32, 32)
 
-    def test_read_patch_matches_full(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_patch_matches_full(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
 
         full = reader.read_full(0)
@@ -87,33 +77,25 @@ class TestVolumeReaderReadPatch:
 class TestVolumeReaderReadSlice:
     """Tests for VolumeReader.read_slice."""
 
-    def test_read_axial_slice(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_axial_slice(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
         slice_2d = reader.read_slice(0, axis=2, position=77)
 
         assert slice_2d.shape == (240, 240)
 
-    def test_read_sagittal_slice(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_sagittal_slice(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
         slice_2d = reader.read_slice(0, axis=0, position=120)
 
         assert slice_2d.shape == (240, 155)
 
-    def test_read_coronal_slice(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_coronal_slice(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
         slice_2d = reader.read_slice(0, axis=1, position=120)
 
         assert slice_2d.shape == (240, 155)
 
-    def test_read_slice_matches_full(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_slice_matches_full(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
 
         full = reader.read_full(0)
@@ -121,9 +103,7 @@ class TestVolumeReaderReadSlice:
 
         np.testing.assert_array_equal(axial, full[:, :, 50])
 
-    def test_read_slice_invalid_axis(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_read_slice_invalid_axis(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
 
         with pytest.raises(ValueError, match="axis must be 0, 1, or 2"):
@@ -171,9 +151,7 @@ class TestVolumeReaderThreadSafety:
             for arr in arrays[1:]:
                 np.testing.assert_array_equal(arr, arrays[0])
 
-    def test_concurrent_patch_reads(
-        self, populated_collection_module: "VolumeCollection"
-    ) -> None:
+    def test_concurrent_patch_reads(self, populated_collection_module: "VolumeCollection") -> None:
         reader = VolumeReader(populated_collection_module)
 
         def read_patch(idx: int) -> np.ndarray:

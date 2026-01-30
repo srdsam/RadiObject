@@ -9,7 +9,8 @@ import nibabel as nib
 import numpy as np
 import tiledb
 
-from radiobject.ctx import ctx as global_ctx, get_config, SliceOrientation
+from radiobject.ctx import SliceOrientation, get_config
+from radiobject.ctx import ctx as global_ctx
 from radiobject.orientation import (
     OrientationInfo,
     detect_dicom_orientation,
@@ -20,6 +21,7 @@ from radiobject.orientation import (
 )
 
 VOXELS_ATTR = "voxels"  # TileDB attribute name for dense volume arrays
+
 
 class Volume:
     """A single 'Series' or volume from a radiology scan."""
@@ -101,22 +103,19 @@ class Volume:
     def axial(self, z: int, t: int | None = None) -> np.ndarray:
         """Get axial slice (X-Y plane at given Z)."""
         return self.slice(
-            slice(None), slice(None), slice(z, z + 1),
-            slice(t, t + 1) if t is not None else None
+            slice(None), slice(None), slice(z, z + 1), slice(t, t + 1) if t is not None else None
         ).squeeze()
 
     def sagittal(self, x: int, t: int | None = None) -> np.ndarray:
         """Get sagittal slice (Y-Z plane at given X)."""
         return self.slice(
-            slice(x, x + 1), slice(None), slice(None),
-            slice(t, t + 1) if t is not None else None
+            slice(x, x + 1), slice(None), slice(None), slice(t, t + 1) if t is not None else None
         ).squeeze()
 
     def coronal(self, y: int, t: int | None = None) -> np.ndarray:
         """Get coronal slice (X-Z plane at given Y)."""
         return self.slice(
-            slice(None), slice(y, y + 1), slice(None),
-            slice(t, t + 1) if t is not None else None
+            slice(None), slice(y, y + 1), slice(None), slice(t, t + 1) if t is not None else None
         ).squeeze()
 
     def to_numpy(self) -> np.ndarray:
@@ -152,9 +151,7 @@ class Volume:
 
     # ===== Analysis Methods =====
 
-    def get_statistics(
-        self, percentiles: list[float] | None = None
-    ) -> dict[str, float]:
+    def get_statistics(self, percentiles: list[float] | None = None) -> dict[str, float]:
         """Compute descriptive statistics for the volume.
 
         Args:
@@ -319,9 +316,7 @@ class Volume:
             reorient: Reorient to canonical orientation. None uses config default.
         """
         config = get_config()
-        should_reorient = (
-            reorient if reorient is not None else config.orientation.reorient_on_load
-        )
+        should_reorient = reorient if reorient is not None else config.orientation.reorient_on_load
 
         img = nib.load(nifti_path)
         data = np.asarray(img.dataobj)
@@ -386,9 +381,7 @@ class Volume:
         import pydicom
 
         config = get_config()
-        should_reorient = (
-            reorient if reorient is not None else config.orientation.reorient_on_load
-        )
+        should_reorient = reorient if reorient is not None else config.orientation.reorient_on_load
 
         dicom_path = Path(dicom_dir)
 
@@ -396,9 +389,7 @@ class Volume:
         dicom_files = sorted(dicom_path.glob("*.dcm"))
         if not dicom_files:
             dicom_files = sorted(
-                f
-                for f in dicom_path.iterdir()
-                if f.is_file() and not f.name.startswith(".")
+                f for f in dicom_path.iterdir() if f.is_file() and not f.name.startswith(".")
             )
 
         if not dicom_files:

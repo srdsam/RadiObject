@@ -612,7 +612,7 @@ The RadiObject ML training system is designed for distributed training at scale:
 2. **DistributedSampler integration:** Built-in DDP support with proper epoch shuffling
 3. **S3-native:** No shared filesystem required; each node reads directly from S3
 4. **Flexible loading modes:** Full volume, patch, or 2D slice depending on use case
-5. **Caching layers:** 12× speedup with in-memory caching for repeated access
+5. **Rely on TileDB tile cache:** No application-level InMemoryCache (removed to avoid OOM)
 
 **Practical scaling limits:**
 - Single node: ~10,000 subjects (I/O bound past this)
@@ -621,6 +621,108 @@ The RadiObject ML training system is designed for distributed training at scale:
 
 For very large datasets (>100,000 subjects), consider:
 - Smaller patch sizes (64³ vs 128³)
-- More aggressive caching
 - High-bandwidth instances (p4d, p5)
 - Pre-processing to local NVMe for hot data
+
+---
+
+## Threading Architecture Analysis
+
+This section documents the parallelization architecture and optimization opportunities for S3 cloud writes.
+
+### Current Threading Model
+
+RadiObject uses a two-level parallelization strategy:
+
+```
+Application Level (Python ThreadPoolExecutor)
+├── Worker 1 ─── TileDB Context ─┬─ sm.io_concurrency_level threads
+│                                └─ sm.compute_concurrency_level threads
+├── Worker 2 ─── TileDB Context ─┬─ sm.io_concurrency_level threads
+│                                └─ sm.compute_concurrency_level threads
+└── Worker N ─── TileDB Context ─┬─ sm.io_concurrency_level threads
+                                 └─ sm.compute_concurrency_level threads
+```
+
+**Configuration Parameters:**
+
+| Setting | Location | Default | Description |
+|---------|----------|---------|-------------|
+| `io.max_workers` | `IOConfig` | 4 | Application-level parallel workers |
+| `io.concurrency` | `IOConfig` | 4 | TileDB internal thread pools |
+| `s3.max_parallel_ops` | `S3Config` | 8 | S3 parallel upload operations |
+
+### Write Operation Breakdown
+
+Analysis of `Volume.from_numpy()` write phases:
+
+| Phase | Time % | Description |
+|-------|--------|-------------|
+| Array creation | ~10% | Schema definition, `tiledb.Array.create()` |
+| Data write | ~85% | Actual data transfer, `arr[:] = data` |
+| Metadata write | ~5% | obs_id, orientation, etc. |
+
+**Key insight:** Data write dominates. For S3, this is limited by:
+1. Network bandwidth (primary bottleneck)
+2. Number of parallel S3 operations
+3. Multipart upload part size
+
+### S3 Write Optimization
+
+For S3 cloud writes, the following configuration is recommended:
+
+```python
+from radiobject import configure
+from radiobject.ctx import IOConfig, S3Config
+
+# Optimize for S3 writes
+configure(
+    io=IOConfig(
+        max_workers=8,      # More parallel volume writes
+        concurrency=2,      # Lower per-volume TileDB threads
+    ),
+    s3=S3Config(
+        max_parallel_ops=16,        # More S3 parallel uploads
+        multipart_part_size_mb=100, # Larger parts for high bandwidth
+    ),
+)
+```
+
+**Rationale:**
+- Higher `max_workers` saturates S3 bandwidth with multiple concurrent uploads
+- Lower `concurrency` avoids thread over-subscription
+- Higher `max_parallel_ops` allows each TileDB write to use more S3 parallelism
+- Larger `multipart_part_size_mb` reduces S3 API call overhead
+
+### Threading Configuration Guidelines
+
+| Scenario | max_workers | concurrency | max_parallel_ops | Notes |
+|----------|-------------|-------------|------------------|-------|
+| Local SSD | 4 | 4 | - | Default, balanced |
+| S3 high-bandwidth | 8 | 2 | 16 | Saturate network |
+| S3 limited bandwidth | 2 | 4 | 8 | Avoid overwhelming |
+| Many small volumes | 8 | 2 | 8 | Parallelize at app level |
+| Few large volumes | 2 | 8 | 16 | Parallelize at TileDB level |
+
+### ML DataLoader Threading
+
+For PyTorch DataLoader with multi-worker loading:
+
+| Dataset Size | Recommended Workers | Notes |
+|--------------|---------------------|-------|
+| <100 volumes | 0 (main process) | IPC overhead dominates |
+| 100-1000 volumes | 2-4 | Balanced |
+| >1000 volumes | 4-8 | I/O bound, more workers help |
+
+**Key findings:**
+- For small datasets, single-process (num_workers=0) is faster due to IPC serialization overhead
+- Each worker spawns a separate process with its own TileDB context (process-safe)
+- VolumeReader uses a process-level context cache keyed by `(pid, config_hash)`
+
+### Anti-Patterns Avoided
+
+1. **InMemoryCache removed:** Caused OOM with large volumes. Rely on TileDB's internal tile cache instead.
+
+2. **worker_init.py fixed:** Previously created a `threading.local()` that was immediately garbage collected. Now properly pre-warms the process-level context cache.
+
+3. **Configurable max_workers:** Previously hard-coded to 4. Now configurable via `IOConfig.max_workers`.

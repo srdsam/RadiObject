@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 import tiledb
 
-from radiobject.ctx import ctx as global_ctx, get_config
+from radiobject.ctx import ctx as global_ctx
+from radiobject.ctx import get_config
 
 # Mandatory index columns for all Dataframes
 INDEX_COLUMNS = ("obs_subject_id", "obs_id")
@@ -90,7 +91,9 @@ class Dataframe:
             for idx_col in INDEX_COLUMNS:
                 # Convert bytes to strings for index columns
                 raw = result[idx_col]
-                data[idx_col] = np.array([v.decode() if isinstance(v, bytes) else str(v) for v in raw])
+                data[idx_col] = np.array(
+                    [v.decode() if isinstance(v, bytes) else str(v) for v in raw]
+                )
         df = pd.DataFrame(data)
         if include_index:
             col_order = list(INDEX_COLUMNS) + attrs
@@ -130,7 +133,9 @@ class Dataframe:
 
         config = get_config()
         compression_filter = config.compression.as_filter()
-        compression = tiledb.FilterList([compression_filter]) if compression_filter else tiledb.FilterList()
+        compression = (
+            tiledb.FilterList([compression_filter]) if compression_filter else tiledb.FilterList()
+        )
         attrs = [
             tiledb.Attr(name=name, dtype=dtype, filters=compression, ctx=effective_ctx)
             for name, dtype in schema.items()

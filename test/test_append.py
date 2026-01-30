@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import nibabel as nib
 import numpy as np
 import pandas as pd
 import pytest
-import nibabel as nib
 
 from data import get_test_data_path
 from radiobject.radi_object import RadiObject
 from radiobject.volume_collection import VolumeCollection
-
 
 DATA_DIR = get_test_data_path()
 
@@ -130,9 +129,7 @@ class TestVolumeCollectionAppendValidation:
     ):
         """append() raises FileNotFoundError for missing file."""
         with pytest.raises(FileNotFoundError):
-            populated_collection.append(
-                niftis=[("/nonexistent/file.nii.gz", "sub-MISSING")]
-            )
+            populated_collection.append(niftis=[("/nonexistent/file.nii.gz", "sub-MISSING")])
 
     def test_append_requires_niftis_or_dicoms(
         self,
@@ -183,9 +180,11 @@ class TestRadiObjectAppendBasic:
         nib.save(new_img, new_nifti_path)
 
         # Append with new subject metadata
-        obs_meta = pd.DataFrame({
-            "obs_subject_id": ["sub-NEW"],
-        })
+        obs_meta = pd.DataFrame(
+            {
+                "obs_subject_id": ["sub-NEW"],
+            }
+        )
 
         populated_radi_object.append(
             niftis=[(new_nifti_path, "sub-NEW")],
@@ -274,9 +273,11 @@ class TestRadiObjectAppendValidation:
         nib.save(new_img, new_nifti_path)
 
         # Provide obs_meta but missing the subject
-        obs_meta = pd.DataFrame({
-            "obs_subject_id": ["sub-OTHER"],
-        })
+        obs_meta = pd.DataFrame(
+            {
+                "obs_subject_id": ["sub-OTHER"],
+            }
+        )
 
         with pytest.raises(ValueError, match="missing entries"):
             populated_radi_object.append(
@@ -302,9 +303,11 @@ class TestRadiObjectAppendValidation:
         nib.save(new_img, new_nifti_path)
 
         # obs_meta without required column
-        bad_obs_meta = pd.DataFrame({
-            "subject_name": ["sub-BADCOL"],  # Wrong column name
-        })
+        bad_obs_meta = pd.DataFrame(
+            {
+                "subject_name": ["sub-BADCOL"],  # Wrong column name
+            }
+        )
 
         with pytest.raises(ValueError, match="obs_subject_id"):
             populated_radi_object.append(
@@ -376,10 +379,12 @@ class TestAppendAtomicity:
         new_img = nib.Nifti1Image(data, img.affine)
         nib.save(new_img, new_nifti_path)
 
-        obs_meta = pd.DataFrame({
-            "obs_subject_id": ["sub-ATOMIC"],
-            "age": [42],
-        })
+        obs_meta = pd.DataFrame(
+            {
+                "obs_subject_id": ["sub-ATOMIC"],
+                "age": [42],
+            }
+        )
 
         populated_radi_object.append(
             niftis=[(new_nifti_path, "sub-ATOMIC")],

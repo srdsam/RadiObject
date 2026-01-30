@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 
 if TYPE_CHECKING:
@@ -42,60 +42,13 @@ class TestLoadingPerformance:
             _ = ml_dataset_patch[i]
         elapsed = time.perf_counter() - start
 
-        logger.info("%d patches extracted in %.2fs (%.3fs per patch)", n_patches, elapsed, elapsed / n_patches)
+        logger.info(
+            "%d patches extracted in %.2fs (%.3fs per patch)",
+            n_patches,
+            elapsed,
+            elapsed / n_patches,
+        )
         assert elapsed < 15
-
-
-class TestCachePerformance:
-    """Benchmark tests for caching strategies."""
-
-    def test_cache_speedup(self, populated_radi_object_module: "RadiObject") -> None:
-        """Compare NoCache vs InMemoryCache performance."""
-        config_no_cache = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            cache_strategy=CacheStrategy.NONE,
-            modalities=["flair"],
-        )
-        dataset_no_cache = RadiObjectDataset(populated_radi_object_module, config_no_cache)
-
-        config_cached = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            cache_strategy=CacheStrategy.IN_MEMORY,
-            modalities=["flair"],
-        )
-        dataset_cached = RadiObjectDataset(populated_radi_object_module, config_cached)
-
-        _ = dataset_no_cache[0]
-        start = time.perf_counter()
-        for _ in range(3):
-            _ = dataset_no_cache[0]
-        uncached_time = time.perf_counter() - start
-
-        _ = dataset_cached[0]
-        start = time.perf_counter()
-        for _ in range(3):
-            _ = dataset_cached[0]
-        cached_time = time.perf_counter() - start
-
-        speedup = uncached_time / cached_time if cached_time > 0 else float("inf")
-        logger.info("Uncached: %.3fs, Cached: %.3fs, Speedup: %.1fx", uncached_time, cached_time, speedup)
-
-        assert cached_time < uncached_time
-
-    def test_cache_hit_rate(self, ml_dataset_cached: RadiObjectDataset) -> None:
-        """Test cache achieves expected hit rate."""
-        ml_dataset_cached.cache.clear()
-
-        for _ in range(3):
-            for i in range(len(ml_dataset_cached)):
-                _ = ml_dataset_cached[i]
-
-        cache = ml_dataset_cached.cache
-        total = cache.hits + cache.misses
-        hit_rate = cache.hits / total if total > 0 else 0
-
-        logger.info("Cache hits: %d, misses: %d, hit rate: %.1f%%", cache.hits, cache.misses, hit_rate * 100)
-        assert hit_rate > 0.5
 
 
 class TestMultiWorkerPerformance:

@@ -8,8 +8,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from radiobject.ml.cache import BaseCache, InMemoryCache, NoOpCache
-from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.cache import BaseCache, NoOpCache
+from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.reader import VolumeReader
 
 if TYPE_CHECKING:
@@ -27,12 +27,7 @@ class RadiObjectDataset(Dataset):
     ):
         self._config = config
         self._transform = transform
-
-        # Initialize cache based on strategy
-        if config.cache_strategy == CacheStrategy.IN_MEMORY:
-            self._cache: BaseCache = InMemoryCache()
-        else:
-            self._cache = NoOpCache()
+        self._cache: BaseCache = NoOpCache()
 
         modalities = config.modalities or list(radi_object.collection_names)
         if not modalities:
@@ -44,11 +39,20 @@ class RadiObjectDataset(Dataset):
             for mod in modalities
         }
 
+        # Validate all collections have uniform shapes for batched loading
+        for mod in modalities:
+            reader = self._readers[mod]
+            if not reader.is_uniform:
+                raise ValueError(
+                    f"Collection '{mod}' has heterogeneous shapes. "
+                    f"Call collection.resample_to() to normalize dimensions before ML training."
+                )
+
         first_reader = self._readers[modalities[0]]
         self._n_volumes = len(first_reader)
-        self._volume_shape = first_reader.shape
+        self._volume_shape = first_reader.shape  # Guaranteed non-None after uniform check
 
-        self._labels: dict[int, Any] | None = None
+        self._labels: dict[int, int | float] | None = None
         if config.label_column:
             self._load_labels(radi_object, config.label_column, config.value_filter)
 
@@ -74,9 +78,17 @@ class RadiObjectDataset(Dataset):
         self._labels = {}
         for idx in range(self._n_volumes):
             obs_id = first_reader.get_obs_id(idx)
-            parts = obs_id.rsplit("_", 1)
-            subject_id = parts[0] if len(parts) > 1 else obs_id
-            match = obs_meta[obs_meta["obs_subject_id"] == subject_id]
+            # Try matching by obs_id first (exact match)
+            match = obs_meta[obs_meta["obs_id"] == obs_id]
+            if len(match) == 0:
+                # Fall back to obs_subject_id matching
+                match = obs_meta[obs_meta["obs_subject_id"] == obs_id]
+            if len(match) == 0:
+                # Legacy: try parsing obs_id as subject_id + suffix
+                parts = obs_id.rsplit("_", 1)
+                if len(parts) > 1:
+                    subject_id = parts[0]
+                    match = obs_meta[obs_meta["obs_subject_id"] == subject_id]
             if len(match) > 0:
                 self._labels[idx] = match[label_column].iloc[0]
 
@@ -131,18 +143,13 @@ class RadiObjectDataset(Dataset):
         patch_size = self._config.patch_size
         assert patch_size is not None
 
-        max_start = tuple(
-            max(0, self._volume_shape[i] - patch_size[i])
-            for i in range(3)
-        )
+        max_start = tuple(max(0, self._volume_shape[i] - patch_size[i]) for i in range(3))
         start = tuple(
-            rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0
-            for i in range(3)
+            rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
         )
 
         volumes = [
-            self._readers[mod].read_patch(volume_idx, start, patch_size)
-            for mod in self._modalities
+            self._readers[mod].read_patch(volume_idx, start, patch_size) for mod in self._modalities
         ]
 
         stacked = np.stack(volumes, axis=0)

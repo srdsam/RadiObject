@@ -130,7 +130,7 @@ class _LocIndexer:
 
 
 class VolumeCollection:
-    """A collection of volumes with consistent dimensions organized by obs_id."""
+    """A collection of volumes organized by obs_id, supporting heterogeneous shapes."""
 
     def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
         self.uri: str = uri
@@ -187,18 +187,43 @@ class VolumeCollection:
         return self._metadata.get("name")
 
     @property
-    def shape(self) -> tuple[int, int, int]:
-        """Consistent (X, Y, Z) dimensions for all volumes."""
+    def shape(self) -> tuple[int, int, int] | None:
+        """Volume dimensions (X, Y, Z) if uniform, None if heterogeneous.
+
+        Returns:
+            Tuple of (x, y, z) dimensions if all volumes share the same shape,
+            None if volumes have different shapes (check is_uniform property).
+        """
         m = self._metadata
+        if "x_dim" not in m or "y_dim" not in m or "z_dim" not in m:
+            return None
         return (int(m["x_dim"]), int(m["y_dim"]), int(m["z_dim"]))
+
+    @property
+    def is_uniform(self) -> bool:
+        """Whether all volumes in this collection have the same shape."""
+        return self.shape is not None
 
     def __len__(self) -> int:
         """Number of volumes in collection."""
         return int(self._metadata["n_volumes"])
 
+    def __iter__(self):
+        """Iterate over volumes in the collection.
+
+        Yields Volume objects in index order.
+
+        Example:
+            for vol in collection:
+                print(vol.shape)
+        """
+        for i in range(len(self)):
+            yield self.iloc[i]
+
     def __repr__(self) -> str:
         """Concise representation of the VolumeCollection."""
-        shape_str = "x".join(str(d) for d in self.shape)
+        shape = self.shape
+        shape_str = "x".join(str(d) for d in shape) if shape else "heterogeneous"
         name_part = f"'{self.name}', " if self.name else ""
         return f"VolumeCollection({name_part}{len(self)} volumes, shape={shape_str})"
 
@@ -224,9 +249,7 @@ class VolumeCollection:
     @overload
     def __getitem__(self, key: list[str]) -> list[Volume]: ...
 
-    def __getitem__(
-        self, key: int | str | slice | list[int] | list[str]
-    ) -> Volume | list[Volume]:
+    def __getitem__(self, key: int | str | slice | list[int] | list[str]) -> Volume | list[Volume]:
         """Index by int, str, slice, or list."""
         if isinstance(key, int):
             return self.iloc[key]
@@ -314,6 +337,31 @@ class VolumeCollection:
         """Filter volumes using TileDB QueryCondition on obs."""
         return self.query().filter(expr)
 
+    def map(self, fn) -> CollectionQuery:
+        """Apply transform to all volumes during materialization.
+
+        Creates a lazy CollectionQuery with the transform function attached.
+        Transform is applied when materializing via to_volume_collection().
+
+        Args:
+            fn: Transform function (np.ndarray) -> np.ndarray. Can change shape.
+
+        Returns:
+            CollectionQuery with transform attached
+
+        Example:
+            # Double voxel values and save to new collection
+            normalized = radi.CT.map(lambda v: v * 2).to_volume_collection(uri)
+
+            # Resample with MONAI
+            from monai.transforms import Spacing
+            spacing = Spacing(pixdim=(2.0, 2.0, 2.0))
+            resampled = radi.CT.map(
+                lambda v: spacing(v[np.newaxis, ...])[0]
+            ).to_volume_collection(uri)
+        """
+        return self.query().map(fn)
+
     # ===== Append Operations =====
 
     def append(
@@ -368,7 +416,7 @@ class VolumeCollection:
         progress: bool = False,
     ) -> None:
         """Internal: append NIfTI files to this collection."""
-        # Extract metadata and validate dimensions
+        # Extract metadata (no dimension validation for heterogeneous collections)
         metadata_list: list[tuple[Path, str, NiftiMetadata, str]] = []
 
         for nifti_path, obs_subject_id in niftis:
@@ -379,7 +427,8 @@ class VolumeCollection:
             metadata = extract_nifti_metadata(path)
             series_type = infer_series_type(path)
 
-            if metadata.dimensions != self.shape:
+            # Only validate dimensions if collection has uniform shape requirement
+            if self.is_uniform and metadata.dimensions != self.shape:
                 raise ValueError(
                     f"Dimension mismatch: {path.name} has shape {metadata.dimensions}, "
                     f"expected {self.shape}"
@@ -389,9 +438,7 @@ class VolumeCollection:
 
         # Check for duplicate obs_ids
         existing_obs_ids = set(self.obs_ids)
-        new_obs_ids = {
-            generate_obs_id(sid, st) for _, sid, _, st in metadata_list
-        }
+        new_obs_ids = {generate_obs_id(sid, st) for _, sid, _, st in metadata_list}
         duplicates = existing_obs_ids & new_obs_ids
         if duplicates:
             raise ValueError(f"obs_ids already exist: {sorted(duplicates)[:5]}")
@@ -468,19 +515,17 @@ class VolumeCollection:
             dims = metadata.dimensions
             shape = (dims[1], dims[0], dims[2])
 
-            if shape != self.shape:
+            # Only validate dimensions if collection has uniform shape requirement
+            if self.is_uniform and shape != self.shape:
                 raise ValueError(
-                    f"Dimension mismatch: {path.name} has shape {shape}, "
-                    f"expected {self.shape}"
+                    f"Dimension mismatch: {path.name} has shape {shape}, " f"expected {self.shape}"
                 )
 
             metadata_list.append((path, obs_subject_id, metadata))
 
         # Check for duplicate obs_ids
         existing_obs_ids = set(self.obs_ids)
-        new_obs_ids = {
-            generate_obs_id(sid, meta.modality) for _, sid, meta in metadata_list
-        }
+        new_obs_ids = {generate_obs_id(sid, meta.modality) for _, sid, meta in metadata_list}
         duplicates = existing_obs_ids & new_obs_ids
         if duplicates:
             raise ValueError(f"obs_ids already exist: {sorted(duplicates)[:5]}")
@@ -499,8 +544,7 @@ class VolumeCollection:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
         write_args = [
-            (start_index + i, path, sid, meta)
-            for i, (path, sid, meta) in enumerate(metadata_list)
+            (start_index + i, path, sid, meta) for i, (path, sid, meta) in enumerate(metadata_list)
         ]
         results = _write_volumes_parallel(
             write_volume, write_args, progress, f"Writing {self.name or 'volumes'}"
@@ -545,13 +589,22 @@ class VolumeCollection:
     def _create(
         cls,
         uri: str,
-        shape: tuple[int, int, int],
+        shape: tuple[int, int, int] | None = None,
         obs_schema: dict[str, np.dtype] | None = None,
         n_volumes: int = 0,
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
     ) -> VolumeCollection:
-        """Internal: create empty collection with specified dimensions."""
+        """Internal: create empty collection with optional uniform dimensions.
+
+        Args:
+            uri: Target URI for the collection
+            shape: If provided, enforces uniform dimensions. If None, allows heterogeneous shapes.
+            obs_schema: Schema for volume-level obs attributes
+            n_volumes: Initial volume count (usually 0)
+            name: Collection name
+            ctx: TileDB context
+        """
         effective_ctx = ctx if ctx else global_ctx()
 
         tiledb.Group.create(uri, ctx=effective_ctx)
@@ -563,9 +616,10 @@ class VolumeCollection:
         Dataframe.create(obs_uri, schema=obs_schema or {}, ctx=ctx)
 
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["x_dim"] = shape[0]
-            grp.meta["y_dim"] = shape[1]
-            grp.meta["z_dim"] = shape[2]
+            if shape is not None:
+                grp.meta["x_dim"] = shape[0]
+                grp.meta["y_dim"] = shape[1]
+                grp.meta["z_dim"] = shape[2]
             grp.meta["n_volumes"] = n_volumes
             if name is not None:
                 grp.meta["name"] = name
@@ -607,7 +661,14 @@ class VolumeCollection:
                     dtype = np.dtype("U64")
                 obs_schema[col] = dtype
 
-        cls._create(uri, shape=first_shape, obs_schema=obs_schema, n_volumes=len(volumes), name=name, ctx=ctx)
+        cls._create(
+            uri,
+            shape=first_shape,
+            obs_schema=obs_schema,
+            n_volumes=len(volumes),
+            name=name,
+            ctx=ctx,
+        )
 
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_volumes"] = len(volumes)
@@ -625,7 +686,9 @@ class VolumeCollection:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
         write_args = [(idx, obs_id, vol) for idx, (obs_id, vol) in enumerate(volumes)]
-        results = _write_volumes_parallel(write_volume, write_args, progress=False, desc="Writing volumes")
+        results = _write_volumes_parallel(
+            write_volume, write_args, progress=False, desc="Writing volumes"
+        )
 
         with tiledb.Group(f"{uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
             for result in results:
@@ -700,15 +763,20 @@ class VolumeCollection:
             shape = metadata.dimensions
             if first_shape is None:
                 first_shape = shape
-            elif validate_dimensions and shape != first_shape:
-                raise ValueError(
-                    f"Dimension mismatch: {path.name} has shape {shape}, "
-                    f"expected {first_shape}"
-                )
+                all_same_shape = True
+            elif shape != first_shape:
+                if validate_dimensions:
+                    raise ValueError(
+                        f"Dimension mismatch: {path.name} has shape {shape}, "
+                        f"expected {first_shape}"
+                    )
+                all_same_shape = False
 
             metadata_list.append((path, obs_subject_id, metadata, series_type))
 
         effective_ctx = ctx if ctx else global_ctx()
+        # Only set uniform shape if all volumes have same dimensions
+        collection_shape = first_shape if all_same_shape else None
 
         # Build obs schema from NiftiMetadata fields (tuples serialized as strings)
         obs_schema: dict[str, np.dtype] = {
@@ -732,7 +800,7 @@ class VolumeCollection:
         # Create collection
         cls._create(
             uri,
-            shape=first_shape,
+            shape=collection_shape,
             obs_schema=obs_schema,
             n_volumes=len(niftis),
             name=name,
@@ -753,8 +821,7 @@ class VolumeCollection:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
         write_args = [
-            (idx, path, sid, meta, st)
-            for idx, (path, sid, meta, st) in enumerate(metadata_list)
+            (idx, path, sid, meta, st) for idx, (path, sid, meta, st) in enumerate(metadata_list)
         ]
         results = _write_volumes_parallel(
             write_volume, write_args, progress, f"Writing {name or 'volumes'}"
@@ -841,15 +908,20 @@ class VolumeCollection:
             shape = (dims[1], dims[0], dims[2])
             if first_shape is None:
                 first_shape = shape
-            elif validate_dimensions and shape != first_shape:
-                raise ValueError(
-                    f"Dimension mismatch: {path.name} has shape {shape}, "
-                    f"expected {first_shape}"
-                )
+                all_same_shape = True
+            elif shape != first_shape:
+                if validate_dimensions:
+                    raise ValueError(
+                        f"Dimension mismatch: {path.name} has shape {shape}, "
+                        f"expected {first_shape}"
+                    )
+                all_same_shape = False
 
             metadata_list.append((path, obs_subject_id, metadata))
 
         effective_ctx = ctx if ctx else global_ctx()
+        # Only set uniform shape if all volumes have same dimensions
+        collection_shape = first_shape if all_same_shape else None
 
         # Build obs schema from DicomMetadata fields (tuples serialized as strings)
         obs_schema: dict[str, np.dtype] = {
@@ -871,7 +943,7 @@ class VolumeCollection:
         # Create collection
         cls._create(
             uri,
-            shape=first_shape,
+            shape=collection_shape,
             obs_schema=obs_schema,
             n_volumes=len(dicom_dirs),
             name=name,
@@ -891,10 +963,7 @@ class VolumeCollection:
             except Exception as e:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
-        write_args = [
-            (idx, path, sid, meta)
-            for idx, (path, sid, meta) in enumerate(metadata_list)
-        ]
+        write_args = [(idx, path, sid, meta) for idx, (path, sid, meta) in enumerate(metadata_list)]
         results = _write_volumes_parallel(
             write_volume, write_args, progress, f"Writing {name or 'volumes'}"
         )

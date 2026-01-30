@@ -18,7 +18,6 @@ class CacheStrategy(str, Enum):
     """Caching strategy for dataset samples."""
 
     NONE = "none"
-    IN_MEMORY = "in_memory"
 
 
 class DatasetConfig(BaseModel):

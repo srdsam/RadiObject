@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 
 if TYPE_CHECKING:
@@ -31,17 +31,6 @@ def ml_dataset_patch(populated_radi_object_module: "RadiObject") -> RadiObjectDa
         loading_mode=LoadingMode.PATCH,
         patch_size=(64, 64, 64),
         patches_per_volume=2,
-        modalities=["flair"],
-    )
-    return RadiObjectDataset(populated_radi_object_module, config)
-
-
-@pytest.fixture(scope="module")
-def ml_dataset_cached(populated_radi_object_module: "RadiObject") -> RadiObjectDataset:
-    """RadiObjectDataset with in-memory caching."""
-    config = DatasetConfig(
-        loading_mode=LoadingMode.FULL_VOLUME,
-        cache_strategy=CacheStrategy.IN_MEMORY,
         modalities=["flair"],
     )
     return RadiObjectDataset(populated_radi_object_module, config)

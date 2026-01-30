@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Literal
 
@@ -13,19 +12,42 @@ from pydantic import BaseModel, Field
 from radiobject.utils import affine_to_json
 
 # BIDS-aligned series type identifiers
-KNOWN_SERIES_TYPES: frozenset[str] = frozenset({
-    # Anatomical MRI
-    "T1w", "T2w", "T1rho", "T1map", "T2map", "T2star", "FLAIR", "FLASH",
-    "PD", "PDmap", "PDT2", "inplaneT1", "inplaneT2", "angio", "T1gd",
-    # Functional MRI
-    "bold", "cbv", "phase",
-    # Diffusion MRI
-    "dwi",
-    # CT variants
-    "CT", "HRCT", "CTA", "CTPA",
-    # Field maps
-    "phasediff", "magnitude", "fieldmap", "epi",
-})
+KNOWN_SERIES_TYPES: frozenset[str] = frozenset(
+    {
+        # Anatomical MRI
+        "T1w",
+        "T2w",
+        "T1rho",
+        "T1map",
+        "T2map",
+        "T2star",
+        "FLAIR",
+        "FLASH",
+        "PD",
+        "PDmap",
+        "PDT2",
+        "inplaneT1",
+        "inplaneT2",
+        "angio",
+        "T1gd",
+        # Functional MRI
+        "bold",
+        "cbv",
+        "phase",
+        # Diffusion MRI
+        "dwi",
+        # CT variants
+        "CT",
+        "HRCT",
+        "CTA",
+        "CTPA",
+        # Field maps
+        "phasediff",
+        "magnitude",
+        "fieldmap",
+        "epi",
+    }
+)
 
 # Filename pattern to series type mapping (ordered from most specific to least specific)
 _FILENAME_PATTERNS: tuple[tuple[str, str], ...] = (
@@ -43,6 +65,15 @@ _FILENAME_PATTERNS: tuple[tuple[str, str], ...] = (
     ("DTI", "dwi"),
     ("BOLD", "bold"),
     ("FUNC", "bold"),
+    # CT patterns (MSD datasets, common naming)
+    ("LUNG_", "CT"),
+    ("LIVER_", "CT"),
+    ("COLON_", "CT"),
+    ("PANCREAS_", "CT"),
+    ("SPLEEN_", "CT"),
+    ("HEPATIC", "CT"),
+    ("_CT_", "CT"),
+    ("_CT.", "CT"),
 )
 
 # Spatial unit mapping from NIfTI xyzt_units
@@ -274,8 +305,7 @@ def extract_dicom_metadata(dicom_dir: str | Path) -> DicomMetadata:
     dicom_files = sorted(path.glob("*.dcm"))
     if not dicom_files:
         dicom_files = sorted(
-            f for f in path.iterdir()
-            if f.is_file() and not f.name.startswith(".")
+            f for f in path.iterdir() if f.is_file() and not f.name.startswith(".")
         )
 
     if not dicom_files:
