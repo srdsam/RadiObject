@@ -1,6 +1,6 @@
 """RadiObject - TileDB-backed data structure for radiology data at scale."""
 
-from radiobject.ctx import configure, ctx, get_config
+from radiobject.ctx import ReadConfig, WriteConfig, configure, ctx, get_config
 from radiobject.dataframe import Dataframe
 from radiobject.radi_object import RadiObject, RadiObjectView
 from radiobject.volume import Volume
@@ -16,4 +16,6 @@ __all__ = [
     "ctx",
     "configure",
     "get_config",
+    "WriteConfig",
+    "ReadConfig",
 ]

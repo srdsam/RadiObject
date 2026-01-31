@@ -54,19 +54,19 @@ class TestVolumeConstruction:
             Volume.create(uri_5d, shape=(64, 64, 32, 8, 2))
 
 
-class TestVolumeOrientation:
-    """Tests for orientation metadata storage and retrieval."""
+class TestVolumeTileOrientation:
+    """Tests for tile orientation metadata storage and retrieval."""
 
-    def test_orientation_stored_on_create(self, volume_uri: str) -> None:
+    def test_tile_orientation_stored_on_create(self, volume_uri: str) -> None:
         vol = Volume.create(volume_uri, shape=(32, 32, 16))
-        assert vol.orientation == SliceOrientation.AXIAL
+        assert vol.tile_orientation == SliceOrientation.AXIAL
 
-    def test_orientation_from_config(self, temp_dir: Path) -> None:
+    def test_tile_orientation_from_config(self, temp_dir: Path) -> None:
         configure(tile=TileConfig(orientation=SliceOrientation.SAGITTAL))
         try:
             uri = str(temp_dir / "vol_sagittal")
             vol = Volume.create(uri, shape=(32, 32, 16))
-            assert vol.orientation == SliceOrientation.SAGITTAL
+            assert vol.tile_orientation == SliceOrientation.SAGITTAL
         finally:
             configure(tile=TileConfig(orientation=SliceOrientation.AXIAL))
 

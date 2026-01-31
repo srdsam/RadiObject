@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from torch.utils.data import DataLoader
 
-from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 from radiobject.ml.utils.worker_init import worker_init_fn
 
@@ -25,7 +25,6 @@ def create_training_dataloader(
     persistent_workers: bool = True,
     value_filter: str | None = None,
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-    cache_strategy: CacheStrategy = CacheStrategy.NONE,
     patches_per_volume: int = 1,
 ) -> DataLoader:
     """Create a DataLoader configured for training.
@@ -42,7 +41,6 @@ def create_training_dataloader(
         value_filter: TileDB filter for subject selection.
         transform: Transform function applied to each sample.
             MONAI dict transforms (e.g., RandFlipd) work directly.
-        cache_strategy: Caching strategy (NONE, IN_MEMORY).
         patches_per_volume: Number of patches to extract per volume per epoch.
 
     Example with MONAI transforms::
@@ -70,7 +68,6 @@ def create_training_dataloader(
         loading_mode=loading_mode,
         patch_size=patch_size,
         patches_per_volume=patches_per_volume,
-        cache_strategy=cache_strategy,
         modalities=modalities,
         label_column=label_column,
         value_filter=value_filter,

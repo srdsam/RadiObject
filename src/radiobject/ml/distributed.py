@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 from radiobject.ml.utils.worker_init import worker_init_fn
 
@@ -25,7 +25,6 @@ def create_distributed_dataloader(
     patch_size: tuple[int, int, int] | None = None,
     num_workers: int = 4,
     pin_memory: bool = True,
-    cache_strategy: CacheStrategy = CacheStrategy.NONE,
     value_filter: str | None = None,
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> DataLoader:
@@ -41,7 +40,6 @@ def create_distributed_dataloader(
         patch_size: If provided, extract random patches.
         num_workers: DataLoader worker processes.
         pin_memory: Pin tensors to CUDA memory.
-        cache_strategy: Caching strategy.
         value_filter: TileDB filter for subject selection.
         transform: Transform function.
     """
@@ -51,7 +49,6 @@ def create_distributed_dataloader(
         loading_mode=loading_mode,
         patch_size=patch_size,
         patches_per_volume=1,
-        cache_strategy=cache_strategy,
         modalities=modalities,
         label_column=label_column,
         value_filter=value_filter,

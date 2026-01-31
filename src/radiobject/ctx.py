@@ -85,8 +85,38 @@ class CompressionConfig(BaseModel):
                 return None
 
 
+class WriteConfig(BaseModel):
+    """Settings applied when creating new TileDB arrays (immutable after creation)."""
+
+    tile: TileConfig = Field(default_factory=TileConfig)
+    compression: CompressionConfig = Field(default_factory=CompressionConfig)
+    orientation: "OrientationConfig" = Field(default_factory=lambda: OrientationConfig())
+
+
+class ReadConfig(BaseModel):
+    """Settings for reading TileDB arrays."""
+
+    memory_budget_mb: int = Field(
+        default=1024,
+        ge=64,
+        description="Memory budget for TileDB operations (MB)",
+    )
+    concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description="Number of TileDB internal I/O threads",
+    )
+    max_workers: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        description="Max parallel workers for volume I/O operations",
+    )
+
+
 class IOConfig(BaseModel):
-    """I/O and memory settings."""
+    """I/O and memory settings (deprecated, use ReadConfig)."""
 
     memory_budget_mb: int = Field(
         default=1024,
@@ -154,11 +184,35 @@ class OrientationConfig(BaseModel):
 class RadiObjectConfig(BaseModel):
     """Configuration for RadiObject TileDB context."""
 
-    tile: TileConfig = Field(default_factory=TileConfig)
-    compression: CompressionConfig = Field(default_factory=CompressionConfig)
-    io: IOConfig = Field(default_factory=IOConfig)
+    write: WriteConfig = Field(default_factory=WriteConfig)
+    read: ReadConfig = Field(default_factory=ReadConfig)
     s3: S3Config = Field(default_factory=S3Config)
-    orientation: OrientationConfig = Field(default_factory=OrientationConfig)
+
+    # Deprecated flat access (for backwards compatibility)
+    _tile: TileConfig | None = None
+    _compression: CompressionConfig | None = None
+    _io: IOConfig | None = None
+    _orientation: OrientationConfig | None = None
+
+    @property
+    def tile(self) -> TileConfig:
+        """Tile configuration (deprecated, use write.tile)."""
+        return self.write.tile
+
+    @property
+    def compression(self) -> CompressionConfig:
+        """Compression configuration (deprecated, use write.compression)."""
+        return self.write.compression
+
+    @property
+    def orientation(self) -> OrientationConfig:
+        """Orientation configuration (deprecated, use write.orientation)."""
+        return self.write.orientation
+
+    @property
+    def io(self) -> ReadConfig:
+        """I/O configuration (deprecated, use read)."""
+        return self.read
 
     @model_validator(mode="after")
     def validate_compression_level(self) -> Self:
@@ -169,9 +223,9 @@ class RadiObjectConfig(BaseModel):
             Compressor.GZIP: 9,
             Compressor.NONE: 0,
         }
-        max_level = max_levels[self.compression.algorithm]
-        if self.compression.level > max_level:
-            self.compression.level = max_level
+        max_level = max_levels[self.write.compression.algorithm]
+        if self.write.compression.level > max_level:
+            self.write.compression.level = max_level
         return self
 
     def to_tiledb_config(self, include_s3_credentials: bool = False) -> tiledb.Config:
@@ -184,10 +238,10 @@ class RadiObjectConfig(BaseModel):
         """
         cfg = tiledb.Config()
 
-        # Memory settings
-        cfg["sm.memory_budget"] = str(self.io.memory_budget_mb * 1024 * 1024)
-        cfg["sm.compute_concurrency_level"] = str(self.io.concurrency)
-        cfg["sm.io_concurrency_level"] = str(self.io.concurrency)
+        # Memory settings from read config
+        cfg["sm.memory_budget"] = str(self.read.memory_budget_mb * 1024 * 1024)
+        cfg["sm.compute_concurrency_level"] = str(self.read.concurrency)
+        cfg["sm.io_concurrency_level"] = str(self.read.concurrency)
 
         # S3 settings (configuration only, no credential lookup)
         cfg["vfs.s3.region"] = self.s3.region
@@ -244,13 +298,62 @@ def ctx() -> tiledb.Ctx:
     return _ctx
 
 
-def configure(**kwargs) -> None:
-    """Convenience function to update config fields.
+def configure(
+    *,
+    write: WriteConfig | None = None,
+    read: ReadConfig | None = None,
+    s3: S3Config | None = None,
+    # Deprecated flat arguments for backwards compatibility
+    tile: TileConfig | None = None,
+    compression: CompressionConfig | None = None,
+    io: IOConfig | ReadConfig | None = None,
+    orientation: OrientationConfig | None = None,
+) -> None:
+    """Update global configuration.
 
-    Example:
+    Example (new API):
+        configure(write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.AXIAL)))
+        configure(read=ReadConfig(memory_budget_mb=2048))
+
+    Example (deprecated flat API, still supported):
         configure(tile=TileConfig(x=128, y=128, z=32))
         configure(compression=CompressionConfig(algorithm=Compressor.LZ4))
     """
     global _config, _ctx
-    _config = _config.model_copy(update=kwargs)
+
+    updates: dict = {}
+
+    # Handle new nested API
+    if write is not None:
+        updates["write"] = write
+    if read is not None:
+        updates["read"] = read
+    if s3 is not None:
+        updates["s3"] = s3
+
+    # Handle deprecated flat API by mapping to nested structure
+    if tile is not None or compression is not None or orientation is not None:
+        write_updates = {}
+        if tile is not None:
+            write_updates["tile"] = tile
+        if compression is not None:
+            write_updates["compression"] = compression
+        if orientation is not None:
+            write_updates["orientation"] = orientation
+        if write_updates:
+            current_write = _config.write.model_copy(update=write_updates)
+            updates["write"] = current_write
+
+    if io is not None:
+        # Map deprecated io to read config
+        if isinstance(io, ReadConfig):
+            updates["read"] = io
+        else:
+            updates["read"] = ReadConfig(
+                memory_budget_mb=io.memory_budget_mb,
+                concurrency=io.concurrency,
+                max_workers=io.max_workers,
+            )
+
+    _config = _config.model_copy(update=updates)
     _ctx = None

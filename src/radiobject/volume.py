@@ -71,10 +71,11 @@ class Volume:
         return self._schema.attr(0).dtype
 
     @property
-    def orientation(self) -> SliceOrientation | None:
-        """Slice orientation stored at array creation (None if missing/legacy)."""
+    def tile_orientation(self) -> SliceOrientation | None:
+        """Tile slicing strategy used at array creation (None if missing/legacy)."""
         try:
-            val = self._metadata.get("slice_orientation")
+            # Support both new and legacy metadata keys
+            val = self._metadata.get("tile_orientation") or self._metadata.get("slice_orientation")
             return SliceOrientation(val) if val else None
         except (KeyError, ValueError):
             return None
@@ -279,9 +280,9 @@ class Volume:
         )
         tiledb.Array.create(uri, schema, ctx=effective_ctx)
 
-        # Persist orientation metadata
+        # Persist tile orientation metadata
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
-            arr.meta["slice_orientation"] = config.tile.orientation.value
+            arr.meta["tile_orientation"] = config.tile.orientation.value
 
         return cls(uri, ctx=ctx)
 

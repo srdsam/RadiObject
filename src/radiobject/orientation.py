@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal
 
 import nibabel as nib
 import numpy as np
@@ -29,14 +29,6 @@ class OrientationInfo(BaseModel):
     )
 
     model_config = {"frozen": True}
-
-
-class OrientationInferenceModel(Protocol):
-    """Protocol for ML-based orientation inference (future implementation)."""
-
-    def infer(self, data: np.ndarray) -> OrientationInfo:
-        """Infer orientation from volume data when headers are unavailable."""
-        ...
 
 
 def _is_identity_affine(affine: np.ndarray, tol: float = 1e-6) -> bool:
@@ -219,16 +211,22 @@ def reorient_to_canonical(
 
     if target == "LAS":
         # Flip X axis (R->L)
+        nx = reoriented_data.shape[0]
         reoriented_data = np.flip(reoriented_data, axis=0)
-        reoriented_affine[0, :] = -reoriented_affine[0, :]
-        reoriented_affine[0, 3] = -reoriented_affine[0, 3]
+        # Adjust origin before negating direction vector
+        reoriented_affine[:3, 3] += (nx - 1) * reoriented_affine[:3, 0]
+        # Negate column 0 (X axis direction vector)
+        reoriented_affine[:3, 0] = -reoriented_affine[:3, 0]
     elif target == "LPS":
         # Flip X and Y axes (R->L, A->P)
+        nx, ny = reoriented_data.shape[0], reoriented_data.shape[1]
         reoriented_data = np.flip(np.flip(reoriented_data, axis=0), axis=1)
-        reoriented_affine[0, :] = -reoriented_affine[0, :]
-        reoriented_affine[1, :] = -reoriented_affine[1, :]
-        reoriented_affine[0, 3] = -reoriented_affine[0, 3]
-        reoriented_affine[1, 3] = -reoriented_affine[1, 3]
+        # Adjust origin for both axes
+        reoriented_affine[:3, 3] += (nx - 1) * reoriented_affine[:3, 0]
+        reoriented_affine[:3, 3] += (ny - 1) * reoriented_affine[:3, 1]
+        # Negate columns 0 and 1 (X and Y axis direction vectors)
+        reoriented_affine[:3, 0] = -reoriented_affine[:3, 0]
+        reoriented_affine[:3, 1] = -reoriented_affine[:3, 1]
 
     return reoriented_data, reoriented_affine
 

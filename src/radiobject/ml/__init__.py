@@ -1,7 +1,7 @@
 """PyTorch training system for RadiObject."""
 
 from radiobject.ml.compat import Compose, RadiObjectSubjectsDataset
-from radiobject.ml.config import CacheStrategy, DatasetConfig, LoadingMode
+from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.factory import (
     create_inference_dataloader,
     create_training_dataloader,
@@ -9,7 +9,6 @@ from radiobject.ml.factory import (
 )
 
 __all__ = [
-    "CacheStrategy",
     "Compose",
     "DatasetConfig",
     "LoadingMode",

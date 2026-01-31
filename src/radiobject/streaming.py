@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -19,18 +18,6 @@ AttrValue = int | float | bool | str
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
-
-
-@dataclass
-class _PendingVolume:
-    """Internal: pending volume data for batch writes."""
-
-    index: int
-    uri: str
-    obs_id: str
-    obs_subject_id: str
-    data: npt.NDArray[np.floating]
-    attrs: dict[str, AttrValue]
 
 
 class StreamingWriter:

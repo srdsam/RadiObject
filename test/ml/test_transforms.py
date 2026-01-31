@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import torch
 
-from radiobject.ml.transforms import (
+from radiobject.ml.transforms.intensity import (
     IntensityNormalize,
+    RandomNoise,
+    WindowLevel,
+)
+from radiobject.ml.transforms.spatial import (
     RandomCrop3D,
     RandomFlip3D,
-    RandomNoise,
     Resample3D,
-    WindowLevel,
 )
 
 
@@ -143,8 +145,7 @@ class TestRandomNoise:
         result = transform(data)
 
         noise = result["image"] - original
-        # Noise std should be non-zero and reasonable (MONAI may scale differently)
-        assert 0.1 < float(noise.std()) < 1.0
+        assert 0.4 < noise.std() < 0.6
 
 
 class TestRandomFlip3D:

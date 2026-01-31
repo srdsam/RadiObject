@@ -9,7 +9,6 @@ import torch.nn as nn
 from monai.transforms import NormalizeIntensityd
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.datasets.multimodal import MultiModalDataset
 from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 from radiobject.ml.factory import create_training_dataloader
 
@@ -97,10 +96,11 @@ class TestTrainingIntegration:
 
     def test_multimodal_stacking(self, populated_radi_object_module: "RadiObject") -> None:
         """Test multimodal data stacks correctly along channel dimension."""
-        dataset = MultiModalDataset(
-            populated_radi_object_module,
+        config = DatasetConfig(
+            loading_mode=LoadingMode.FULL_VOLUME,
             modalities=["flair", "T1w"],
         )
+        dataset = RadiObjectDataset(populated_radi_object_module, config)
 
         sample = dataset[0]
         assert sample["image"].shape[0] == 2

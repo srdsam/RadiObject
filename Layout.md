@@ -13,17 +13,29 @@ RadiObject/
 ├── uv.lock
 ├── assets/
 │   └── benchmark/
-│       └── .gitkeep
+│       ├── benchmark_results.json      # Exported benchmark results with disk space
+│       ├── disk_space_comparison.png   # Storage format size comparison
+│       ├── format_overhead.png         # NIfTI vs NumPy vs TileDB load times
+│       ├── memory_by_backend.png       # Heap/RSS memory comparison
+│       ├── full_volume_load.png        # Framework comparison chart
+│       ├── slice_extraction.png        # Tiling strategy comparison
+│       ├── roi_extraction.png          # 3D ROI extraction comparison
+│       ├── dataloader_throughput.png   # ML training throughput
+│       ├── s3_vs_local_full.png        # S3 overhead for full reads
+│       └── s3_vs_local_slice.png       # S3 overhead for partial reads
+├── benchmarks/
+│   ├── config.py                   # Benchmark configuration (S3 region)
+│   ├── run_benchmarks.py           # Papermill runner for benchmarks
+│   └── framework_benchmark.ipynb   # Comprehensive benchmark suite
 ├── notebooks/
-│   ├── config.py
+│   ├── config.py                   # Tutorial configuration (URIs)
 │   ├── 00_ingest_brats.ipynb
 │   ├── 01_radi_object.ipynb
 │   ├── 02_volume_collection.ipynb
 │   ├── 03_volume.ipynb
 │   ├── 04_storage_configuration.ipynb
 │   ├── 05_ingest_msd.ipynb
-│   ├── 06_ml_training.ipynb
-│   └── framework_benchmark.ipynb
+│   └── 06_ml_training.ipynb
 ├── src/
 │   └── radiobject/
 │       ├── __init__.py
@@ -43,7 +55,6 @@ RadiObject/
 │       ├── volume_collection.py
 │       └── ml/
 │           ├── __init__.py
-│           ├── cache.py
 │           ├── config.py
 │           ├── distributed.py
 │           ├── factory.py
@@ -53,8 +64,6 @@ RadiObject/
 │           │   └── torchio.py
 │           ├── datasets/
 │           │   ├── __init__.py
-│           │   ├── multimodal.py
-│           │   ├── patch_dataset.py
 │           │   └── volume_dataset.py
 │           └── utils/
 │               ├── __init__.py
@@ -96,3 +105,4 @@ RadiObject/
 - `.pytest_cache/` - Pytest cache
 - `.ruff_cache/` - Ruff linter cache
 - `data/` - Local test data (synced from S3)
+- `data/benchmark/` - Locally-created tiled RadiObject datasets for benchmarking

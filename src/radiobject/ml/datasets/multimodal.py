@@ -43,7 +43,7 @@ class MultiModalDataset(Dataset):
 
         self._validate_alignment()
 
-        self._labels: dict[int, int | float] | None = None
+        self._labels: dict[int, Any] | None = None
         if label_column:
             self._load_labels(radi_object, label_column, value_filter)
 

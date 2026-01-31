@@ -117,20 +117,6 @@ class TestCreateDistributedDataloader:
         batch = next(iter(loader))
         assert batch["image"].shape[1] == 2
 
-    def test_cache_strategy_passed(self, populated_radi_object_module: "RadiObject") -> None:
-        from radiobject.ml.config import CacheStrategy
-
-        loader = create_distributed_dataloader(
-            populated_radi_object_module,
-            rank=0,
-            world_size=1,
-            modalities=["flair"],
-            cache_strategy=CacheStrategy.NONE,
-            num_workers=0,
-        )
-
-        assert isinstance(loader, DataLoader)
-
     def test_pin_memory_disabled_with_no_workers(
         self, populated_radi_object_module: "RadiObject"
     ) -> None:

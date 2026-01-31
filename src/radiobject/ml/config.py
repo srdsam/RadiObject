@@ -14,17 +14,10 @@ class LoadingMode(str, Enum):
     SLICE_2D = "slice_2d"
 
 
-class CacheStrategy(str, Enum):
-    """Caching strategy for dataset samples."""
-
-    NONE = "none"
-
-
 class DatasetConfig(BaseModel):
     """Configuration for RadiObjectDataset."""
 
     loading_mode: LoadingMode = LoadingMode.FULL_VOLUME
-    cache_strategy: CacheStrategy = CacheStrategy.NONE
     patch_size: tuple[int, int, int] | None = None
     patches_per_volume: int = 1
     modalities: list[str] | None = None

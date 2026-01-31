@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from radiobject.ml.cache import NoOpCache
 from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
 
@@ -71,14 +70,6 @@ class TestPatchDataset:
         for i in range(3):
             assert start[i] >= 0
             assert start[i] + patch_size[i] <= vol_shape[i]
-
-
-class TestCachedDataset:
-    """Tests for caching behavior."""
-
-    def test_cache_is_noop(self, ml_dataset: RadiObjectDataset) -> None:
-        """Test NoOpCache is used (InMemoryCache removed to avoid OOM)."""
-        assert isinstance(ml_dataset.cache, NoOpCache)
 
 
 class TestSliceDataset:

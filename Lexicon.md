@@ -563,15 +563,10 @@ Where:
 
 | Term | Definition |
 |------|------------|
-| **RadiObjectDataset** | PyTorch Dataset wrapping RadiObject for training, supports full_volume, patch, and slice_2d loading modes |
+| **RadiObjectDataset** | PyTorch Dataset wrapping RadiObject for training, supports full_volume, patch, and slice_2d loading modes. Validates subject alignment when multiple modalities are specified |
 | **VolumeReader** | Thread-safe wrapper for reading volumes from VolumeCollection with per-worker TileDB contexts |
 | **LoadingMode** | Enum specifying data loading strategy: FULL_VOLUME, PATCH, or SLICE_2D |
-| **CacheStrategy** | Enum specifying caching approach: NONE, IN_MEMORY (LRU), or DISK |
-| **CacheLayer** | Abstract interface for volume caching with get(), clear(), hits, misses |
-| **DatasetConfig** | Pydantic model configuring dataset behavior (loading_mode, patch_size, cache_strategy, modalities) |
-| **PatchVolumeDataset** | Dataset for extracting random 3D patches from volumes using deterministic seeding |
-| **GridPatchDataset** | Dataset for extracting patches on a regular grid for inference |
-| **MultiModalDataset** | Dataset for loading aligned volumes from multiple VolumeCollections stacked along channel dimension |
+| **DatasetConfig** | Pydantic model configuring dataset behavior (loading_mode, patch_size, modalities) |
 | **worker_init_fn** | DataLoader worker initializer that creates per-worker TileDB contexts |
 | **create_training_dataloader** | Factory function producing configured DataLoader with shuffle, pin_memory, persistent_workers |
 | **create_distributed_dataloader** | Factory for DDP-compatible DataLoader with DistributedSampler |
@@ -590,12 +585,28 @@ Where:
 | **axcodes** | 3-character tuple indicating axis directions, e.g., ('R', 'A', 'S') |
 | **canonical orientation** | Standard RAS orientation where X+ = Right, Y+ = Anterior, Z+ = Superior |
 | **reorientation** | Transforming volume data and affine to match a target orientation |
-| **OrientationInfo** | Pydantic model storing orientation metadata (axcodes, affine, source) |
+| **OrientationInfo** | Pydantic model storing anatomical orientation metadata (axcodes, affine, source) |
+| **tile_orientation** | Volume property returning SliceOrientation enum indicating tile chunking strategy used at creation |
 | **orientation_affine** | TileDB metadata key storing 4x4 affine as JSON |
 | **orientation_axcodes** | TileDB metadata key storing 3-char orientation string |
 | **original_affine** | TileDB metadata preserving pre-reorientation affine for provenance |
 | **orientation_source** | Origin of orientation data: nifti_sform, nifti_qform, dicom_iop, or identity |
 | **orientation_confidence** | Trust level: header (from file), inferred (ML), or unknown |
+
+### RadiObject Configuration Terminology
+
+| Term | Definition |
+|------|------------|
+| **RadiObjectConfig** | Top-level configuration model with nested `write`, `read`, and `s3` settings |
+| **WriteConfig** | Settings applied when creating new TileDB arrays (tile, compression, orientation). Immutable after array creation |
+| **ReadConfig** | Settings for reading TileDB arrays (memory_budget_mb, concurrency, max_workers). Affects all reads |
+| **TileConfig** | Tile chunking configuration (orientation, x/y/z extents). Part of WriteConfig |
+| **CompressionConfig** | Compression settings (algorithm, level). Part of WriteConfig |
+| **OrientationConfig** | Anatomical orientation settings (canonical_target, reorient_on_load). Part of WriteConfig |
+| **S3Config** | Cloud storage settings (region, endpoint, credentials). Applies to both read and write |
+| **configure()** | Global function to update configuration. Supports nested API (`write=WriteConfig(...)`) and deprecated flat API (`tile=TileConfig(...)`) |
+| **get_config()** | Returns current global RadiObjectConfig instance |
+| **ctx()** | Returns lazily-built TileDB context from current configuration |
 
 ---
 

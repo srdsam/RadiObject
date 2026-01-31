@@ -135,29 +135,38 @@ The TileDB entities are a public property of each given entity. This allows dire
 
 ### Context
 
-RadiObject uses a global configuration pattern to manage TileDB settings. The context is lazily built from configuration and automatically invalidated when settings change. It is important to optimize the context for a given usecase.
+RadiObject uses a global configuration pattern to manage TileDB settings. Configuration is organized into **write-time** settings (immutable after array creation) and **read-time** settings (affect all reads):
 
 ```python
-from radiobject import ctx, configure
-from radiobject.ctx import TileConfig, SliceOrientation
+from radiobject import ctx, configure, WriteConfig, ReadConfig
+from radiobject.ctx import TileConfig, SliceOrientation, CompressionConfig
 
 # Use defaults
 array = tiledb.open(uri, ctx=ctx())
 
-# Customize settings
-configure(tile=TileConfig(orientation=SliceOrientation.ISOTROPIC))
+# Configure write-time settings (affect new arrays only)
+configure(write=WriteConfig(
+    tile=TileConfig(orientation=SliceOrientation.ISOTROPIC),
+    compression=CompressionConfig(level=5)
+))
+
+# Configure read-time settings (affect all reads)
+configure(read=ReadConfig(memory_budget_mb=2048, concurrency=8))
+
+# Legacy flat API still supported (maps to write.*)
+configure(tile=TileConfig(orientation=SliceOrientation.AXIAL))
 ```
 
 **Defaults:**
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Tile orientation | `AXIAL` | X-Y slices optimized for neuroimaging |
-| Compression | `ZSTD` level 3 | Balanced speed/ratio |
-| Memory budget | 1024 MB | TileDB operation limit |
-| I/O concurrency | 4 threads | Parallel read/write |
-| Canonical orientation | `RAS` | Target coordinate system |
-| Reorient on load | `False` | Preserves original orientation |
+| Setting | Path | Default | Description |
+|---------|------|---------|-------------|
+| Tile orientation | `write.tile.orientation` | `AXIAL` | X-Y slices optimized for neuroimaging |
+| Compression | `write.compression` | `ZSTD` level 3 | Balanced speed/ratio |
+| Canonical orientation | `write.orientation.canonical_target` | `RAS` | Target coordinate system |
+| Reorient on load | `write.orientation.reorient_on_load` | `False` | Preserves original orientation |
+| Memory budget | `read.memory_budget_mb` | 1024 MB | TileDB operation limit |
+| I/O concurrency | `read.concurrency` | 4 threads | Parallel read/write |
 
 Tile size is auto-computed from array shape based on orientation. For example, `AXIAL` uses full X-Y slices with Z=1, `ISOTROPIC` uses 64³ chunks (in all directions).
 
@@ -217,41 +226,144 @@ Queries (`Query`) accumulate filters without touching data. Explicit materializa
 
 Both modes can be combined: start with exploration to understand your data, then use `view.to_query()` to transition to pipeline mode for production.
 
-## Validation
+## Benchmarking
 
-RadiObject enforces data integrity through two validation strategies:
+**TL;DR**: RadiObject enables **200-660x faster** partial reads and native S3 access.
 
-### Eager Validation (Automatic)
+![I/O Performance](assets/benchmark/benchmark_hero.png)
 
-Index uniqueness is validated automatically when building indexes. If duplicate `obs_id` or `obs_subject_id` values are detected, a `ValueError` is raised immediately.
+### Key Results
 
-```python
-# This will raise ValueError if duplicates exist
-radi = RadiObject(uri)  # Index built on first access
+| Operation | RadiObject (local) | RadiObject (S3) | MONAI | TorchIO |
+|-----------|-------------------|-----------------|-------|---------|
+| 2D Slice | **3.8 ms** | **152 ms** | 2502 ms | 777 ms |
+| 64³ ROI | **2.2 ms** | **151 ms** | 1229 ms | 760 ms |
+| Full Volume | 525 ms | 7135 ms | 1244 ms | 756 ms |
+
+S3 partial reads are **5-16x faster** than local NIfTI frameworks because MONAI/TorchIO must decompress entire volumes.
+
+### Why the Difference?
+
+```
+NIfTI:  [full blob] → decompress all → slice
+TileDB: [tile][tile] → read 1 tile   → slice
 ```
 
-### Lazy Validation (On-Demand)
+### Storage Tradeoff
 
-Expensive consistency checks are available via the `validate()` method. Call this after data migrations, before long computations, or when debugging data issues.
+| Format | Size | Can Partial Read? |
+|--------|------|-------------------|
+| NIfTI (.nii.gz) | 2.1 GB | No |
+| TileDB | 5.7 GB | Yes (local & S3) |
+
+### When to Use Each
+
+| Scenario | Framework |
+|----------|-----------|
+| Cloud storage (S3/GCS) | **RadiObject** |
+| Partial reads (slices, patches) | **RadiObject** |
+| Rich augmentation pipelines | TorchIO |
+| Existing MONAI workflows | MONAI |
+
+<details>
+<summary><strong>Deep Dive</strong> (for performance engineers)</summary>
+
+### Disk Space by Format
+
+| Format | Size | Files | Compression |
+|--------|------|-------|-------------|
+| NIfTI (.nii.gz) | 2.1 GB | 20 | 3.1x |
+| TileDB ISOTROPIC | 5.7 GB | 488 | 1.2x |
+| TileDB AXIAL | 6.2 GB | 488 | 1.1x |
+| NIfTI (.nii) | 6.7 GB | 20 | 1.0x |
+| NumPy (.npy) | 13.4 GB | 20 | 0.5x |
+
+![Disk Space](assets/benchmark/disk_space_comparison.png)
+
+### Memory Pressure (Peak Heap)
+
+| Operation | RadiObject | MONAI | TorchIO |
+|-----------|------------|-------|---------|
+| Slice extraction | **1 MB** | 912 MB | 304 MB |
+| Full volume | 304 MB | 608 MB | 304 MB |
+| Random access (10 vols) | 896 MB | 1482 MB | 589 MB |
+
+### CPU Utilization
+
+| Operation | RadiObject | MONAI | TorchIO |
+|-----------|------------|-------|---------|
+| Full volume (peak) | 75.5% | 37.7% | 37.5% |
+| Slice (peak) | 45.4% | 44.4% | 53.8% |
+
+TileDB parallelizes tile decompression across cores.
+
+### Format Overhead (nibabel baseline)
+
+| Format | Time | Notes |
+|--------|------|-------|
+| .nii.gz | 457 ms | Gzip decompression |
+| .nii | 38 ms | Raw mmap |
+| .npy | 46 ms | NumPy load |
+| TileDB AXIAL | 505 ms | Full read |
+| TileDB ISOTROPIC | 120 ms | Parallel tiles |
+
+### Random Access Pattern (shuffled training)
+
+| Framework | Total (10 vols) | Per Volume |
+|-----------|-----------------|------------|
+| RadiObject (local) | 6264 ms | 626 ms |
+| TorchIO | 7538 ms | 754 ms |
+| MONAI | 14112 ms | 1411 ms |
+
+### Tiling Strategy
+
+| Strategy | Best For | Config |
+|----------|----------|--------|
+| **AXIAL** | 2D slice viewing | `SliceOrientation.AXIAL` |
+| **ISOTROPIC** | 3D patch extraction | `SliceOrientation.ISOTROPIC` |
+
+### Methodology
+
+- **Dataset**: 20 CT volumes (512×512×~300 voxels, ~7 GB raw)
+- **Runs**: 10 measurement, 5 warmup
+- **Seeds**: Fixed (42), GC forced between tests
+- **Memory**: tracemalloc (heap), psutil (RSS)
+- **Full notebook**: `benchmarks/framework_benchmark.ipynb`
+
+</details>
+
+## Using with MONAI/TorchIO
+
+RadiObject focuses on efficient data loading from TileDB/S3 with partial reads. Use MONAI or TorchIO for transforms and augmentation.
+
+### With MONAI Transforms
+
+RadiObjectDataset outputs `{"image": tensor, ...}` - compatible with MONAI dict transforms:
 
 ```python
-# Validate a VolumeCollection
-collection = radi.T1w
-collection.validate()  # Checks referential integrity, position coherence, metadata counts
+from monai.transforms import Compose, NormalizeIntensityd, RandFlipd
+from radiobject.ml import create_training_dataloader
 
-# Validate entire RadiObject (cascades to all collections)
-radi.validate()
+transform = Compose([
+    NormalizeIntensityd(keys="image"),
+    RandFlipd(keys="image", prob=0.5, spatial_axis=[0, 1, 2]),
+])
+
+loader = create_training_dataloader(radi, modalities=["CT"], transform=transform)
 ```
 
-**Checks performed by `validate()`:**
+### With TorchIO Transforms
 
-| Check | Level | Description |
-|-------|-------|-------------|
-| Referential integrity | VolumeCollection | All volumes have corresponding obs rows and vice versa |
-| Position coherence | VolumeCollection | Volume position matches obs row order |
-| Metadata counts | Both | Stored counts match actual data |
-| Subject count | RadiObject | `subject_count` matches `obs_meta` row count |
-| Collection count | RadiObject | `n_collections` matches actual collection count |
+Use `RadiObjectSubjectsDataset` for TorchIO's Queue-based training:
+
+```python
+from radiobject.ml import RadiObjectSubjectsDataset
+import torchio as tio
+
+dataset = RadiObjectSubjectsDataset(radi, modalities=["T1w"])
+transform = tio.Compose([tio.ZNormalization(), tio.RandomFlip()])
+queue = tio.Queue(dataset, max_length=100, samples_per_volume=10)
+```
 
 ## DevEx
 

@@ -214,6 +214,12 @@ class TestOrientationValidation:
         assert is_orientation_valid(info) is False
 
 
+def voxel_to_world(affine: np.ndarray, voxel: tuple[int, int, int]) -> np.ndarray:
+    """Convert voxel coordinates to world coordinates using affine."""
+    voxel_homogeneous = np.array([*voxel, 1.0])
+    return (affine @ voxel_homogeneous)[:3]
+
+
 class TestReorientation:
     """Tests for reorientation to canonical orientation."""
 
@@ -252,6 +258,76 @@ class TestReorientation:
         reoriented_data, _ = reorient_to_canonical(data, img.affine, target="RAS")
 
         assert np.allclose(reoriented_data, data)
+
+    def test_reorient_to_las_world_coordinates(self, temp_dir: Path):
+        """Reorienting RAS to LAS should preserve world coordinate mapping."""
+        nifti_path = create_synthetic_nifti_ras(temp_dir)
+        img = nib.load(nifti_path)
+        data = np.asarray(img.dataobj)
+        affine = img.affine
+
+        reoriented_data, reoriented_affine = reorient_to_canonical(data, affine, target="LAS")
+
+        # Check orientation is LAS
+        reoriented_img = nib.Nifti1Image(reoriented_data, reoriented_affine)
+        info = detect_nifti_orientation(reoriented_img)
+        assert info.axcodes == ("L", "A", "S")
+
+        # Verify world coordinates: corner voxels should map to same world location
+        # Original corner (0, 0, 0) maps to some world coordinate
+        # After flip along X, this becomes (nx-1, 0, 0) in reoriented space
+        nx = data.shape[0]
+        original_corner = (0, 0, 0)
+        reoriented_corner = (nx - 1, 0, 0)
+
+        world_original = voxel_to_world(affine, original_corner)
+        world_reoriented = voxel_to_world(reoriented_affine, reoriented_corner)
+
+        assert np.allclose(world_original, world_reoriented, atol=1e-5)
+
+        # Also check opposite corner
+        original_far = (nx - 1, 0, 0)
+        reoriented_far = (0, 0, 0)
+
+        world_original_far = voxel_to_world(affine, original_far)
+        world_reoriented_far = voxel_to_world(reoriented_affine, reoriented_far)
+
+        assert np.allclose(world_original_far, world_reoriented_far, atol=1e-5)
+
+    def test_reorient_to_lps_world_coordinates(self, temp_dir: Path):
+        """Reorienting RAS to LPS should preserve world coordinate mapping."""
+        nifti_path = create_synthetic_nifti_ras(temp_dir)
+        img = nib.load(nifti_path)
+        data = np.asarray(img.dataobj)
+        affine = img.affine
+
+        reoriented_data, reoriented_affine = reorient_to_canonical(data, affine, target="LPS")
+
+        # Check orientation is LPS
+        reoriented_img = nib.Nifti1Image(reoriented_data, reoriented_affine)
+        info = detect_nifti_orientation(reoriented_img)
+        assert info.axcodes == ("L", "P", "S")
+
+        # Verify world coordinates for corner mapping
+        # After flip along X and Y: (0, 0, 0) -> (nx-1, ny-1, 0)
+        nx, ny = data.shape[0], data.shape[1]
+        original_corner = (0, 0, 0)
+        reoriented_corner = (nx - 1, ny - 1, 0)
+
+        world_original = voxel_to_world(affine, original_corner)
+        world_reoriented = voxel_to_world(reoriented_affine, reoriented_corner)
+
+        assert np.allclose(world_original, world_reoriented, atol=1e-5)
+
+        # Check center voxel mapping
+        cx, cy, cz = nx // 2, ny // 2, data.shape[2] // 2
+        original_center = (cx, cy, cz)
+        reoriented_center = (nx - 1 - cx, ny - 1 - cy, cz)
+
+        world_original_center = voxel_to_world(affine, original_center)
+        world_reoriented_center = voxel_to_world(reoriented_affine, reoriented_center)
+
+        assert np.allclose(world_original_center, world_reoriented_center, atol=1e-5)
 
 
 class TestMetadataRoundtrip:

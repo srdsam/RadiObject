@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from radiobject.ml.cache import BaseCache, NoOpCache
 from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.reader import VolumeReader
 
@@ -27,7 +26,6 @@ class RadiObjectDataset(Dataset):
     ):
         self._config = config
         self._transform = transform
-        self._cache: BaseCache = NoOpCache()
 
         modalities = config.modalities or list(radi_object.collection_names)
         if not modalities:
@@ -52,6 +50,9 @@ class RadiObjectDataset(Dataset):
         self._n_volumes = len(first_reader)
         self._volume_shape = first_reader.shape  # Guaranteed non-None after uniform check
 
+        if len(modalities) > 1:
+            self._validate_subject_alignment()
+
         self._labels: dict[int, int | float] | None = None
         if config.label_column:
             self._load_labels(radi_object, config.label_column, config.value_filter)
@@ -62,6 +63,40 @@ class RadiObjectDataset(Dataset):
             self._length = self._n_volumes * self._volume_shape[2]
         else:
             self._length = self._n_volumes
+
+    def _validate_subject_alignment(self) -> None:
+        """Validate that all modalities have matching subjects."""
+        first_mod = self._modalities[0]
+        first_reader = self._readers[first_mod]
+
+        first_subjects = set()
+        for idx in range(len(first_reader)):
+            obs_id = first_reader.get_obs_id(idx)
+            parts = obs_id.rsplit("_", 1)
+            subject = parts[0] if len(parts) > 1 else obs_id
+            first_subjects.add(subject)
+
+        for mod in self._modalities[1:]:
+            reader = self._readers[mod]
+            if len(reader) != self._n_volumes:
+                raise ValueError(
+                    f"Modality '{mod}' has {len(reader)} volumes, expected {self._n_volumes}"
+                )
+
+            mod_subjects = set()
+            for idx in range(len(reader)):
+                obs_id = reader.get_obs_id(idx)
+                parts = obs_id.rsplit("_", 1)
+                subject = parts[0] if len(parts) > 1 else obs_id
+                mod_subjects.add(subject)
+
+            if mod_subjects != first_subjects:
+                missing = first_subjects - mod_subjects
+                extra = mod_subjects - first_subjects
+                raise ValueError(
+                    f"Subject mismatch for modality '{mod}': "
+                    f"missing={list(missing)[:3]}, extra={list(extra)[:3]}"
+                )
 
     def _load_labels(
         self,
@@ -96,21 +131,12 @@ class RadiObjectDataset(Dataset):
         return self._length
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        # Check cache first
-        cached = self._cache.get(idx)
-        if cached is not None:
-            return cached
-
         if self._config.loading_mode == LoadingMode.PATCH:
-            result = self._get_patch_item(idx)
+            return self._get_patch_item(idx)
         elif self._config.loading_mode == LoadingMode.SLICE_2D:
-            result = self._get_slice_item(idx)
+            return self._get_slice_item(idx)
         else:
-            result = self._get_full_volume_item(idx)
-
-        # Store in cache
-        self._cache.set(idx, result)
-        return result
+            return self._get_full_volume_item(idx)
 
     def _get_full_volume_item(self, idx: int) -> dict[str, torch.Tensor]:
         """Load full volume for all modalities."""
@@ -210,8 +236,3 @@ class RadiObjectDataset(Dataset):
     def volume_shape(self) -> tuple[int, int, int]:
         """Shape of each volume (X, Y, Z)."""
         return self._volume_shape
-
-    @property
-    def cache(self) -> BaseCache:
-        """Access to the sample cache."""
-        return self._cache
