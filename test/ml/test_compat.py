@@ -47,52 +47,59 @@ def test_compose_repr():
 
 @pytest.mark.skipif(not HAS_TORCHIO, reason="TorchIO not installed")
 def test_subjects_dataset(populated_radi_object_module):
-    """RadiObjectSubjectsDataset returns tio.Subject."""
-    from radiobject.ml.compat import RadiObjectSubjectsDataset
+    """VolumeCollectionSubjectsDataset returns tio.Subject."""
+    from radiobject.ml.compat import VolumeCollectionSubjectsDataset
 
-    modality = populated_radi_object_module.collection_names[0]
-    dataset = RadiObjectSubjectsDataset(
-        populated_radi_object_module,
-        modalities=[modality],
-    )
+    collection = populated_radi_object_module.collection("flair")
+    dataset = VolumeCollectionSubjectsDataset(collection)
 
     assert len(dataset) > 0
     subject = dataset[0]
     assert isinstance(subject, tio.Subject)
-    assert modality in subject
+    assert "flair" in subject
+
+
+@pytest.mark.skipif(not HAS_TORCHIO, reason="TorchIO not installed")
+def test_subjects_dataset_multimodal(populated_radi_object_module):
+    """VolumeCollectionSubjectsDataset handles multiple collections."""
+    from radiobject.ml.compat import VolumeCollectionSubjectsDataset
+
+    collections = [
+        populated_radi_object_module.collection("flair"),
+        populated_radi_object_module.collection("T1w"),
+    ]
+    dataset = VolumeCollectionSubjectsDataset(collections)
+
+    subject = dataset[0]
+    assert "flair" in subject
+    assert "T1w" in subject
 
 
 @pytest.mark.skipif(not HAS_TORCHIO, reason="TorchIO not installed")
 def test_subjects_dataset_with_transform(populated_radi_object_module):
-    """RadiObjectSubjectsDataset applies TorchIO transforms."""
-    from radiobject.ml.compat import RadiObjectSubjectsDataset
+    """VolumeCollectionSubjectsDataset applies TorchIO transforms."""
+    from radiobject.ml.compat import VolumeCollectionSubjectsDataset
 
-    modality = populated_radi_object_module.collection_names[0]
+    collection = populated_radi_object_module.collection("flair")
     transform = tio.ZNormalization()
-    dataset = RadiObjectSubjectsDataset(
-        populated_radi_object_module,
-        modalities=[modality],
-        transform=transform,
-    )
+    dataset = VolumeCollectionSubjectsDataset(collection, transform=transform)
 
     subject = dataset[0]
-    image_data = subject[modality].data
+    image_data = subject["flair"].data
     assert torch.abs(image_data.mean()) < 1.0
 
 
 @pytest.mark.skipif(not HAS_MONAI, reason="MONAI not installed")
 def test_monai_transforms_work_directly(populated_radi_object_module):
-    """MONAI dict transforms work with RadiObjectDataset output."""
+    """MONAI dict transforms work with VolumeCollectionDataset output."""
     from monai.transforms import RandFlipd
 
     from radiobject.ml.config import DatasetConfig, LoadingMode
-    from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+    from radiobject.ml.datasets import VolumeCollectionDataset
 
-    config = DatasetConfig(
-        loading_mode=LoadingMode.FULL_VOLUME,
-        modalities=[populated_radi_object_module.collection_names[0]],
-    )
-    dataset = RadiObjectDataset(populated_radi_object_module, config)
+    config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+    collection = populated_radi_object_module.collection("flair")
+    dataset = VolumeCollectionDataset(collection, config=config)
 
     transform = RandFlipd(keys="image", prob=1.0)
     sample = dataset[0]
@@ -106,17 +113,15 @@ def test_monai_transforms_work_directly(populated_radi_object_module):
 
 @pytest.mark.skipif(not HAS_MONAI, reason="MONAI not installed")
 def test_monai_normalize_intensity(populated_radi_object_module):
-    """MONAI NormalizeIntensityd works with RadiObjectDataset."""
+    """MONAI NormalizeIntensityd works with VolumeCollectionDataset."""
     from monai.transforms import NormalizeIntensityd
 
     from radiobject.ml.config import DatasetConfig, LoadingMode
-    from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+    from radiobject.ml.datasets import VolumeCollectionDataset
 
-    config = DatasetConfig(
-        loading_mode=LoadingMode.FULL_VOLUME,
-        modalities=[populated_radi_object_module.collection_names[0]],
-    )
-    dataset = RadiObjectDataset(populated_radi_object_module, config)
+    config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+    collection = populated_radi_object_module.collection("flair")
+    dataset = VolumeCollectionDataset(collection, config=config)
 
     transform = NormalizeIntensityd(keys="image", channel_wise=True)
     sample = dataset[0]

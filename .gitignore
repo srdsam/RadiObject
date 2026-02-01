@@ -14,6 +14,8 @@ wheels/
 
 # Claude
 .claude
+CLAUDE.md
+.serena
 
 # Test data (S3 is source of truth, synced locally)
 test/data/nifti/
@@ -22,3 +24,6 @@ data/
 
 # Local cache directory
 .cache/radiobject/
+
+# Generated documentation
+site/

@@ -27,7 +27,15 @@ RadiObject/
 │   ├── config.py                   # Benchmark configuration (S3 region)
 │   ├── run_benchmarks.py           # Papermill runner for benchmarks
 │   └── framework_benchmark.ipynb   # Comprehensive benchmark suite
+├── docs/
+│   ├── BENCHMARKS.md               # Performance analysis and comparisons
+│   ├── CONTRIBUTING.md             # Development setup, testing
+│   ├── DATA_ACCESS.md              # Exploration vs pipeline modes, queries
+│   ├── DESIGN.md                   # TileDB structure, orientation handling
+│   ├── ML_INTEGRATION.md           # MONAI and TorchIO usage
+│   └── S3_SETUP.md                 # Optional cloud storage configuration
 ├── notebooks/
+│   ├── README.md                   # Tutorial setup guide
 │   ├── config.py                   # Tutorial configuration (URIs)
 │   ├── 00_ingest_brats.ipynb
 │   ├── 01_radi_object.ipynb
@@ -36,6 +44,8 @@ RadiObject/
 │   ├── 04_storage_configuration.ipynb
 │   ├── 05_ingest_msd.ipynb
 │   └── 06_ml_training.ipynb
+├── scripts/
+│   └── download_tutorial_data.py   # Downloads BraTS sample data for tutorials
 ├── src/
 │   └── radiobject/
 │       ├── __init__.py
@@ -64,9 +74,13 @@ RadiObject/
 │           │   └── torchio.py
 │           ├── datasets/
 │           │   ├── __init__.py
-│           │   └── volume_dataset.py
+│           │   ├── collection_dataset.py
+│           │   ├── patch_dataset.py
+│           │   └── segmentation_dataset.py
 │           └── utils/
 │               ├── __init__.py
+│               ├── labels.py
+│               ├── validation.py
 │               └── worker_init.py
 └── test/
     ├── __init__.py
@@ -76,6 +90,7 @@ RadiObject/
     ├── test_append.py
     ├── test_dataframe.py
     ├── test_from_niftis.py
+    ├── test_imaging_metadata.py
     ├── test_indexing.py
     ├── test_ingest.py
     ├── test_orientation.py
@@ -84,6 +99,7 @@ RadiObject/
     ├── test_radi_object.py
     ├── test_streaming.py
     ├── test_threading_investigation.py
+    ├── test_utils.py
     ├── test_volume_collection.py
     ├── test_volume.py
     └── ml/
@@ -95,7 +111,8 @@ RadiObject/
         ├── test_reader.py
         ├── test_threading_ml.py
         ├── test_training.py
-        └── test_compat.py
+        ├── test_compat.py
+        └── test_segmentation_dataset.py
 ```
 
 ## Excluded (gitignored)

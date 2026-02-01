@@ -1,0 +1,60 @@
+site_name: RadiObject
+site_description: TileDB-backed radiology data management
+repo_url: https://github.com/samueldsouza/radiobject
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            heading_level: 2
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - Design: DESIGN.md
+      - Data Access: DATA_ACCESS.md
+      - ML Integration: ML_INTEGRATION.md
+      - Benchmarks: BENCHMARKS.md
+  - API Reference:
+      - RadiObject: api/radi_object.md
+      - VolumeCollection: api/volume_collection.md
+      - Volume: api/volume.md
+      - Query: api/query.md
+      - Configuration: api/ctx.md
+  - Development:
+      - Contributing: CONTRIBUTING.md
+      - S3 Setup: S3_SETUP.md
+      - Lexicon: LEXICON.md
+      - Layout: LAYOUT.md
+      - Performance: PERFORMANCE.md

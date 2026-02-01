@@ -21,21 +21,19 @@ Key Concepts:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Iterator, Sequence
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import tiledb
 
+from radiobject._types import TransformFn
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
     from radiobject.volume_collection import VolumeCollection
-
-# Transform function signature: numpy array in, numpy array out (shape may differ)
-TransformFn = Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]
 
 
 @dataclass(frozen=True)
@@ -58,20 +56,14 @@ class QueryCount:
 class Query:
     """Lazy filter builder for RadiObject with explicit materialization.
 
-    Query Flow:
-    -----------
-    1. Filters on obs_meta (subject-level): filter_subjects(), filter()
-    2. Filters on collection obs (volume-level): filter_collection()
-    3. Resolution: subject matches if it passes obs_meta AND has matching volumes
-    4. Materialization: iter_volumes(), to_radi_object(), count()
+    Filters accumulate without data access. Call iter_volumes(), to_radi_object(),
+    or count() to materialize results.
 
     Example:
-        # Filter subjects by age, then filter T1w volumes by resolution
         result = (
             radi.query()
-            .filter("age > 40")                    # Filter on obs_meta
-            .filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")  # Filter on T1w.obs
-            .select_collections(["T1w", "FLAIR"])  # Limit output collections
+            .filter("age > 40")
+            .filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
             .to_radi_object("s3://bucket/subset")
         )
     """
@@ -235,27 +227,10 @@ class Query:
     def map(self, fn: TransformFn) -> Query:
         """Apply transform to each volume during materialization.
 
-        The transform function receives a numpy array and returns a numpy array.
-        Transform is applied lazily when volumes are materialized via
-        to_radi_object() or to_volume_collection().
-
         Multiple map() calls compose: query.map(f1).map(f2) applies f1 then f2.
 
         Args:
-            fn: Function taking numpy array (X, Y, Z) and returning numpy array.
-                Can change shape (e.g., resampling to different dimensions).
-
-        Returns:
-            New Query with transform applied
-
-        Example:
-            # Double all voxel values
-            query.map(lambda v: v * 2).to_radi_object(uri)
-
-            # Resample to uniform shape with MONAI
-            from monai.transforms import Spacing
-            spacing = Spacing(pixdim=(2.0, 2.0, 2.0))
-            query.map(lambda v: spacing(v[np.newaxis, ...])[0]).to_radi_object(uri)
+            fn: Function (X, Y, Z) -> (X', Y', Z'). Can change shape.
         """
         if self._transform_fn is not None:
             # Compose transforms: apply previous transform, then new one
@@ -560,15 +535,8 @@ class Query:
 class CollectionQuery:
     """Lazy filter builder for VolumeCollection with explicit materialization.
 
-    CollectionQuery operates on a single VolumeCollection's obs dataframe,
-    returning masks that can be used to filter volumes.
-
     Example:
-        high_res = (
-            radi.T1w.query()
-            .filter("voxel_spacing == '1.0x1.0x1.0'")
-            .head(100)
-        )
+        high_res = radi.T1w.query().filter("voxel_spacing == '1.0x1.0x1.0'").head(100)
         for vol in high_res.iter_volumes():
             process(vol)
     """
@@ -675,30 +643,10 @@ class CollectionQuery:
     def map(self, fn: TransformFn) -> CollectionQuery:
         """Apply transform to each volume during materialization.
 
-        The transform function receives a numpy array and returns a numpy array.
-        Transform is applied lazily when volumes are materialized via
-        to_volume_collection().
-
         Multiple map() calls compose: query.map(f1).map(f2) applies f1 then f2.
 
         Args:
-            fn: Function taking numpy array (X, Y, Z) and returning numpy array.
-                Can change shape (e.g., resampling to different dimensions).
-
-        Returns:
-            New CollectionQuery with transform applied
-
-        Example:
-            # Double all voxel values
-            query.map(lambda v: v * 2).to_volume_collection(uri)
-
-            # Resample to uniform shape
-            def resample(v):
-                from scipy.ndimage import zoom
-                target = (128, 128, 128)
-                factors = tuple(t / s for t, s in zip(target, v.shape))
-                return zoom(v, factors, order=1)
-            query.map(resample).to_volume_collection(uri)
+            fn: Function (X, Y, Z) -> (X', Y', Z'). Can change shape.
         """
         if self._transform_fn is not None:
             # Compose transforms: apply previous transform, then new one

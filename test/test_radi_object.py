@@ -99,35 +99,22 @@ class TestRadiObjectFromVolumeCollections:
 class TestRadiObjectILoc:
     """Tests for iloc (integer-location) indexer."""
 
-    def test_iloc_single_int(self, populated_radi_object_module: RadiObject):
-        """iloc[int] returns RadiObjectView with single subject."""
-        view = populated_radi_object_module.iloc[0]
+    @pytest.mark.parametrize(
+        ("indexer", "expected_len"),
+        [
+            (0, 1),  # iloc[int] - single subject
+            (-1, 1),  # iloc[-1] - last subject
+            (slice(0, 2), 2),  # iloc[start:stop] - range
+            ([0, 2], 2),  # iloc[list] - specific indices
+        ],
+        ids=["single", "negative", "slice", "list"],
+    )
+    def test_iloc_indexing(self, populated_radi_object_module: RadiObject, indexer, expected_len):
+        """iloc returns RadiObjectView with expected subjects."""
+        view = populated_radi_object_module.iloc[indexer]
 
         assert isinstance(view, RadiObjectView)
-        assert len(view) == 1
-        assert view.obs_subject_ids == [populated_radi_object_module.obs_subject_ids[0]]
-
-    def test_iloc_negative_index(self, populated_radi_object_module: RadiObject):
-        """iloc[-1] returns view with last subject."""
-        view = populated_radi_object_module.iloc[-1]
-
-        assert len(view) == 1
-        assert view.obs_subject_ids == [populated_radi_object_module.obs_subject_ids[-1]]
-
-    def test_iloc_slice(self, populated_radi_object_module: RadiObject):
-        """iloc[start:stop] returns view with sliced subjects."""
-        view = populated_radi_object_module.iloc[0:2]
-
-        assert len(view) == 2
-        assert view.obs_subject_ids == populated_radi_object_module.obs_subject_ids[0:2]
-
-    def test_iloc_list(self, populated_radi_object_module: RadiObject):
-        """iloc[[0, 2]] returns view with specific subjects."""
-        view = populated_radi_object_module.iloc[[0, 2]]
-
-        assert len(view) == 2
-        expected = [populated_radi_object_module.obs_subject_ids[i] for i in [0, 2]]
-        assert view.obs_subject_ids == expected
+        assert len(view) == expected_len
 
     def test_iloc_out_of_range_raises(self, populated_radi_object_module: RadiObject):
         """iloc[99] raises IndexError."""
@@ -138,25 +125,17 @@ class TestRadiObjectILoc:
 class TestRadiObjectLoc:
     """Tests for loc (label-based) indexer."""
 
-    def test_loc_single_str(self, populated_radi_object_module: RadiObject):
-        """loc[str] returns RadiObjectView with single subject."""
-        subject_id = populated_radi_object_module.obs_subject_ids[1]
-        view = populated_radi_object_module.loc[subject_id]
+    def test_loc_single_and_list(self, populated_radi_object_module: RadiObject):
+        """loc returns RadiObjectView for single ID or list of IDs."""
+        subject_ids = populated_radi_object_module.obs_subject_ids
 
-        assert isinstance(view, RadiObjectView)
-        assert len(view) == 1
-        assert view.obs_subject_ids == [subject_id]
+        single_view = populated_radi_object_module.loc[subject_ids[1]]
+        assert isinstance(single_view, RadiObjectView)
+        assert len(single_view) == 1
 
-    def test_loc_list(self, populated_radi_object_module: RadiObject):
-        """loc[[str, str]] returns view with multiple subjects."""
-        subject_ids = [
-            populated_radi_object_module.obs_subject_ids[0],
-            populated_radi_object_module.obs_subject_ids[2],
-        ]
-        view = populated_radi_object_module.loc[subject_ids]
-
-        assert len(view) == 2
-        assert view.obs_subject_ids == subject_ids
+        multi_view = populated_radi_object_module.loc[[subject_ids[0], subject_ids[2]]]
+        assert len(multi_view) == 2
+        assert multi_view.obs_subject_ids == [subject_ids[0], subject_ids[2]]
 
     def test_loc_not_found_raises(self, populated_radi_object_module: RadiObject):
         """loc["NONEXISTENT"] raises KeyError."""
@@ -190,80 +169,54 @@ class TestRadiObjectCollectionAccess:
 class TestRadiObjectProperties:
     """Tests for RadiObject properties."""
 
-    def test_obs_subject_ids(self, populated_radi_object_module: RadiObject):
-        """obs_subject_ids returns list of all subject IDs."""
-        ids = populated_radi_object_module.obs_subject_ids
+    def test_basic_properties(self, populated_radi_object_module: RadiObject):
+        """Verify core properties: length, collections, subject IDs."""
+        radi = populated_radi_object_module
 
-        assert len(ids) == 3
-
-    def test_collection_names(self, populated_radi_object_module: RadiObject):
-        """collection_names returns tuple of collection names."""
-        names = populated_radi_object_module.collection_names
-
-        assert len(names) == 4
-        assert "T1w" in names
-        assert "flair" in names
-
-    def test_n_collections(self, populated_radi_object_module: RadiObject):
-        """n_collections returns number of collections."""
-        assert populated_radi_object_module.n_collections == 4
-
-    def test_len(self, populated_radi_object_module: RadiObject):
-        """len(radi) returns number of subjects."""
-        assert len(populated_radi_object_module) == 3
+        assert len(radi) == 3
+        assert len(radi.obs_subject_ids) == 3
+        assert radi.n_collections == 4
+        assert {"T1w", "flair"} <= set(radi.collection_names)
 
 
 class TestRadiObjectIndex:
     """Tests for RadiObject.index property."""
 
-    def test_index_get_index(self, populated_radi_object_module: RadiObject):
-        """index.get_index() maps obs_subject_id to integer index."""
-        for i, subject_id in enumerate(populated_radi_object_module.obs_subject_ids):
-            assert populated_radi_object_module.index.get_index(subject_id) == i
+    def test_index_bidirectional_mapping(self, populated_radi_object_module: RadiObject):
+        """index maps between obs_subject_id and integer index bidirectionally."""
+        index = populated_radi_object_module.index
+        subject_ids = populated_radi_object_module.obs_subject_ids
 
-    def test_index_get_key(self, populated_radi_object_module: RadiObject):
-        """index.get_key() maps integer index to obs_subject_id."""
-        for i, expected_id in enumerate(populated_radi_object_module.obs_subject_ids):
-            assert populated_radi_object_module.index.get_key(i) == expected_id
+        assert len(index) == 3
+        assert index.keys == tuple(subject_ids)
 
-    def test_index_keys(self, populated_radi_object_module: RadiObject):
-        """index.keys returns tuple of all obs_subject_ids."""
-        assert populated_radi_object_module.index.keys == tuple(
-            populated_radi_object_module.obs_subject_ids
-        )
-
-    def test_index_len(self, populated_radi_object_module: RadiObject):
-        """len(index) returns number of subjects."""
-        assert len(populated_radi_object_module.index) == 3
+        for i, subject_id in enumerate(subject_ids):
+            assert index.get_index(subject_id) == i
+            assert index.get_key(i) == subject_id
 
     def test_index_contains(self, populated_radi_object_module: RadiObject):
         """'obs_subject_id' in index works correctly."""
         first_id = populated_radi_object_module.obs_subject_ids[0]
+
         assert first_id in populated_radi_object_module.index
         assert "NONEXISTENT" not in populated_radi_object_module.index
-
-    def test_index_roundtrip(self, populated_radi_object_module: RadiObject):
-        """Roundtrip: index.get_key(index.get_index(id)) == id."""
-        first_id = populated_radi_object_module.index.keys[0]
-        idx = populated_radi_object_module.index.get_index(first_id)
-        assert populated_radi_object_module.index.get_key(idx) == first_id
 
 
 class TestRadiObjectObsRowRetrieval:
     """Tests for get_obs_row_by_obs_subject_id method."""
 
     def test_get_obs_row_by_obs_subject_id(self, populated_radi_object_module: RadiObject):
-        """Get obs_meta row by obs_subject_id string."""
-        subject_id = populated_radi_object_module.obs_subject_ids[1]
-        row = populated_radi_object_module.get_obs_row_by_obs_subject_id(subject_id)
+        """Get obs_meta row by obs_subject_id string or via index.get_key() pattern."""
+        radi = populated_radi_object_module
+        subject_id = radi.obs_subject_ids[1]
+
+        row = radi.get_obs_row_by_obs_subject_id(subject_id)
+        assert "obs_subject_id" in row.columns
         assert row["obs_subject_id"].iloc[0] == subject_id
 
-    def test_get_obs_row_by_index_pattern(self, populated_radi_object_module: RadiObject):
-        """Get obs_meta row by integer index using index.get_key() pattern."""
-        subject_id = populated_radi_object_module.index.get_key(0)
-        row = populated_radi_object_module.get_obs_row_by_obs_subject_id(subject_id)
-        assert "obs_subject_id" in row.columns
-        assert row["obs_subject_id"].iloc[0] == populated_radi_object_module.obs_subject_ids[0]
+        first_id = radi.index.get_key(0)
+        row_via_index = radi.get_obs_row_by_obs_subject_id(first_id)
+        assert row_via_index["obs_subject_id"].iloc[0] == radi.obs_subject_ids[0]
 
 
 class TestRadiObjectViewFiltering:

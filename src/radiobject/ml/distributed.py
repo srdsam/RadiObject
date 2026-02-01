@@ -2,46 +2,64 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Sequence
 
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
+from radiobject._types import LabelSource
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.datasets.collection_dataset import VolumeCollectionDataset
 from radiobject.ml.utils.worker_init import worker_init_fn
 
 if TYPE_CHECKING:
-    from radiobject.radi_object import RadiObject
+    from radiobject.volume_collection import VolumeCollection
 
 
 def create_distributed_dataloader(
-    radi_object: RadiObject,
+    collections: VolumeCollection | Sequence[VolumeCollection],
     rank: int,
     world_size: int,
-    modalities: list[str] | None = None,
-    label_column: str | None = None,
+    labels: LabelSource = None,
     batch_size: int = 4,
     patch_size: tuple[int, int, int] | None = None,
     num_workers: int = 4,
     pin_memory: bool = True,
-    value_filter: str | None = None,
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> DataLoader:
     """Create a DataLoader for distributed training with DDP.
 
     Args:
-        radi_object: RadiObject to load data from.
+        collections: Single VolumeCollection or list for multi-modal training.
         rank: Current process rank.
         world_size: Total number of processes.
-        modalities: List of collection names to load.
-        label_column: Column name in obs_meta for labels.
+        labels: Label source (see create_training_dataloader for options).
         batch_size: Samples per batch per GPU.
         patch_size: If provided, extract random patches.
         num_workers: DataLoader worker processes.
         pin_memory: Pin tensors to CUDA memory.
-        value_filter: TileDB filter for subject selection.
         transform: Transform function.
+
+    Returns:
+        DataLoader with DistributedSampler configured.
+
+    Example::
+
+        # In DDP training script
+        loader = create_distributed_dataloader(
+            radi.CT,
+            rank=local_rank,
+            world_size=world_size,
+            labels="has_tumor",
+            batch_size=4,
+            patch_size=(64, 64, 64),
+        )
+
+        for epoch in range(num_epochs):
+            set_epoch(loader, epoch)  # Important for proper shuffling
+            for batch in loader:
+                ...
     """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
 
@@ -49,12 +67,11 @@ def create_distributed_dataloader(
         loading_mode=loading_mode,
         patch_size=patch_size,
         patches_per_volume=1,
-        modalities=modalities,
-        label_column=label_column,
-        value_filter=value_filter,
     )
 
-    dataset = RadiObjectDataset(radi_object, config, transform=transform)
+    dataset = VolumeCollectionDataset(
+        collections, config=config, labels=labels, transform=transform
+    )
 
     sampler = DistributedSampler(
         dataset,

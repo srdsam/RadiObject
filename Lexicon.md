@@ -520,9 +520,11 @@ Where:
 
 | Term | Definition |
 |------|------------|
-| **from_niftis** | Factory method for bulk NIfTI ingestion with raw data storage (no preprocessing). Groups by modality or explicit collection_name |
+| **from_niftis** | Factory method for bulk NIfTI ingestion with raw data storage (no preprocessing). Supports `images` dict (recommended), legacy `niftis` list, or `image_dir` modes |
+| **images** | Recommended from_niftis param: dict mapping collection names to NIfTI sources (glob patterns, directories, or pre-resolved lists). Example: `{"CT": "./imagesTr/*.nii.gz", "seg": "./labelsTr"}` |
+| **validate_alignment** | Optional from_niftis param to verify all collections have matching subject IDs (useful for image/segmentation pairs) |
 | **from_dicoms** | Factory method for bulk DICOM ingestion with automatic metadata extraction and modality-based grouping |
-| **collection_name** | Optional from_niftis param to place all volumes in a single named collection. If None, auto-groups by inferred modality |
+| **collection_name** | Legacy from_niftis param to place all volumes in a single named collection. If None, auto-groups by inferred modality |
 | **NiftiMetadata** | Pydantic model capturing NIfTI header fields (dimensions, voxel spacing, orientation, scaling) for obs storage |
 | **DicomMetadata** | Pydantic model capturing DICOM header fields (pixel spacing, modality, acquisition parameters) for obs storage |
 | **infer_series_type** | Function that determines series type (T1w, FLAIR, etc.) from BIDS filename patterns and header description |
@@ -577,6 +579,12 @@ Where:
 | **Compose** | Transform composition utility. Uses MONAI Compose if available, falls back to TorchIO Compose, then minimal fallback |
 | **MONAI dict transforms** | MONAI transforms that operate on dict[str, Any] (e.g., NormalizeIntensityd, RandFlipd). Work directly with RadiObjectDataset output |
 | **TorchIO Subject transforms** | TorchIO transforms that operate on tio.Subject objects. Require RadiObjectSubjectsDataset for integration |
+| **SegmentationDataset** | Specialized Dataset for segmentation training with explicit image/mask separation. Returns {"image": tensor, "mask": tensor} instead of stacking |
+| **create_segmentation_dataloader** | Factory for segmentation DataLoader with separate image_transform (e.g., normalization) and spatial_transform (e.g., flips applied to both) |
+| **image_transform** | Transform applied only to "image" key (e.g., intensity normalization). Does not affect mask |
+| **spatial_transform** | Transform applied to both "image" and "mask" keys (e.g., random flips, rotations). Ensures spatial alignment |
+| **foreground_sampling** | Patch sampling strategy that biases selection toward regions with non-zero mask values. Improves class balance for sparse segmentation |
+| **foreground_threshold** | Minimum fraction of non-zero voxels required in patch when foreground_sampling enabled (default: 0.01) |
 
 ### RadiObject Orientation Terminology
 

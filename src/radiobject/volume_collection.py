@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence, overload
+from typing import TYPE_CHECKING, Any, Sequence, overload
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import tiledb
 
+from radiobject._types import TransformFn
 from radiobject.ctx import ctx as global_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.imaging_metadata import (
@@ -25,6 +27,7 @@ from radiobject.parallel import WriteResult, create_worker_ctx, map_on_threads
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
+    from radiobject.ml.datasets.collection_dataset import VolumeCollectionDataset
     from radiobject.query import CollectionQuery
 
 
@@ -130,7 +133,7 @@ class _LocIndexer:
 
 
 class VolumeCollection:
-    """A collection of volumes organized by obs_id, supporting heterogeneous shapes."""
+    """TileDB-backed volume collection indexed by obs_id. Supports uniform or heterogeneous shapes."""
 
     def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
         self.uri: str = uri
@@ -172,13 +175,7 @@ class VolumeCollection:
 
     @property
     def index(self) -> Index:
-        """Volume index for bidirectional ID/position lookups.
-
-        Provides pandas-like index access:
-            vc.index.get_index("obs-123")  # ID to position
-            vc.index.get_key(0)            # position to ID
-            vc.index.keys                  # all obs_ids
-        """
+        """Volume index for bidirectional ID/position lookups."""
         return self._index
 
     @property
@@ -188,12 +185,7 @@ class VolumeCollection:
 
     @property
     def shape(self) -> tuple[int, int, int] | None:
-        """Volume dimensions (X, Y, Z) if uniform, None if heterogeneous.
-
-        Returns:
-            Tuple of (x, y, z) dimensions if all volumes share the same shape,
-            None if volumes have different shapes (check is_uniform property).
-        """
+        """Volume dimensions (X, Y, Z) if uniform, None if heterogeneous."""
         m = self._metadata
         if "x_dim" not in m or "y_dim" not in m or "z_dim" not in m:
             return None
@@ -209,14 +201,7 @@ class VolumeCollection:
         return int(self._metadata["n_volumes"])
 
     def __iter__(self):
-        """Iterate over volumes in the collection.
-
-        Yields Volume objects in index order.
-
-        Example:
-            for vol in collection:
-                print(vol.shape)
-        """
+        """Iterate over volumes in index order."""
         for i in range(len(self)):
             yield self.iloc[i]
 
@@ -304,17 +289,7 @@ class VolumeCollection:
     # ===== Query Builder (Pipeline Mode) =====
 
     def query(self) -> CollectionQuery:
-        """Create a lazy CollectionQuery builder for pipeline-style filtering.
-
-        Example:
-            high_res = (
-                radi.T1w.query()
-                .filter("voxel_spacing == '1.0x1.0x1.0'")
-                .head(100)
-            )
-            for vol in high_res.iter_volumes():
-                process(vol)
-        """
+        """Create a lazy CollectionQuery builder for pipeline-style filtering."""
         from radiobject.query import CollectionQuery
 
         return CollectionQuery(self)
@@ -337,30 +312,57 @@ class VolumeCollection:
         """Filter volumes using TileDB QueryCondition on obs."""
         return self.query().filter(expr)
 
-    def map(self, fn) -> CollectionQuery:
-        """Apply transform to all volumes during materialization.
+    def map(self, fn: TransformFn) -> CollectionQuery:
+        """Apply transform to all volumes during materialization."""
+        return self.query().map(fn)
 
-        Creates a lazy CollectionQuery with the transform function attached.
-        Transform is applied when materializing via to_volume_collection().
+    # ===== ML Integration =====
+
+    def to_dataset(
+        self,
+        patch_size: tuple[int, int, int] | None = None,
+        labels: pd.DataFrame | dict | str | None = None,
+        transform: Callable[..., Any] | None = None,
+    ) -> VolumeCollectionDataset:
+        """Create PyTorch Dataset from this collection.
+
+        Convenience method for ML training integration.
 
         Args:
-            fn: Transform function (np.ndarray) -> np.ndarray. Can change shape.
+            patch_size: If provided, extract random patches of this size.
+            labels: Label source. Can be:
+                - str: Column name in this collection's obs DataFrame
+                - pd.DataFrame: With obs_id as column/index and label values
+                - dict[str, Any]: Mapping from obs_id to label
+                - None: No labels
+            transform: Transform function applied to each sample.
+                MONAI dict transforms (e.g., RandFlipd) work directly.
 
         Returns:
-            CollectionQuery with transform attached
+            VolumeCollectionDataset ready for use with DataLoader.
 
-        Example:
-            # Double voxel values and save to new collection
-            normalized = radi.CT.map(lambda v: v * 2).to_volume_collection(uri)
+        Example::
 
-            # Resample with MONAI
-            from monai.transforms import Spacing
-            spacing = Spacing(pixdim=(2.0, 2.0, 2.0))
-            resampled = radi.CT.map(
-                lambda v: spacing(v[np.newaxis, ...])[0]
-            ).to_volume_collection(uri)
+            # Full volumes with labels from obs column
+            dataset = radi.CT.to_dataset(labels="has_tumor")
+
+            # Patch extraction
+            dataset = radi.CT.to_dataset(patch_size=(64, 64, 64), labels="grade")
+
+            # With MONAI transforms
+            from monai.transforms import NormalizeIntensityd
+            dataset = radi.CT.to_dataset(
+                labels="has_tumor",
+                transform=NormalizeIntensityd(keys="image"),
+            )
         """
-        return self.query().map(fn)
+        from radiobject.ml.config import DatasetConfig, LoadingMode
+        from radiobject.ml.datasets.collection_dataset import VolumeCollectionDataset
+
+        loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
+        config = DatasetConfig(loading_mode=loading_mode, patch_size=patch_size)
+
+        return VolumeCollectionDataset(self, config=config, labels=labels, transform=transform)
 
     # ===== Append Operations =====
 

@@ -203,7 +203,7 @@ class TestRawIngestion:
     def test_requires_some_input(self, temp_dir: Path) -> None:
         uri = str(temp_dir / "radi_no_input")
 
-        with pytest.raises(ValueError, match="Must specify either"):
+        with pytest.raises(ValueError, match="Must specify"):
             RadiObject.from_niftis(uri=uri)
 
     def test_original_niftis_api(

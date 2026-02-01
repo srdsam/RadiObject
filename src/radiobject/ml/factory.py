@@ -2,46 +2,65 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Sequence
 
 from torch.utils.data import DataLoader
 
+from radiobject._types import LabelSource
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.datasets.collection_dataset import VolumeCollectionDataset
+from radiobject.ml.datasets.segmentation_dataset import SegmentationDataset
 from radiobject.ml.utils.worker_init import worker_init_fn
 
 if TYPE_CHECKING:
-    from radiobject.radi_object import RadiObject
+    from radiobject.volume_collection import VolumeCollection
 
 
 def create_training_dataloader(
-    radi_object: RadiObject,
-    modalities: list[str] | None = None,
-    label_column: str | None = None,
+    collections: VolumeCollection | Sequence[VolumeCollection],
+    labels: LabelSource = None,
     batch_size: int = 4,
     patch_size: tuple[int, int, int] | None = None,
     num_workers: int = 4,
     pin_memory: bool = True,
     persistent_workers: bool = True,
-    value_filter: str | None = None,
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     patches_per_volume: int = 1,
 ) -> DataLoader:
-    """Create a DataLoader configured for training.
+    """Create a DataLoader configured for training from VolumeCollection(s).
 
     Args:
-        radi_object: RadiObject to load data from.
-        modalities: List of collection names to load. None uses all.
-        label_column: Column name in obs_meta for labels.
+        collections: Single VolumeCollection or list for multi-modal training.
+            Multi-modal collections are stacked along channel dimension.
+        labels: Label source. Can be:
+            - str: Column name in collection's obs DataFrame
+            - pd.DataFrame: With obs_id as column/index and label values
+            - dict[str, Any]: Mapping from obs_id to label
+            - Callable[[str], Any]: Function taking obs_id, returning label
+            - None: No labels
         batch_size: Samples per batch.
         patch_size: If provided, extract random patches of this size.
         num_workers: DataLoader worker processes.
         pin_memory: Pin tensors to CUDA memory.
         persistent_workers: Keep workers alive between epochs.
-        value_filter: TileDB filter for subject selection.
         transform: Transform function applied to each sample.
             MONAI dict transforms (e.g., RandFlipd) work directly.
         patches_per_volume: Number of patches to extract per volume per epoch.
+
+    Returns:
+        DataLoader configured for training with shuffle enabled.
+
+    Example with single collection::
+
+        loader = create_training_dataloader(radi.CT, labels="has_tumor")
+
+    Example with multi-modal::
+
+        loader = create_training_dataloader(
+            [radi.T1w, radi.FLAIR],
+            labels=labels_df,  # DataFrame with obs_id and label columns
+        )
 
     Example with MONAI transforms::
 
@@ -51,15 +70,15 @@ def create_training_dataloader(
             NormalizeIntensityd(keys="image"),
             RandFlipd(keys="image", prob=0.5, spatial_axis=[0, 1, 2]),
         ])
-        loader = create_training_dataloader(radi, transform=transform)
+        loader = create_training_dataloader(radi.CT, labels="grade", transform=transform)
 
-    Example with TorchIO (use RadiObjectSubjectsDataset instead)::
+    Example with TorchIO (use VolumeCollectionSubjectsDataset instead)::
 
-        from radiobject.ml import RadiObjectSubjectsDataset
+        from radiobject.ml import VolumeCollectionSubjectsDataset
         import torchio as tio
 
         transform = tio.Compose([tio.ZNormalization(), tio.RandomFlip()])
-        dataset = RadiObjectSubjectsDataset(radi, modalities=["T1w"], transform=transform)
+        dataset = VolumeCollectionSubjectsDataset([radi.T1w], labels="grade", transform=transform)
         loader = DataLoader(dataset, batch_size=4)
     """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
@@ -68,12 +87,11 @@ def create_training_dataloader(
         loading_mode=loading_mode,
         patch_size=patch_size,
         patches_per_volume=patches_per_volume,
-        modalities=modalities,
-        label_column=label_column,
-        value_filter=value_filter,
     )
 
-    dataset = RadiObjectDataset(radi_object, config, transform=transform)
+    dataset = VolumeCollectionDataset(
+        collections, config=config, labels=labels, transform=transform
+    )
 
     effective_workers = num_workers if num_workers > 0 else 0
     effective_persistent = persistent_workers and effective_workers > 0
@@ -91,36 +109,35 @@ def create_training_dataloader(
 
 
 def create_validation_dataloader(
-    radi_object: RadiObject,
-    modalities: list[str] | None = None,
-    label_column: str | None = None,
+    collections: VolumeCollection | Sequence[VolumeCollection],
+    labels: LabelSource = None,
     batch_size: int = 4,
     patch_size: tuple[int, int, int] | None = None,
     num_workers: int = 4,
     pin_memory: bool = True,
-    value_filter: str | None = None,
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> DataLoader:
     """Create a DataLoader configured for validation (no shuffle, no drop_last).
 
     Args:
-        radi_object: RadiObject to load data from.
-        modalities: List of collection names to load. None uses all.
-        label_column: Column name in obs_meta for labels.
+        collections: Single VolumeCollection or list for multi-modal validation.
+        labels: Label source (see create_training_dataloader for options).
         batch_size: Samples per batch.
         patch_size: If provided, extract patches of this size.
         num_workers: DataLoader worker processes.
         pin_memory: Pin tensors to CUDA memory.
-        value_filter: TileDB filter for subject selection.
         transform: Transform function applied to each sample.
             MONAI dict transforms work directly.
+
+    Returns:
+        DataLoader configured for validation.
 
     Example::
 
         from monai.transforms import Compose, NormalizeIntensityd
 
         transform = Compose([NormalizeIntensityd(keys="image")])
-        loader = create_validation_dataloader(radi, transform=transform)
+        loader = create_validation_dataloader(radi.CT, labels="has_tumor", transform=transform)
     """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
 
@@ -128,12 +145,11 @@ def create_validation_dataloader(
         loading_mode=loading_mode,
         patch_size=patch_size,
         patches_per_volume=1,
-        modalities=modalities,
-        label_column=label_column,
-        value_filter=value_filter,
     )
 
-    dataset = RadiObjectDataset(radi_object, config, transform=transform)
+    dataset = VolumeCollectionDataset(
+        collections, config=config, labels=labels, transform=transform
+    )
 
     effective_workers = num_workers if num_workers > 0 else 0
 
@@ -149,8 +165,7 @@ def create_validation_dataloader(
 
 
 def create_inference_dataloader(
-    radi_object: RadiObject,
-    modalities: list[str] | None = None,
+    collections: VolumeCollection | Sequence[VolumeCollection],
     batch_size: int = 1,
     num_workers: int = 4,
     pin_memory: bool = True,
@@ -159,26 +174,25 @@ def create_inference_dataloader(
     """Create a DataLoader configured for inference (full volumes, no shuffle).
 
     Args:
-        radi_object: RadiObject to load data from.
-        modalities: List of collection names to load. None uses all.
+        collections: Single VolumeCollection or list for multi-modal inference.
         batch_size: Samples per batch.
         num_workers: DataLoader worker processes.
         pin_memory: Pin tensors to CUDA memory.
         transform: Transform function applied to each sample.
+
+    Returns:
+        DataLoader configured for inference.
 
     Example::
 
         from monai.transforms import NormalizeIntensityd
 
         transform = NormalizeIntensityd(keys="image")
-        loader = create_inference_dataloader(radi, transform=transform)
+        loader = create_inference_dataloader(radi.CT, transform=transform)
     """
-    config = DatasetConfig(
-        loading_mode=LoadingMode.FULL_VOLUME,
-        modalities=modalities,
-    )
+    config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
 
-    dataset = RadiObjectDataset(radi_object, config, transform=transform)
+    dataset = VolumeCollectionDataset(collections, config=config, transform=transform)
 
     effective_workers = num_workers if num_workers > 0 else 0
 
@@ -189,4 +203,94 @@ def create_inference_dataloader(
         num_workers=effective_workers,
         pin_memory=pin_memory and effective_workers > 0,
         worker_init_fn=worker_init_fn if effective_workers > 0 else None,
+    )
+
+
+def create_segmentation_dataloader(
+    image: VolumeCollection,
+    mask: VolumeCollection,
+    batch_size: int = 4,
+    patch_size: tuple[int, int, int] | None = None,
+    num_workers: int = 4,
+    pin_memory: bool = True,
+    persistent_workers: bool = True,
+    image_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    spatial_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    foreground_sampling: bool = False,
+    foreground_threshold: float = 0.01,
+    patches_per_volume: int = 1,
+) -> DataLoader:
+    """Create a DataLoader for segmentation training with separate image/mask handling.
+
+    Unlike create_training_dataloader which stacks collections as channels, this
+    returns separate "image" and "mask" tensors. This is cleaner for segmentation
+    workflows where different transforms need to be applied to images vs masks.
+
+    Args:
+        image: VolumeCollection containing input images (CT, MRI, etc.).
+        mask: VolumeCollection containing segmentation masks.
+        batch_size: Samples per batch.
+        patch_size: If provided, extract random patches of this size.
+        num_workers: DataLoader worker processes.
+        pin_memory: Pin tensors to CUDA memory.
+        persistent_workers: Keep workers alive between epochs.
+        image_transform: Transform applied only to "image" key (e.g., normalization).
+        spatial_transform: Transform applied to both "image" and "mask" keys
+            (e.g., random flips, rotations).
+        foreground_sampling: If True, bias patch sampling toward regions with
+            foreground (non-zero mask values).
+        foreground_threshold: Minimum fraction of foreground voxels in patch
+            when foreground_sampling is enabled.
+        patches_per_volume: Number of patches to extract per volume per epoch.
+
+    Returns:
+        DataLoader yielding {"image": (B,1,X,Y,Z), "mask": (B,1,X,Y,Z), ...}
+
+    Example::
+
+        from monai.transforms import NormalizeIntensityd, RandFlipd
+
+        train_loader = create_segmentation_dataloader(
+            image=radi.CT,
+            mask=radi.seg,
+            patch_size=(64, 64, 64),
+            image_transform=NormalizeIntensityd(keys="image"),
+            spatial_transform=RandFlipd(keys=["image", "mask"], prob=0.5),
+            foreground_sampling=True,
+        )
+
+        for batch in train_loader:
+            images = batch["image"]  # Shape: (B, 1, 64, 64, 64)
+            masks = batch["mask"].long()  # Shape: (B, 1, 64, 64, 64)
+    """
+    loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
+
+    config = DatasetConfig(
+        loading_mode=loading_mode,
+        patch_size=patch_size,
+        patches_per_volume=patches_per_volume,
+    )
+
+    dataset = SegmentationDataset(
+        image=image,
+        mask=mask,
+        config=config,
+        image_transform=image_transform,
+        spatial_transform=spatial_transform,
+        foreground_sampling=foreground_sampling,
+        foreground_threshold=foreground_threshold,
+    )
+
+    effective_workers = num_workers if num_workers > 0 else 0
+    effective_persistent = persistent_workers and effective_workers > 0
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=effective_workers,
+        pin_memory=pin_memory and effective_workers > 0,
+        persistent_workers=effective_persistent,
+        worker_init_fn=worker_init_fn if effective_workers > 0 else None,
+        drop_last=True,
     )

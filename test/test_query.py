@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from radiobject.query import CollectionQuery, Query, QueryCount, VolumeBatch
 from radiobject.radi_object import RadiObject
@@ -51,35 +52,25 @@ class TestQuerySubjectFilters:
 
         assert len(query) == 1
 
-    def test_iloc_single(self, populated_radi_object_module: RadiObject):
-        """iloc(int) filters to single subject."""
-        query = populated_radi_object_module.query().iloc(0)
-
-        assert len(query) == 1
-
-    def test_iloc_slice(self, populated_radi_object_module: RadiObject):
-        """iloc(slice) filters to range of subjects."""
-        query = populated_radi_object_module.query().iloc(slice(0, 2))
-
-        assert len(query) == 2
-
-    def test_iloc_list(self, populated_radi_object_module: RadiObject):
-        """iloc(list[int]) filters to specific subjects."""
-        query = populated_radi_object_module.query().iloc([0, 2])
-
-        assert len(query) == 2
-
-    def test_iloc_negative(self, populated_radi_object_module: RadiObject):
-        """iloc(-1) filters to last subject."""
-        query = populated_radi_object_module.query().iloc(-1)
-
-        assert len(query) == 1
+    @pytest.mark.parametrize(
+        ("indexer", "expected_len"),
+        [
+            (0, 1),  # iloc(int) - single subject
+            (slice(0, 2), 2),  # iloc(slice) - range
+            ([0, 2], 2),  # iloc(list) - specific indices
+            (-1, 1),  # iloc(-1) - last subject
+        ],
+        ids=["single", "slice", "list", "negative"],
+    )
+    def test_iloc(self, populated_radi_object_module: RadiObject, indexer, expected_len):
+        """iloc filters subjects by integer position."""
+        query = populated_radi_object_module.query().iloc(indexer)
+        assert len(query) == expected_len
 
     def test_loc_single(self, populated_radi_object_module: RadiObject):
         """loc(str) filters to single subject by ID."""
         subject_id = populated_radi_object_module.obs_subject_ids[1]
         query = populated_radi_object_module.query().loc(subject_id)
-
         assert len(query) == 1
 
     def test_loc_list(self, populated_radi_object_module: RadiObject):
@@ -89,20 +80,19 @@ class TestQuerySubjectFilters:
             populated_radi_object_module.obs_subject_ids[2],
         ]
         query = populated_radi_object_module.query().loc(subject_ids)
-
         assert len(query) == 2
 
-    def test_head(self, populated_radi_object_module: RadiObject):
-        """head(n) filters to first n subjects."""
-        query = populated_radi_object_module.query().head(2)
-
-        assert len(query) == 2
-
-    def test_tail(self, populated_radi_object_module: RadiObject):
-        """tail(n) filters to last n subjects."""
-        query = populated_radi_object_module.query().tail(1)
-
-        assert len(query) == 1
+    @pytest.mark.parametrize(
+        ("method", "n", "expected_len"),
+        [
+            ("head", 2, 2),
+            ("tail", 1, 1),
+        ],
+    )
+    def test_head_tail(self, populated_radi_object_module: RadiObject, method, n, expected_len):
+        """head/tail filter to first/last n subjects."""
+        query = getattr(populated_radi_object_module.query(), method)(n)
+        assert len(query) == expected_len
 
     def test_sample_with_seed(self, populated_radi_object_module: RadiObject):
         """sample(n, seed) returns reproducible random sample."""
@@ -158,20 +148,14 @@ class TestQueryMaskResolution:
 class TestQueryCount:
     """Tests for count() materialization."""
 
-    def test_count_returns_query_count(self, populated_radi_object_module: RadiObject):
-        """count() returns QueryCount dataclass."""
+    def test_count(self, populated_radi_object_module: RadiObject):
+        """count() returns QueryCount with subject and volume counts."""
         count = populated_radi_object_module.query().count()
 
         assert isinstance(count, QueryCount)
         assert count.n_subjects == 3
-
-    def test_count_volume_counts(self, populated_radi_object_module: RadiObject):
-        """count() includes volume counts per collection."""
-        count = populated_radi_object_module.query().count()
-
         assert len(count.n_volumes) == 4
-        for name, n in count.n_volumes.items():
-            assert n == 3
+        assert all(n == 3 for n in count.n_volumes.values())
 
 
 class TestQueryToObsMeta:
@@ -209,28 +193,14 @@ class TestQueryIterVolumes:
 class TestQueryIterBatches:
     """Tests for iter_batches() materialization."""
 
-    def test_iter_batches_yields_volume_batch(self, populated_radi_object_module: RadiObject):
-        """iter_batches() yields VolumeBatch instances."""
-        query = populated_radi_object_module.query().head(2).select_collections(["T1w"])
-        batches = list(query.iter_batches(batch_size=2))
-
-        assert len(batches) == 1
-        assert isinstance(batches[0], VolumeBatch)
-
-    def test_batch_contains_stacked_arrays(self, populated_radi_object_module: RadiObject):
-        """VolumeBatch.volumes contains stacked numpy arrays."""
+    def test_iter_batches(self, populated_radi_object_module: RadiObject):
+        """iter_batches() yields VolumeBatch with stacked arrays and subject IDs."""
         query = populated_radi_object_module.query().head(2).select_collections(["T1w"])
         batch = next(query.iter_batches(batch_size=2))
 
+        assert isinstance(batch, VolumeBatch)
         assert "T1w" in batch.volumes
-        assert batch.volumes["T1w"].ndim == 4
-        assert batch.volumes["T1w"].shape[0] == 2
-
-    def test_batch_subject_ids(self, populated_radi_object_module: RadiObject):
-        """VolumeBatch.subject_ids contains subject identifiers."""
-        query = populated_radi_object_module.query().head(2).select_collections(["T1w"])
-        batch = next(query.iter_batches(batch_size=2))
-
+        assert batch.volumes["T1w"].shape == (2, *batch.volumes["T1w"].shape[1:])
         assert len(batch.subject_ids) == 2
 
 
@@ -360,99 +330,85 @@ class TestCollectionQueryCreation:
 class TestCollectionQueryFilters:
     """Tests for CollectionQuery filtering methods."""
 
-    def test_iloc_single(self, populated_collection_module: VolumeCollection):
-        """iloc(int) filters to single volume."""
-        query = populated_collection_module.query().iloc(0)
+    @pytest.mark.parametrize(
+        ("indexer", "expected_count"),
+        [
+            (0, 1),  # iloc(int)
+            (slice(0, 2), 2),  # iloc(slice)
+        ],
+        ids=["single", "slice"],
+    )
+    def test_iloc(self, populated_collection_module: VolumeCollection, indexer, expected_count):
+        """iloc filters volumes by integer position."""
+        query = populated_collection_module.query().iloc(indexer)
+        assert query.count() == expected_count
 
-        assert query.count() == 1
-
-    def test_iloc_slice(self, populated_collection_module: VolumeCollection):
-        """iloc(slice) filters to range of volumes."""
-        query = populated_collection_module.query().iloc(slice(0, 2))
-
-        assert query.count() == 2
-
-    def test_loc_single(self, populated_collection_module: VolumeCollection):
+    def test_loc(self, populated_collection_module: VolumeCollection):
         """loc(str) filters to single volume by obs_id."""
         obs_id = populated_collection_module.obs_ids[0]
         query = populated_collection_module.query().loc(obs_id)
-
         assert query.count() == 1
 
-    def test_head(self, populated_collection_module: VolumeCollection):
-        """head(n) filters to first n volumes."""
-        query = populated_collection_module.query().head(2)
-
-        assert query.count() == 2
-
-    def test_tail(self, populated_collection_module: VolumeCollection):
-        """tail(n) filters to last n volumes."""
-        query = populated_collection_module.query().tail(1)
-
-        assert query.count() == 1
+    @pytest.mark.parametrize(
+        ("method", "n", "expected_count"),
+        [
+            ("head", 2, 2),
+            ("tail", 1, 1),
+        ],
+    )
+    def test_head_tail(
+        self, populated_collection_module: VolumeCollection, method, n, expected_count
+    ):
+        """head/tail filter to first/last n volumes."""
+        query = getattr(populated_collection_module.query(), method)(n)
+        assert query.count() == expected_count
 
     def test_sample_with_seed(self, populated_collection_module: VolumeCollection):
         """sample(n, seed) returns reproducible random sample."""
         q1 = populated_collection_module.query().sample(2, seed=42)
         q2 = populated_collection_module.query().sample(2, seed=42)
-
-        df1 = q1.to_obs()
-        df2 = q2.to_obs()
-        assert df1["obs_id"].tolist() == df2["obs_id"].tolist()
+        assert q1.to_obs()["obs_id"].tolist() == q2.to_obs()["obs_id"].tolist()
 
     def test_filter_subjects(self, populated_radi_object_module: RadiObject):
         """filter_subjects() narrows to volumes belonging to specific subjects."""
         vc = populated_radi_object_module.T1w
         subject_id = populated_radi_object_module.obs_subject_ids[0]
         query = vc.query().filter_subjects([subject_id])
-
         assert query.count() == 1
 
 
 class TestCollectionQueryMaterialization:
     """Tests for CollectionQuery materialization methods."""
 
-    def test_count_returns_int(self, populated_collection_module: VolumeCollection):
+    def test_count(self, populated_collection_module: VolumeCollection):
         """count() returns integer volume count."""
-        count = populated_collection_module.query().count()
+        assert populated_collection_module.query().count() == 3
 
-        assert isinstance(count, int)
-        assert count == 3
-
-    def test_to_obs_returns_dataframe(self, populated_collection_module: VolumeCollection):
+    def test_to_obs(self, populated_collection_module: VolumeCollection):
         """to_obs() returns filtered obs DataFrame."""
-        query = populated_collection_module.query().head(2)
-        df = query.to_obs()
-
+        df = populated_collection_module.query().head(2).to_obs()
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 2
 
-    def test_iter_volumes_yields_volumes(self, populated_collection_module: VolumeCollection):
+    def test_iter_volumes(self, populated_collection_module: VolumeCollection):
         """iter_volumes() yields Volume instances."""
-        query = populated_collection_module.query().head(2)
-        volumes = list(query.iter_volumes())
-
+        volumes = list(populated_collection_module.query().head(2).iter_volumes())
         assert len(volumes) == 2
         assert all(isinstance(v, Volume) for v in volumes)
 
     def test_to_numpy_stack(self, populated_collection_module: VolumeCollection):
-        """to_numpy_stack() returns stacked array."""
-        query = populated_collection_module.query().head(2)
-        stack = query.to_numpy_stack()
-
+        """to_numpy_stack() returns stacked 4D array."""
+        stack = populated_collection_module.query().head(2).to_numpy_stack()
         assert stack.ndim == 4
         assert stack.shape[0] == 2
 
-    def test_to_volume_collection(
-        self,
-        temp_dir: Path,
-        populated_collection: VolumeCollection,
-    ):
+    def test_to_volume_collection(self, temp_dir: Path, populated_collection: VolumeCollection):
         """to_volume_collection() creates a new VolumeCollection."""
-        query = populated_collection.query().head(2)
-        new_uri = str(temp_dir / "coll_query_materialized")
-        new_vc = query.to_volume_collection(new_uri)
-
+        new_vc = (
+            populated_collection.query()
+            .head(2)
+            .to_volume_collection(str(temp_dir / "coll_query_materialized"))
+        )
         assert isinstance(new_vc, VolumeCollection)
         assert len(new_vc) == 2
 
@@ -505,23 +461,19 @@ class TestCollectionQueryMap:
 class TestCollectionQueryConvenience:
     """Tests for VolumeCollection convenience filter methods."""
 
-    def test_vc_head(self, populated_collection_module: VolumeCollection):
-        """VolumeCollection.head() returns CollectionQuery."""
-        query = populated_collection_module.head(2)
-
+    @pytest.mark.parametrize(
+        ("method", "args", "expected_count"),
+        [
+            ("head", (2,), 2),
+            ("tail", (1,), 1),
+            ("sample", (2,), 2),
+        ],
+    )
+    def test_convenience_methods(
+        self, populated_collection_module: VolumeCollection, method, args, expected_count
+    ):
+        """VolumeCollection convenience methods return CollectionQuery."""
+        kwargs = {"seed": 42} if method == "sample" else {}
+        query = getattr(populated_collection_module, method)(*args, **kwargs)
         assert isinstance(query, CollectionQuery)
-        assert query.count() == 2
-
-    def test_vc_tail(self, populated_collection_module: VolumeCollection):
-        """VolumeCollection.tail() returns CollectionQuery."""
-        query = populated_collection_module.tail(1)
-
-        assert isinstance(query, CollectionQuery)
-        assert query.count() == 1
-
-    def test_vc_sample(self, populated_collection_module: VolumeCollection):
-        """VolumeCollection.sample() returns CollectionQuery."""
-        query = populated_collection_module.sample(2, seed=42)
-
-        assert isinstance(query, CollectionQuery)
-        assert query.count() == 2
+        assert query.count() == expected_count

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.datasets import VolumeCollectionDataset
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class TestLoadingPerformance:
     """Benchmark tests for volume loading."""
 
-    def test_full_volume_load_time(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_full_volume_load_time(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Benchmark full volume loading."""
         _ = ml_dataset[0]
 
@@ -32,7 +32,7 @@ class TestLoadingPerformance:
         logger.info("3 full volumes loaded in %.2fs (%.2fs per volume)", elapsed, elapsed / 3)
         assert elapsed < 30
 
-    def test_patch_extraction_time(self, ml_dataset_patch: RadiObjectDataset) -> None:
+    def test_patch_extraction_time(self, ml_dataset_patch: VolumeCollectionDataset) -> None:
         """Benchmark patch extraction."""
         _ = ml_dataset_patch[0]
 
@@ -61,11 +61,9 @@ class TestMultiWorkerPerformance:
         """Benchmark DataLoader with different worker counts."""
         import torch
 
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
 
         loader = torch.utils.data.DataLoader(
             dataset,
@@ -87,7 +85,7 @@ class TestMultiWorkerPerformance:
 class TestParameterizedPerformance:
     """Performance tests parameterized by storage backend."""
 
-    def test_backend_latency(self, ml_dataset_param: RadiObjectDataset) -> None:
+    def test_backend_latency(self, ml_dataset_param: VolumeCollectionDataset) -> None:
         """Measure loading latency for current backend."""
         _ = ml_dataset_param[0]
 

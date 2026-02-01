@@ -39,6 +39,10 @@ class VolumeReader:
         self._is_uniform = collection.is_uniform
         self._obs_ids = list(collection.obs_ids)
 
+        # Cache obs_subject_ids for direct access (avoid parsing obs_id strings)
+        obs_df = collection.obs.read()
+        self._obs_subject_ids = list(obs_df["obs_subject_id"])
+
     def _get_ctx(self) -> tiledb.Ctx:
         """Get process-local TileDB context (safe for multiprocessing)."""
         cache_key = (os.getpid(), self._config_hash)
@@ -105,3 +109,7 @@ class VolumeReader:
     def get_obs_id(self, idx: int) -> str:
         """Get obs_id at index."""
         return self._obs_ids[idx]
+
+    def get_obs_subject_id(self, idx: int) -> str:
+        """Get obs_subject_id at index (subject identifier without series suffix)."""
+        return self._obs_subject_ids[idx]

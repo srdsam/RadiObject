@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
-from radiobject.ml.compat.torchio import RadiObjectSubjectsDataset
+from radiobject.ml.compat.torchio import VolumeCollectionSubjectsDataset
 
 try:
     from monai.transforms import Compose
@@ -29,4 +30,4 @@ except ImportError:
                 return f"Compose({names})"
 
 
-__all__ = ["RadiObjectSubjectsDataset", "Compose"]
+__all__ = ["VolumeCollectionSubjectsDataset", "Compose"]

@@ -8,6 +8,8 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
+from radiobject.ml.config import DatasetConfig, LoadingMode
+from radiobject.ml.datasets import VolumeCollectionDataset
 from radiobject.ml.distributed import create_distributed_dataloader, set_epoch
 
 if TYPE_CHECKING:
@@ -18,33 +20,33 @@ class TestCreateDistributedDataloader:
     """Tests for create_distributed_dataloader function."""
 
     def test_returns_dataloader(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             num_workers=0,
         )
 
         assert isinstance(loader, DataLoader)
 
     def test_uses_distributed_sampler(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=2,
-            modalities=["flair"],
             num_workers=0,
         )
 
         assert isinstance(loader.sampler, DistributedSampler)
 
     def test_sampler_configured_correctly(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=1,
             world_size=4,
-            modalities=["flair"],
             num_workers=0,
         )
 
@@ -55,11 +57,11 @@ class TestCreateDistributedDataloader:
         assert sampler.shuffle is True
 
     def test_batch_size_respected(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             batch_size=2,
             num_workers=0,
         )
@@ -67,22 +69,22 @@ class TestCreateDistributedDataloader:
         assert loader.batch_size == 2
 
     def test_drop_last_enabled(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             num_workers=0,
         )
 
         assert loader.drop_last is True
 
     def test_full_volume_mode_default(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             batch_size=1,
             num_workers=0,
         )
@@ -91,11 +93,11 @@ class TestCreateDistributedDataloader:
         assert batch["image"].shape[-3:] == (240, 240, 155)
 
     def test_patch_mode_with_patch_size(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             patch_size=(64, 64, 64),
             batch_size=1,
             num_workers=0,
@@ -104,12 +106,15 @@ class TestCreateDistributedDataloader:
         batch = next(iter(loader))
         assert batch["image"].shape[-3:] == (64, 64, 64)
 
-    def test_multiple_modalities(self, populated_radi_object_module: "RadiObject") -> None:
+    def test_multiple_collections(self, populated_radi_object_module: "RadiObject") -> None:
+        collections = [
+            populated_radi_object_module.collection("flair"),
+            populated_radi_object_module.collection("T1w"),
+        ]
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collections,
             rank=0,
             world_size=1,
-            modalities=["flair", "T1w"],
             batch_size=1,
             num_workers=0,
         )
@@ -120,11 +125,11 @@ class TestCreateDistributedDataloader:
     def test_pin_memory_disabled_with_no_workers(
         self, populated_radi_object_module: "RadiObject"
     ) -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             num_workers=0,
             pin_memory=True,
         )
@@ -136,11 +141,11 @@ class TestCreateDistributedDataloader:
             data["custom_key"] = True
             return data
 
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             batch_size=1,
             num_workers=0,
             transform=add_key,
@@ -154,11 +159,11 @@ class TestSetEpoch:
     """Tests for set_epoch function."""
 
     def test_set_epoch_updates_sampler(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=2,
-            modalities=["flair"],
             num_workers=0,
         )
 
@@ -171,14 +176,9 @@ class TestSetEpoch:
     def test_set_epoch_no_op_for_regular_dataloader(
         self, populated_radi_object_module: "RadiObject"
     ) -> None:
-        from radiobject.ml.config import DatasetConfig, LoadingMode
-        from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
-
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
         loader = DataLoader(dataset, batch_size=1)
 
         set_epoch(loader, 5)
@@ -188,11 +188,11 @@ class TestDistributedDataloaderIteration:
     """Tests for iterating over distributed dataloaders."""
 
     def test_can_iterate_single_rank(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             batch_size=1,
             num_workers=0,
         )
@@ -201,11 +201,11 @@ class TestDistributedDataloaderIteration:
         assert len(batches) == 3
 
     def test_iteration_with_epoch_change(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             batch_size=1,
             num_workers=0,
         )
@@ -219,11 +219,11 @@ class TestDistributedDataloaderIteration:
         assert len(epoch0_batches) == len(epoch1_batches)
 
     def test_batch_contains_expected_keys(self, populated_radi_object_module: "RadiObject") -> None:
+        collection = populated_radi_object_module.collection("flair")
         loader = create_distributed_dataloader(
-            populated_radi_object_module,
+            collection,
             rank=0,
             world_size=1,
-            modalities=["flair"],
             batch_size=1,
             num_workers=0,
         )

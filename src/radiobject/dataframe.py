@@ -16,7 +16,14 @@ INDEX_COLUMNS = ("obs_subject_id", "obs_id")
 
 
 class Dataframe:
-    """A TileDB-backed sparse dataframe indexed by obs_subject_id and obs_id."""
+    """TileDB-backed sparse dataframe for observation metadata.
+
+    Used internally for obs_meta (subject-level) and obs (volume-level) storage.
+    Indexed by (obs_subject_id, obs_id) with user-defined attribute columns.
+
+    Example:
+        df = dataframe.read(columns=["age"], value_filter="age > 40")
+    """
 
     def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
         self.uri: str = uri

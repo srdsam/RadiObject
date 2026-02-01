@@ -9,7 +9,7 @@ import torch.nn as nn
 from monai.transforms import NormalizeIntensityd
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.datasets import VolumeCollectionDataset
 from radiobject.ml.factory import create_training_dataloader
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ class SimpleCNN(nn.Module):
 class TestTrainingIntegration:
     """Integration tests for training workflow."""
 
-    def test_single_forward_pass(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_single_forward_pass(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Test forward pass through model with real data."""
         sample = ml_dataset[0]
         image = sample["image"].unsqueeze(0)
@@ -44,7 +44,7 @@ class TestTrainingIntegration:
 
         assert output.shape == (1, 2)
 
-    def test_gradient_flow(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_gradient_flow(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Test gradients flow through model."""
         sample = ml_dataset[0]
         image = sample["image"].unsqueeze(0)
@@ -63,11 +63,9 @@ class TestTrainingIntegration:
 
     def test_training_epoch(self, populated_radi_object_module: "RadiObject") -> None:
         """Test complete training epoch with DataLoader."""
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
 
         loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, drop_last=False)
 
@@ -96,11 +94,12 @@ class TestTrainingIntegration:
 
     def test_multimodal_stacking(self, populated_radi_object_module: "RadiObject") -> None:
         """Test multimodal data stacks correctly along channel dimension."""
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair", "T1w"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collections = [
+            populated_radi_object_module.collection("flair"),
+            populated_radi_object_module.collection("T1w"),
+        ]
+        dataset = VolumeCollectionDataset(collections, config=config)
 
         sample = dataset[0]
         assert sample["image"].shape[0] == 2
@@ -115,9 +114,9 @@ class TestFactoryDataloader:
 
     def test_create_training_dataloader(self, populated_radi_object_module: "RadiObject") -> None:
         """Test factory creates valid dataloader."""
+        collection = populated_radi_object_module.collection("flair")
         loader = create_training_dataloader(
-            populated_radi_object_module,
-            modalities=["flair"],
+            collection,
             batch_size=1,
             num_workers=0,
         )
@@ -128,9 +127,9 @@ class TestFactoryDataloader:
 
     def test_dataloader_with_patch(self, populated_radi_object_module: "RadiObject") -> None:
         """Test dataloader with patch extraction."""
+        collection = populated_radi_object_module.collection("flair")
         loader = create_training_dataloader(
-            populated_radi_object_module,
-            modalities=["flair"],
+            collection,
             patch_size=(32, 32, 32),
             batch_size=2,
             num_workers=0,
@@ -138,6 +137,21 @@ class TestFactoryDataloader:
 
         batch = next(iter(loader))
         assert batch["image"].shape == (2, 1, 32, 32, 32)
+
+    def test_dataloader_multimodal(self, populated_radi_object_module: "RadiObject") -> None:
+        """Test factory with multiple collections."""
+        collections = [
+            populated_radi_object_module.collection("flair"),
+            populated_radi_object_module.collection("T1w"),
+        ]
+        loader = create_training_dataloader(
+            collections,
+            batch_size=1,
+            num_workers=0,
+        )
+
+        batch = next(iter(loader))
+        assert batch["image"].shape[1] == 2
 
 
 class TestTransformIntegration:
@@ -147,11 +161,9 @@ class TestTransformIntegration:
         """Test MONAI transforms are applied to samples."""
         transform = NormalizeIntensityd(keys="image", channel_wise=True)
 
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config, transform=transform)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config, transform=transform)
 
         sample = dataset[0]
         image = sample["image"].float()
@@ -165,7 +177,7 @@ class TestTransformIntegration:
 class TestParameterizedTraining:
     """Training tests parameterized by storage backend."""
 
-    def test_training_with_backend(self, ml_dataset_param: RadiObjectDataset) -> None:
+    def test_training_with_backend(self, ml_dataset_param: VolumeCollectionDataset) -> None:
         """Test training works with both local and S3 backends."""
         sample = ml_dataset_param[0]
         image = sample["image"].unsqueeze(0)

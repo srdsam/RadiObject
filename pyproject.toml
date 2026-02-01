@@ -42,6 +42,10 @@ dependencies = [
 download = [
     "requests>=2.31.0",
 ]
+tutorials = [
+    "radiobject[download]",
+    "jupyter>=1.1.1",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.1.0",
@@ -49,6 +53,12 @@ dev = [
     "pandas>=2.0.0",
     "jupyter>=1.1.1",
     "nbconvert>=7.16.6",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.24.0",
+    "pandas>=2.0.0",
 ]
 monai = [
     "torch>=2.0.0",
@@ -74,6 +84,9 @@ Repository = "https://github.com/samueldsouza/radiobject"
 [dependency-groups]
 dev = [
     "papermill>=2.6.0",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "ruff>=0.14.14",
 ]
 
 [tool.ruff]

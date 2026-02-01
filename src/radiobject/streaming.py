@@ -9,12 +9,10 @@ import numpy.typing as npt
 import pandas as pd
 import tiledb
 
+from radiobject._types import AttrValue
 from radiobject.ctx import ctx as global_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.volume import Volume
-
-# Scalar value types storable in TileDB obs attributes
-AttrValue = int | float | bool | str
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject

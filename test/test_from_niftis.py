@@ -77,39 +77,36 @@ def mismatched_dim_niftis(temp_dir: Path) -> list[tuple[Path, str]]:
 class TestSeriesTypeInference:
     """Tests for infer_series_type function."""
 
-    def test_bids_suffix_t1w(self, temp_dir: Path) -> None:
-        path = temp_dir / "sub-01_ses-01_T1w.nii.gz"
-        assert infer_series_type(path) == "T1w"
+    @pytest.mark.parametrize(
+        ("filename", "expected"),
+        [
+            ("sub-01_ses-01_T1w.nii.gz", "T1w"),
+            ("sub-01_FLAIR.nii.gz", "FLAIR"),
+            ("sub-01_task-rest_bold.nii.gz", "bold"),
+            ("sub-01_dwi.nii.gz", "dwi"),
+        ],
+    )
+    def test_bids_suffix_inference(self, temp_dir: Path, filename: str, expected: str) -> None:
+        path = temp_dir / filename
+        assert infer_series_type(path) == expected
 
-    def test_bids_suffix_flair(self, temp_dir: Path) -> None:
-        path = temp_dir / "sub-01_FLAIR.nii.gz"
-        assert infer_series_type(path) == "FLAIR"
+    @pytest.mark.parametrize(
+        ("filename", "expected"),
+        [
+            ("T1_MPRAGE_001.nii.gz", "T1w"),
+            ("anatomical_T2.nii.gz", "T2w"),
+            ("T1GD_post_contrast.nii.gz", "T1gd"),
+        ],
+    )
+    def test_pattern_inference(self, temp_dir: Path, filename: str, expected: str) -> None:
+        path = temp_dir / filename
+        assert infer_series_type(path) == expected
 
-    def test_bids_suffix_bold(self, temp_dir: Path) -> None:
-        path = temp_dir / "sub-01_task-rest_bold.nii.gz"
-        assert infer_series_type(path) == "bold"
-
-    def test_bids_suffix_dwi(self, temp_dir: Path) -> None:
-        path = temp_dir / "sub-01_dwi.nii.gz"
-        assert infer_series_type(path) == "dwi"
-
-    def test_pattern_t1_mprage(self, temp_dir: Path) -> None:
-        path = temp_dir / "T1_MPRAGE_001.nii.gz"
-        assert infer_series_type(path) == "T1w"
-
-    def test_pattern_t2(self, temp_dir: Path) -> None:
-        path = temp_dir / "anatomical_T2.nii.gz"
-        assert infer_series_type(path) == "T2w"
-
-    def test_pattern_contrast_enhanced(self, temp_dir: Path) -> None:
-        path = temp_dir / "T1GD_post_contrast.nii.gz"
-        assert infer_series_type(path) == "T1gd"
-
-    def test_unknown_pattern(self, temp_dir: Path) -> None:
+    def test_unknown_pattern_returns_unknown(self, temp_dir: Path) -> None:
         path = temp_dir / "random_scan_001.nii.gz"
         assert infer_series_type(path) == "unknown"
 
-    def test_case_insensitive(self, temp_dir: Path) -> None:
+    def test_case_insensitive_matching(self, temp_dir: Path) -> None:
         path = temp_dir / "sub-01_t1w.nii.gz"
         assert infer_series_type(path) == "T1w"
 
@@ -120,39 +117,23 @@ class TestSeriesTypeInference:
 class TestNiftiMetadataExtraction:
     """Tests for extract_nifti_metadata function."""
 
-    def test_extracts_dimensions(self, synthetic_nifti_files: list[tuple[Path, str]]) -> None:
+    def test_extracts_spatial_metadata(self, synthetic_nifti_files: list[tuple[Path, str]]) -> None:
         path, _ = synthetic_nifti_files[0]
         metadata = extract_nifti_metadata(path)
 
         assert metadata.dimensions == (32, 32, 16)
-
-    def test_extracts_voxel_spacing(self, synthetic_nifti_files: list[tuple[Path, str]]) -> None:
-        path, _ = synthetic_nifti_files[0]
-        metadata = extract_nifti_metadata(path)
-
-        assert metadata.voxel_spacing[0] == pytest.approx(1.0)
-        assert metadata.voxel_spacing[1] == pytest.approx(1.0)
-        assert metadata.voxel_spacing[2] == pytest.approx(2.0)
-
-    def test_extracts_orientation(self, synthetic_nifti_files: list[tuple[Path, str]]) -> None:
-        path, _ = synthetic_nifti_files[0]
-        metadata = extract_nifti_metadata(path)
-
+        assert metadata.voxel_spacing == pytest.approx((1.0, 1.0, 2.0))
         assert len(metadata.axcodes) == 3
         assert metadata.orientation_source in ("nifti_sform", "nifti_qform", "identity")
 
-    def test_extracts_affine_as_json(self, synthetic_nifti_files: list[tuple[Path, str]]) -> None:
+    def test_extracts_affine_and_source(
+        self, synthetic_nifti_files: list[tuple[Path, str]]
+    ) -> None:
         path, _ = synthetic_nifti_files[0]
         metadata = extract_nifti_metadata(path)
 
         affine = json.loads(metadata.affine_json)
-        assert len(affine) == 4
-        assert len(affine[0]) == 4
-
-    def test_stores_source_path(self, synthetic_nifti_files: list[tuple[Path, str]]) -> None:
-        path, _ = synthetic_nifti_files[0]
-        metadata = extract_nifti_metadata(path)
-
+        assert len(affine) == 4 and len(affine[0]) == 4
         assert str(path.absolute()) in metadata.source_path
 
     def test_file_not_found_raises(self, temp_dir: Path) -> None:
@@ -200,21 +181,6 @@ class TestVolumeCollectionFromNiftis:
     ) -> None:
         uri = str(temp_dir / "vc_mismatch")
 
-        with pytest.raises(ValueError, match="Dimension mismatch"):
-            VolumeCollection.from_niftis(
-                uri=uri,
-                niftis=mismatched_dim_niftis,
-                validate_dimensions=True,
-            )
-
-    def test_dimension_validation_disabled(
-        self, temp_dir: Path, mismatched_dim_niftis: list[tuple[Path, str]]
-    ) -> None:
-        # When validation is disabled, only first file's shape is used
-        uri = str(temp_dir / "vc_no_validate")
-
-        # This should raise because volumes still have different shapes
-        # but we create with first shape
         with pytest.raises(ValueError, match="Dimension mismatch"):
             VolumeCollection.from_niftis(
                 uri=uri,
@@ -450,17 +416,239 @@ class TestFromNiftisWithRealData:
 class TestKnownSeriesTypes:
     """Tests for KNOWN_SERIES_TYPES constant."""
 
-    def test_contains_common_mri_types(self) -> None:
-        assert "T1w" in KNOWN_SERIES_TYPES
-        assert "T2w" in KNOWN_SERIES_TYPES
-        assert "FLAIR" in KNOWN_SERIES_TYPES
-        assert "bold" in KNOWN_SERIES_TYPES
-        assert "dwi" in KNOWN_SERIES_TYPES
+    def test_contains_expected_modality_types(self) -> None:
+        mri_types = {"T1w", "T2w", "FLAIR", "bold", "dwi"}
+        ct_types = {"CT", "CTA", "CTPA"}
 
-    def test_contains_ct_types(self) -> None:
-        assert "CT" in KNOWN_SERIES_TYPES
-        assert "CTA" in KNOWN_SERIES_TYPES
-        assert "CTPA" in KNOWN_SERIES_TYPES
-
-    def test_is_frozen_set(self) -> None:
+        assert mri_types.issubset(KNOWN_SERIES_TYPES)
+        assert ct_types.issubset(KNOWN_SERIES_TYPES)
         assert isinstance(KNOWN_SERIES_TYPES, frozenset)
+
+
+# ----- Images Dict API Tests -----
+
+
+@pytest.fixture
+def multi_modality_dirs(temp_dir: Path) -> dict[str, Path]:
+    """Create separate directories for CT and segmentation NIfTIs."""
+    images_dir = temp_dir / "imagesTr"
+    labels_dir = temp_dir / "labelsTr"
+    images_dir.mkdir()
+    labels_dir.mkdir()
+
+    shape = (32, 32, 16)
+    affine = np.eye(4)
+
+    for subject_id in ["sub-01", "sub-02", "sub-03"]:
+        # CT images
+        data = np.random.rand(*shape).astype(np.float32)
+        img = nib.Nifti1Image(data, affine)
+        nib.save(img, images_dir / f"{subject_id}.nii.gz")
+
+        # Segmentation labels
+        seg = np.random.randint(0, 4, shape, dtype=np.int16)
+        seg_img = nib.Nifti1Image(seg, affine)
+        nib.save(seg_img, labels_dir / f"{subject_id}.nii.gz")
+
+    return {"images": images_dir, "labels": labels_dir}
+
+
+class TestImagesDictAPI:
+    """Tests for the new images dict parameter in RadiObject.from_niftis()."""
+
+    def test_images_with_directories(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Test images dict with directory paths."""
+        uri = str(temp_dir / "radi_images_dirs")
+
+        radi = RadiObject.from_niftis(
+            uri=uri,
+            images={
+                "CT": multi_modality_dirs["images"],
+                "seg": multi_modality_dirs["labels"],
+            },
+        )
+
+        assert "CT" in radi.collection_names
+        assert "seg" in radi.collection_names
+        assert len(radi.CT) == 3
+        assert len(radi.seg) == 3
+
+    def test_images_with_glob_patterns(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Test images dict with glob patterns."""
+        uri = str(temp_dir / "radi_images_globs")
+
+        radi = RadiObject.from_niftis(
+            uri=uri,
+            images={
+                "CT": str(multi_modality_dirs["images"] / "*.nii.gz"),
+                "seg": str(multi_modality_dirs["labels"] / "*.nii.gz"),
+            },
+        )
+
+        assert "CT" in radi.collection_names
+        assert "seg" in radi.collection_names
+        assert len(radi.CT) == 3
+        assert len(radi.seg) == 3
+
+    def test_images_with_pre_resolved_list(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Test images dict with pre-resolved (path, subject_id) tuples."""
+        uri = str(temp_dir / "radi_images_list")
+
+        images_dir = multi_modality_dirs["images"]
+        labels_dir = multi_modality_dirs["labels"]
+
+        radi = RadiObject.from_niftis(
+            uri=uri,
+            images={
+                "CT": [
+                    (images_dir / "sub-01.nii.gz", "patient-001"),
+                    (images_dir / "sub-02.nii.gz", "patient-002"),
+                ],
+                "seg": [
+                    (labels_dir / "sub-01.nii.gz", "patient-001"),
+                    (labels_dir / "sub-02.nii.gz", "patient-002"),
+                ],
+            },
+        )
+
+        assert len(radi.CT) == 2
+        assert len(radi.seg) == 2
+        assert "patient-001" in radi.obs_subject_ids
+        assert "patient-002" in radi.obs_subject_ids
+
+    def test_images_mutual_exclusivity_with_niftis(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Error when images combined with niftis."""
+        uri = str(temp_dir / "radi_mutual_niftis")
+
+        with pytest.raises(ValueError, match="Cannot use 'images' with legacy"):
+            RadiObject.from_niftis(
+                uri=uri,
+                images={"CT": multi_modality_dirs["images"]},
+                niftis=[("fake.nii.gz", "sub-01")],
+            )
+
+    def test_images_mutual_exclusivity_with_image_dir(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Error when images combined with image_dir."""
+        uri = str(temp_dir / "radi_mutual_dir")
+
+        with pytest.raises(ValueError, match="Cannot use 'images' with legacy"):
+            RadiObject.from_niftis(
+                uri=uri,
+                images={"CT": multi_modality_dirs["images"]},
+                image_dir=multi_modality_dirs["images"],
+            )
+
+    def test_images_mutual_exclusivity_with_collection_name(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Error when images combined with collection_name."""
+        uri = str(temp_dir / "radi_mutual_name")
+
+        with pytest.raises(ValueError, match="Cannot use 'images' with legacy"):
+            RadiObject.from_niftis(
+                uri=uri,
+                images={"CT": multi_modality_dirs["images"]},
+                collection_name="override",
+            )
+
+    def test_images_empty_dict_raises(self, temp_dir: Path) -> None:
+        """Error when images dict is empty."""
+        uri = str(temp_dir / "radi_empty_images")
+
+        with pytest.raises(ValueError, match="images dict cannot be empty"):
+            RadiObject.from_niftis(uri=uri, images={})
+
+    def test_validate_alignment_passes(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Alignment validation passes when subjects match."""
+        uri = str(temp_dir / "radi_align_pass")
+
+        # Should not raise - subjects are aligned
+        radi = RadiObject.from_niftis(
+            uri=uri,
+            images={
+                "CT": multi_modality_dirs["images"],
+                "seg": multi_modality_dirs["labels"],
+            },
+            validate_alignment=True,
+        )
+
+        assert len(radi) == 3
+
+    def test_validate_alignment_fails_mismatch(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Alignment validation fails when subjects don't match."""
+        # Add extra file to labels only
+        labels_dir = multi_modality_dirs["labels"]
+        extra_seg = np.random.randint(0, 4, (32, 32, 16), dtype=np.int16)
+        extra_img = nib.Nifti1Image(extra_seg, np.eye(4))
+        nib.save(extra_img, labels_dir / "sub-99.nii.gz")
+
+        uri = str(temp_dir / "radi_align_fail")
+
+        with pytest.raises(ValueError, match="Subject ID mismatch"):
+            RadiObject.from_niftis(
+                uri=uri,
+                images={
+                    "CT": multi_modality_dirs["images"],
+                    "seg": multi_modality_dirs["labels"],
+                },
+                validate_alignment=True,
+            )
+
+
+class TestLegacyBackwardCompatibility:
+    """Ensure legacy APIs still work after adding images dict."""
+
+    def test_legacy_image_dir_still_works(
+        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
+    ) -> None:
+        """Legacy image_dir parameter still creates RadiObject."""
+        uri = str(temp_dir / "radi_legacy_dir")
+
+        radi = RadiObject.from_niftis(
+            uri=uri,
+            image_dir=multi_modality_dirs["images"],
+            collection_name="lung_ct",
+        )
+
+        assert "lung_ct" in radi.collection_names
+        assert len(radi.lung_ct) == 3
+
+    def test_legacy_niftis_still_works(
+        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+    ) -> None:
+        """Legacy niftis parameter still creates RadiObject with auto-grouping."""
+        uri = str(temp_dir / "radi_legacy_niftis")
+
+        radi = RadiObject.from_niftis(uri=uri, niftis=synthetic_nifti_files)
+
+        assert "T1w" in radi.collection_names
+        assert "FLAIR" in radi.collection_names
+
+    def test_legacy_collection_name_grouping(
+        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+    ) -> None:
+        """Legacy collection_name forces all volumes to single collection."""
+        uri = str(temp_dir / "radi_legacy_coll")
+
+        radi = RadiObject.from_niftis(
+            uri=uri,
+            niftis=synthetic_nifti_files,
+            collection_name="all_scans",
+        )
+
+        assert radi.collection_names == ("all_scans",)
+        assert len(radi.all_scans) == 6  # 3 subjects * 2 modalities

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterator
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Sequence, overload
+from typing import TYPE_CHECKING, Sequence, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -131,13 +132,7 @@ class RadiObject:
 
     @property
     def index(self) -> Index:
-        """Subject index for bidirectional ID/position lookups.
-
-        Provides pandas-like index access:
-            radi.index.get_index("sub-01")  # ID to position
-            radi.index.get_key(0)           # position to ID
-            radi.index.keys                 # all subject IDs
-        """
+        """Subject index for bidirectional ID/position lookups."""
         return self._index
 
     @property
@@ -286,28 +281,7 @@ class RadiObject:
         )
 
     def describe(self) -> str:
-        """Return a summary description of the RadiObject.
-
-        Includes subject count, collections with shapes, and label distributions.
-
-        Example:
-            >>> print(radi.describe())
-            RadiObject Summary
-            ==================
-            URI: s3://bucket/study
-            Subjects: 63
-            Collections: 4
-
-            Collections:
-              - FLAIR: 63 volumes, shape=240x240x155
-              - T1w: 63 volumes, shape=240x240x155
-              - T2w: 63 volumes, shape=240x240x155
-              - T1gd: 63 volumes, shape=240x240x155
-
-            Label Columns:
-              - has_tumor: {0: 10, 1: 53}
-              - tumor_grade: {HGG: 40, LGG: 23}
-        """
+        """Return a summary: subjects, collections, shapes, and label distributions."""
         lines = [
             "RadiObject Summary",
             "==================",
@@ -350,20 +324,7 @@ class RadiObject:
     # ===== Query Builder (Pipeline Mode) =====
 
     def query(self) -> Query:
-        """Create a lazy Query builder for pipeline-style filtering.
-
-        Query objects accumulate filters without accessing data. Explicit methods
-        like iter_volumes(), to_radi_object(), or count() trigger materialization.
-
-        Example:
-            result = (
-                radi.query()
-                .filter("age > 40 and tumor_grade == 'HGG'")
-                .filter_collections(["T1w", "FLAIR"])
-                .sample(100, seed=42)
-                .to_radi_object("s3://bucket/subset", streaming=True)
-            )
-        """
+        """Create a lazy Query builder for pipeline-style filtering."""
         from radiobject.query import Query
 
         return Query(self)
@@ -817,6 +778,8 @@ class RadiObject:
         niftis: Sequence[tuple[str | Path, str]] | None = None,
         image_dir: str | Path | None = None,
         collection_name: str | None = None,
+        images: dict[str, str | Path | Sequence[tuple[str | Path, str]]] | None = None,
+        validate_alignment: bool = False,
         obs_meta: pd.DataFrame | None = None,
         reorient: bool | None = None,
         ctx: tiledb.Ctx | None = None,
@@ -827,34 +790,54 @@ class RadiObject:
         Ingestion stores volumes in their original dimensions without any
         preprocessing. Use `collection.map()` for post-hoc transformations.
 
-        Two input modes:
-        1. niftis: List of (path, subject_id) tuples
-        2. image_dir: Directory-based discovery
+        Three input modes:
+        1. images: Dict mapping collection names to paths/globs/lists (recommended)
+        2. niftis: List of (path, subject_id) tuples (legacy)
+        3. image_dir: Directory-based discovery (legacy)
 
         Collection organization:
-        - If collection_name provided: all volumes go to that single collection
+        - With images dict: each key becomes a collection
+        - With collection_name: all volumes go to that single collection
         - Otherwise: auto-group by inferred modality (T1w, FLAIR, CT, etc.)
-        - If modality cannot be inferred: defaults to "unknown"
 
         Args:
             uri: Target URI for RadiObject
-            niftis: List of (nifti_path, obs_subject_id) tuples
-            image_dir: Directory containing image NIfTIs (mutually exclusive with niftis)
-            collection_name: Explicit name for collection (all volumes go here).
-                            If None, auto-groups by modality.
+            images: Dict mapping collection names to NIfTI sources. Sources can be:
+                   - Glob pattern: "./imagesTr/*.nii.gz"
+                   - Directory path: "./imagesTr"
+                   - Pre-resolved list: [(path, subject_id), ...]
+            niftis: List of (nifti_path, obs_subject_id) tuples (legacy)
+            image_dir: Directory containing image NIfTIs (legacy, mutually exclusive with niftis)
+            collection_name: Explicit name for collection (legacy, all volumes go here)
+            validate_alignment: If True, verify all collections have same subject IDs
             obs_meta: Subject-level metadata. Must contain obs_subject_id column.
             reorient: Reorient to canonical orientation (None uses config default)
             ctx: TileDB context
             progress: Show tqdm progress bar
 
-        Example (explicit collection name):
+        Example (images dict with globs):
+            radi = RadiObject.from_niftis(
+                uri="./dataset",
+                images={
+                    "CT": "./imagesTr/*.nii.gz",
+                    "seg": "./labelsTr/*.nii.gz",
+                },
+            )
+
+        Example (images dict with directories):
+            radi = RadiObject.from_niftis(
+                uri="./dataset",
+                images={"CT": "./imagesTr", "seg": "./labelsTr"},
+            )
+
+        Example (legacy explicit collection name):
             radi = RadiObject.from_niftis(
                 uri="s3://bucket/raw",
                 image_dir="./imagesTr",
-                collection_name="lung_ct",  # All volumes in one collection
+                collection_name="lung_ct",
             )
 
-        Example (auto-group by modality):
+        Example (legacy auto-group by modality):
             radi = RadiObject.from_niftis(
                 uri="s3://bucket/raw",
                 niftis=[
@@ -863,34 +846,86 @@ class RadiObject:
                 ],
             )
             # Result: radi.T1w, radi.FLAIR collections
-
-        Example (transform and resample with MONAI):
-            from monai.transforms import Spacing
-            spacing = Spacing(pixdim=(2.0, 2.0, 2.0))
-
-            radi = RadiObject.from_niftis(uri, image_dir="./data")
-            normalized = radi.CT.map(
-                lambda v: spacing(v[np.newaxis, ...])[0]
-            ).to_volume_collection("s3://bucket/normalized")
         """
-        # Validate input mode
-        if niftis is not None and image_dir is not None:
-            raise ValueError("Cannot specify both 'niftis' and 'image_dir'")
-        if niftis is None and image_dir is None:
-            raise ValueError("Must specify either 'niftis' or 'image_dir'")
+        from radiobject.ingest import resolve_nifti_source
 
-        # Handle image_dir discovery
-        if image_dir is not None:
+        # --- NORMALIZE ALL INPUTS TO images DICT ---
+
+        if images is not None:
+            # New mode: images dict provided directly
+            if niftis is not None or image_dir is not None or collection_name is not None:
+                raise ValueError("Cannot use 'images' with legacy parameters")
+            if not images:
+                raise ValueError("images dict cannot be empty")
+            # images is ready to use
+
+        elif image_dir is not None:
+            # Legacy mode: image_dir → discover files and convert to images dict
+            if niftis is not None:
+                raise ValueError("Cannot specify both 'niftis' and 'image_dir'")
             from radiobject.ingest import discover_nifti_pairs
 
             sources = discover_nifti_pairs(image_dir)
             niftis = [(s.image_path, s.subject_id) for s in sources]
 
-        if not niftis:
-            raise ValueError("No NIfTI files found")
+            if collection_name:
+                # Explicit name - all to one collection
+                images = {collection_name: niftis}
+            else:
+                # Group by inferred modality
+                modality_groups: dict[str, list[tuple[str | Path, str]]] = defaultdict(list)
+                for path, sid in niftis:
+                    series_type = infer_series_type(Path(path))
+                    modality_groups[series_type].append((path, sid))
+                images = dict(modality_groups)
+
+        elif niftis is not None:
+            # Legacy mode: niftis list → convert to images dict
+            if collection_name:
+                # All to one collection
+                images = {collection_name: niftis}
+            else:
+                # Group by inferred modality
+                modality_groups: dict[str, list[tuple[str | Path, str]]] = defaultdict(list)
+                for path, sid in niftis:
+                    series_type = infer_series_type(Path(path))
+                    modality_groups[series_type].append((path, sid))
+                images = dict(modality_groups)
+        else:
+            raise ValueError("Must specify 'images', 'niftis', or 'image_dir'")
+
+        # --- SINGLE CODE PATH: Resolve images dict ---
+
+        groups: dict[str, list[tuple[Path, str]]] = {}
+        for coll_name, source in images.items():
+            groups[coll_name] = resolve_nifti_source(source)
+
+        # Optional alignment validation
+        if validate_alignment and len(groups) > 1:
+            subject_sets = {
+                name: {sid for _, sid in nifti_list} for name, nifti_list in groups.items()
+            }
+            first_name, first_set = next(iter(subject_sets.items()))
+            for name, sid_set in subject_sets.items():
+                if sid_set != first_set:
+                    missing_in_first = sid_set - first_set
+                    missing_in_other = first_set - sid_set
+                    raise ValueError(
+                        f"Subject ID mismatch between '{first_name}' and '{name}': "
+                        f"missing in '{first_name}': {sorted(missing_in_first)[:3]}, "
+                        f"missing in '{name}': {sorted(missing_in_other)[:3]}"
+                    )
+
+        # Validate all files exist
+        for coll_name, nifti_list in groups.items():
+            for path, _ in nifti_list:
+                if not path.exists():
+                    raise FileNotFoundError(f"NIfTI file not found: {path}")
 
         # Collect all subject IDs
-        all_subject_ids = {sid for _, sid in niftis}
+        all_subject_ids: set[str] = set()
+        for nifti_list in groups.values():
+            all_subject_ids.update(sid for _, sid in nifti_list)
 
         # Validate FK constraint if obs_meta provided
         if obs_meta is not None:
@@ -912,20 +947,9 @@ class RadiObject:
                 }
             )
 
-        # Extract file info and determine collection name
-        file_info: list[tuple[Path, str, str]] = []
-        for nifti_path, obs_subject_id in niftis:
-            path = Path(nifti_path)
-            if not path.exists():
-                raise FileNotFoundError(f"NIfTI file not found: {path}")
-
-            series_type = collection_name or infer_series_type(path)
-            file_info.append((path, obs_subject_id, series_type))
-
-        # Group by series_type only (heterogeneous shapes allowed)
-        groups: dict[str, list[tuple[Path, str]]] = defaultdict(list)
-        for path, subject_id, series_type in file_info:
-            groups[series_type].append((path, subject_id))
+        # Check for empty groups
+        if not groups or all(len(nifti_list) == 0 for nifti_list in groups.values()):
+            raise ValueError("No NIfTI files found")
 
         # Create VolumeCollection for each group
         effective_ctx = ctx if ctx else global_ctx()

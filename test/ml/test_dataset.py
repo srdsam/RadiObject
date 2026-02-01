@@ -6,62 +6,66 @@ import pytest
 import torch
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.datasets import VolumeCollectionDataset
 
 
-class TestRadiObjectDataset:
-    """Tests for RadiObjectDataset."""
+class TestVolumeCollectionDataset:
+    """Tests for VolumeCollectionDataset."""
 
-    def test_dataset_length(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_dataset_length(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Test dataset reports correct length."""
         assert len(ml_dataset) == 3
 
-    def test_getitem_returns_dict(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_getitem_returns_dict(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Test __getitem__ returns dict with expected keys."""
         sample = ml_dataset[0]
         assert isinstance(sample, dict)
         assert "image" in sample
         assert "idx" in sample
 
-    def test_image_shape(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_image_shape(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Test image tensor has correct shape [C, X, Y, Z]."""
         sample = ml_dataset[0]
         image = sample["image"]
         assert image.shape == (2, 240, 240, 155)
 
-    def test_image_dtype(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_image_dtype(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Test image tensor has float dtype."""
         sample = ml_dataset[0]
         assert sample["image"].dtype == torch.float32
 
-    def test_modalities_property(self, ml_dataset: RadiObjectDataset) -> None:
-        """Test modalities property returns expected list."""
-        assert ml_dataset.modalities == ["flair", "T1w"]
+    def test_collection_names_property(self, ml_dataset: VolumeCollectionDataset) -> None:
+        """Test collection_names property returns expected list."""
+        assert ml_dataset.collection_names == ["flair", "T1w"]
 
-    def test_volume_shape_property(self, ml_dataset: RadiObjectDataset) -> None:
+    def test_volume_shape_property(self, ml_dataset: VolumeCollectionDataset) -> None:
         """Test volume_shape property."""
         assert ml_dataset.volume_shape == (240, 240, 155)
+
+    def test_n_channels_property(self, ml_dataset: VolumeCollectionDataset) -> None:
+        """Test n_channels property."""
+        assert ml_dataset.n_channels == 2
 
 
 class TestPatchDataset:
     """Tests for patch extraction mode."""
 
-    def test_patch_dataset_length(self, ml_dataset_patch: RadiObjectDataset) -> None:
+    def test_patch_dataset_length(self, ml_dataset_patch: VolumeCollectionDataset) -> None:
         """Test patch dataset length accounts for patches_per_volume."""
         assert len(ml_dataset_patch) == 3 * 2
 
-    def test_patch_shape(self, ml_dataset_patch: RadiObjectDataset) -> None:
+    def test_patch_shape(self, ml_dataset_patch: VolumeCollectionDataset) -> None:
         """Test extracted patch has correct shape."""
         sample = ml_dataset_patch[0]
         assert sample["image"].shape == (1, 64, 64, 64)
 
-    def test_patch_includes_metadata(self, ml_dataset_patch: RadiObjectDataset) -> None:
+    def test_patch_includes_metadata(self, ml_dataset_patch: VolumeCollectionDataset) -> None:
         """Test patch sample includes position metadata."""
         sample = ml_dataset_patch[0]
         assert "patch_idx" in sample
         assert "patch_start" in sample
 
-    def test_patch_within_bounds(self, ml_dataset_patch: RadiObjectDataset) -> None:
+    def test_patch_within_bounds(self, ml_dataset_patch: VolumeCollectionDataset) -> None:
         """Test patch start position is within volume bounds."""
         sample = ml_dataset_patch[0]
         start = sample["patch_start"]
@@ -77,20 +81,16 @@ class TestSliceDataset:
 
     def test_slice_dataset_creation(self, populated_radi_object_module) -> None:
         """Test 2D slice dataset can be created."""
-        config = DatasetConfig(
-            loading_mode=LoadingMode.SLICE_2D,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.SLICE_2D)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
         assert len(dataset) == 3 * 155
 
     def test_slice_shape(self, populated_radi_object_module) -> None:
         """Test 2D slice has correct shape."""
-        config = DatasetConfig(
-            loading_mode=LoadingMode.SLICE_2D,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.SLICE_2D)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
         sample = dataset[0]
         assert sample["image"].shape == (1, 240, 240)
 
@@ -98,7 +98,7 @@ class TestSliceDataset:
 class TestDatasetParameterized:
     """Tests parameterized by storage backend."""
 
-    def test_dataset_works_with_backend(self, ml_dataset_param: RadiObjectDataset) -> None:
+    def test_dataset_works_with_backend(self, ml_dataset_param: VolumeCollectionDataset) -> None:
         """Test dataset works with both local and S3 backends."""
         assert len(ml_dataset_param) == 3
         sample = ml_dataset_param[0]
@@ -122,3 +122,21 @@ class TestConfigValidation:
                 patch_size=(64, 64, 64),
                 patches_per_volume=0,
             )
+
+
+class TestSingleCollectionDataset:
+    """Tests for single collection usage."""
+
+    def test_single_collection_init(self, populated_radi_object_module) -> None:
+        """Test dataset initializes with single collection."""
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection)
+        assert len(dataset) == 3
+        assert dataset.n_channels == 1
+
+    def test_single_collection_shape(self, populated_radi_object_module) -> None:
+        """Test single collection produces single-channel output."""
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection)
+        sample = dataset[0]
+        assert sample["image"].shape[0] == 1

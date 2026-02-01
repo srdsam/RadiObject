@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from glob import glob
 from pathlib import Path
 
 
@@ -92,3 +93,40 @@ def discover_nifti_pairs(
         )
 
     return sources
+
+
+def resolve_nifti_source(
+    source: str | Path | Sequence[tuple[str | Path, str]],
+    subject_id_fn: Callable[[Path], str] | None = None,
+) -> list[tuple[Path, str]]:
+    """Resolve various NIfTI source formats to (path, subject_id) tuples.
+
+    Supports:
+    - Glob pattern: "./imagesTr/*.nii.gz"
+    - Directory path: "./imagesTr"
+    - Pre-resolved list: [(path, subject_id), ...]
+    """
+    # Already resolved - return as-is
+    if isinstance(source, (list, tuple)) and source and isinstance(source[0], tuple):
+        return [(Path(p), sid) for p, sid in source]
+
+    source_str = str(source)
+
+    if subject_id_fn is None:
+
+        def subject_id_fn(p: Path) -> str:
+            name = p.stem
+            if name.endswith(".nii"):
+                name = name[:-4]
+            return name
+
+    # Glob pattern
+    if any(c in source_str for c in "*?["):
+        matched = sorted(glob(source_str, recursive=True))
+        if not matched:
+            raise ValueError(f"No files matched pattern: {source}")
+        return [(Path(f), subject_id_fn(Path(f))) for f in matched]
+
+    # Directory path
+    sources = discover_nifti_pairs(source)
+    return [(s.image_path, s.subject_id) for s in sources]

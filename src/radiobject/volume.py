@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from functools import cached_property
 from pathlib import Path
 
@@ -124,21 +125,21 @@ class Volume:
         with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
             return arr[:][VOXELS_ATTR]
 
-    def slice(self, x: slice, y: slice, z: slice, t: slice | None = None) -> np.ndarray:
-        """Partial read of the volume."""
+    def slice(
+        self,
+        x: builtins.slice,
+        y: builtins.slice,
+        z: builtins.slice,
+        t: builtins.slice | None = None,
+    ) -> np.ndarray:
+        """Partial read using slice objects. Prefer vol[x, y, z] for most cases."""
         with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
             if t is not None and self.ndim == 4:
                 return arr[x, y, z, t][VOXELS_ATTR]
             return arr[x, y, z][VOXELS_ATTR]
 
-    def __getitem__(self, key: tuple[slice, ...] | slice) -> np.ndarray:
-        """NumPy-like indexing for partial reads.
-
-        Example:
-            vol[10:20, :, :]      # X slice
-            vol[:, :, 50:51]      # Single axial slice
-            vol[::2, ::2, ::2]    # Downsampled read
-        """
+    def __getitem__(self, key: tuple[builtins.slice, ...] | builtins.slice) -> np.ndarray:
+        """NumPy-like indexing for partial reads: vol[10:20, :, :]."""
         if isinstance(key, slice):
             key = (key,)
         if not isinstance(key, tuple):
@@ -153,14 +154,7 @@ class Volume:
     # ===== Analysis Methods =====
 
     def get_statistics(self, percentiles: list[float] | None = None) -> dict[str, float]:
-        """Compute descriptive statistics for the volume.
-
-        Args:
-            percentiles: Optional list of percentiles to compute (e.g., [25, 50, 75])
-
-        Returns:
-            Dictionary with mean, std, min, max, median, and requested percentiles
-        """
+        """Compute mean, std, min, max, median, and optional percentiles."""
         data = self.to_numpy()
         flat = data.ravel()  # Single flatten operation
         stats = {
@@ -179,25 +173,12 @@ class Volume:
     def compute_histogram(
         self, bins: int = 256, value_range: tuple[float, float] | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Compute intensity histogram of the volume.
-
-        Args:
-            bins: Number of histogram bins
-            value_range: (min, max) range for bins. If None, uses data min/max.
-
-        Returns:
-            Tuple of (histogram_counts, bin_edges)
-        """
+        """Compute intensity histogram. Returns (counts, bin_edges)."""
         data = self.to_numpy().flatten()
         return np.histogram(data, bins=bins, range=value_range)
 
     def to_nifti(self, file_path: str | Path, compression: bool = True) -> None:
-        """Export volume to NIfTI file with full metadata preservation.
-
-        Args:
-            file_path: Output path (.nii or .nii.gz)
-            compression: If True and path doesn't end in .gz, will compress
-        """
+        """Export to NIfTI with metadata preservation."""
         file_path = Path(file_path)
         if compression and not str(file_path).endswith(".gz"):
             file_path = Path(str(file_path) + ".gz")

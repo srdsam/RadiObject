@@ -18,7 +18,7 @@ import pytest
 import torch
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.datasets.volume_dataset import RadiObjectDataset
+from radiobject.ml.datasets import VolumeCollectionDataset
 from radiobject.ml.reader import VolumeReader
 
 if TYPE_CHECKING:
@@ -32,11 +32,9 @@ class TestDataLoaderWorkerContextIsolation:
 
     def test_worker_process_ids_differ(self, populated_radi_object_module: "RadiObject") -> None:
         """Test that multi-worker DataLoader uses separate processes."""
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
 
         # We can't directly test process IDs from here, but we can verify
         # that the worker_init_fn is being called properly by checking
@@ -59,11 +57,9 @@ class TestDataLoaderWorkerContextIsolation:
         self, populated_radi_object_module: "RadiObject"
     ) -> None:
         """Test that num_workers=0 uses main process context."""
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
 
         loader = torch.utils.data.DataLoader(
             dataset,
@@ -87,11 +83,9 @@ class TestMultiWorkerMemoryScaling:
         """Track memory usage across worker configurations."""
         import psutil
 
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
 
         process = psutil.Process()
         mem_before = process.memory_info().rss / 1e6
@@ -124,11 +118,9 @@ class TestIPCSerializationOverhead:
 
     def test_ipc_overhead_comparison(self, populated_radi_object_module: "RadiObject") -> None:
         """Compare single-process vs multi-worker loading time."""
-        config = DatasetConfig(
-            loading_mode=LoadingMode.FULL_VOLUME,
-            modalities=["flair"],
-        )
-        dataset = RadiObjectDataset(populated_radi_object_module, config)
+        config = DatasetConfig(loading_mode=LoadingMode.FULL_VOLUME)
+        collection = populated_radi_object_module.collection("flair")
+        dataset = VolumeCollectionDataset(collection, config=config)
 
         # Single process (no IPC)
         loader_0 = torch.utils.data.DataLoader(
