@@ -311,13 +311,16 @@ def configure(
 ) -> None:
     """Update global configuration.
 
-    Example (new API):
-        configure(write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.AXIAL)))
-        configure(read=ReadConfig(memory_budget_mb=2048))
+    Examples:
+        Using the new nested API:
 
-    Example (deprecated flat API, still supported):
-        configure(tile=TileConfig(x=128, y=128, z=32))
-        configure(compression=CompressionConfig(algorithm=Compressor.LZ4))
+            configure(write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.AXIAL)))
+            configure(read=ReadConfig(memory_budget_mb=2048))
+
+        Using the deprecated flat API (still supported):
+
+            configure(tile=TileConfig(x=128, y=128, z=32))
+            configure(compression=CompressionConfig(algorithm=Compressor.LZ4))
     """
     global _config, _ctx
 

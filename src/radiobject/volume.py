@@ -32,19 +32,24 @@ class Volume:
         self._ctx: tiledb.Ctx = ctx  # None means use global
         self._shape: tuple[int, ...] | None = None  # Could be 3 or 4 dimensional
 
-    def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
+    def __repr__(self) -> str:
+        """Concise representation of the Volume."""
+        shape_str = "x".join(str(d) for d in self.shape)
+        obs_id_str = f", obs_id='{self.obs_id}'" if self.obs_id else ""
+        return f"Volume(shape={shape_str}, dtype={self.dtype}{obs_id_str})"
 
-    @cached_property
-    def _schema(self) -> tiledb.ArraySchema:
-        """Cached TileDB array schema."""
-        return tiledb.ArraySchema.load(self.uri, ctx=self._effective_ctx())
+    def __getitem__(self, key: tuple[builtins.slice, ...] | builtins.slice) -> np.ndarray:
+        """NumPy-like indexing for partial reads: vol[10:20, :, :]."""
+        if isinstance(key, slice):
+            key = (key,)
+        if not isinstance(key, tuple):
+            raise TypeError(f"Index must be slice or tuple of slices, got {type(key)}")
 
-    @cached_property
-    def _metadata(self) -> dict:
-        """Cached TileDB array metadata - single read for all metadata properties."""
+        # Pad with full slices if needed
+        key = key + (slice(None),) * (self.ndim - len(key))
+
         with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
-            return dict(arr.meta)
+            return arr[key][VOXELS_ATTR]
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -59,12 +64,6 @@ class Volume:
     @property
     def ndim(self) -> int:
         return len(self.shape)
-
-    def __repr__(self) -> str:
-        """Concise representation of the Volume."""
-        shape_str = "x".join(str(d) for d in self.shape)
-        obs_id_str = f", obs_id='{self.obs_id}'" if self.obs_id else ""
-        return f"Volume(shape={shape_str}, dtype={self.dtype}{obs_id_str})"
 
     @property
     def dtype(self) -> np.dtype:
@@ -97,11 +96,6 @@ class Volume:
         except Exception:
             return None
 
-    def set_obs_id(self, obs_id: str) -> None:
-        """Store observation identifier in array metadata."""
-        with tiledb.open(self.uri, "w", ctx=self._effective_ctx()) as arr:
-            arr.meta["obs_id"] = obs_id
-
     def axial(self, z: int, t: int | None = None) -> np.ndarray:
         """Get axial slice (X-Y plane at given Z)."""
         return self.slice(
@@ -120,11 +114,6 @@ class Volume:
             slice(None), slice(y, y + 1), slice(None), slice(t, t + 1) if t is not None else None
         ).squeeze()
 
-    def to_numpy(self) -> np.ndarray:
-        """Read entire volume into memory."""
-        with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
-            return arr[:][VOXELS_ATTR]
-
     def slice(
         self,
         x: builtins.slice,
@@ -138,20 +127,10 @@ class Volume:
                 return arr[x, y, z, t][VOXELS_ATTR]
             return arr[x, y, z][VOXELS_ATTR]
 
-    def __getitem__(self, key: tuple[builtins.slice, ...] | builtins.slice) -> np.ndarray:
-        """NumPy-like indexing for partial reads: vol[10:20, :, :]."""
-        if isinstance(key, slice):
-            key = (key,)
-        if not isinstance(key, tuple):
-            raise TypeError(f"Index must be slice or tuple of slices, got {type(key)}")
-
-        # Pad with full slices if needed
-        key = key + (slice(None),) * (self.ndim - len(key))
-
+    def to_numpy(self) -> np.ndarray:
+        """Read entire volume into memory."""
         with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
-            return arr[key][VOXELS_ATTR]
-
-    # ===== Analysis Methods =====
+            return arr[:][VOXELS_ATTR]
 
     def get_statistics(self, percentiles: list[float] | None = None) -> dict[str, float]:
         """Compute mean, std, min, max, median, and optional percentiles."""
@@ -208,6 +187,25 @@ class Volume:
             header["xyzt_units"] = int(meta["nifti_xyzt_units"])
 
         nib.save(img, file_path)
+
+    def set_obs_id(self, obs_id: str) -> None:
+        """Store observation identifier in array metadata."""
+        with tiledb.open(self.uri, "w", ctx=self._effective_ctx()) as arr:
+            arr.meta["obs_id"] = obs_id
+
+    def _effective_ctx(self) -> tiledb.Ctx:
+        return self._ctx if self._ctx else global_ctx()
+
+    @cached_property
+    def _schema(self) -> tiledb.ArraySchema:
+        """Cached TileDB array schema."""
+        return tiledb.ArraySchema.load(self.uri, ctx=self._effective_ctx())
+
+    @cached_property
+    def _metadata(self) -> dict:
+        """Cached TileDB array metadata - single read for all metadata properties."""
+        with tiledb.open(self.uri, "r", ctx=self._effective_ctx()) as arr:
+            return dict(arr.meta)
 
     @classmethod
     def create(
@@ -292,10 +290,10 @@ class Volume:
         """Create a new Volume from a NIfTI file.
 
         Args:
-            uri: TileDB array URI
-            nifti_path: Path to NIfTI file
-            ctx: TileDB context (uses global if None)
-            reorient: Reorient to canonical orientation. None uses config default.
+            uri: TileDB array URI.
+            nifti_path: Path to NIfTI file.
+            ctx: TileDB context (uses global if None).
+            reorient: Reorient to canonical orientation (None uses config default).
         """
         config = get_config()
         should_reorient = reorient if reorient is not None else config.orientation.reorient_on_load
@@ -361,12 +359,12 @@ class Volume:
         """Create a new Volume from a DICOM series directory.
 
         Args:
-            uri: TileDB array URI
-            dicom_dir: Path to directory containing DICOM files
-            ctx: TileDB context (uses global if None)
-            reorient: Reorient to canonical orientation. None uses config default.
+            uri: TileDB array URI.
+            dicom_dir: Path to directory containing DICOM files.
+            ctx: TileDB context (uses global if None).
+            reorient: Reorient to canonical orientation (None uses config default).
             dtype: Output dtype. None preserves original DICOM dtype (uint16/int16).
-                   Use np.float32 for backward-compatible behavior.
+                Use np.float32 for backward-compatible behavior.
         """
         import pydicom
 

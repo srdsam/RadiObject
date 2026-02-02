@@ -2,8 +2,6 @@
 
 **TL;DR**: RadiObject enables **200-660x faster** partial reads and native S3 access.
 
-![I/O Performance](../assets/benchmark/benchmark_hero.png)
-
 ## Key Results
 
 | Operation | RadiObject (local) | RadiObject (S3) | MONAI | TorchIO |
@@ -69,8 +67,6 @@ TileDB parallelizes tile decompression across cores—**2x better CPU utilizatio
 | TileDB AXIAL | 6.2 GB | 488 | 1.1x |
 | NIfTI (.nii) | 6.7 GB | 20 | 1.0x |
 | NumPy (.npy) | 13.4 GB | 20 | 0.5x |
-
-![Disk Space](../assets/benchmark/disk_space_comparison.png)
 
 ### Format Overhead (nibabel baseline)
 

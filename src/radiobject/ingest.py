@@ -30,14 +30,14 @@ def discover_nifti_pairs(
     """Discover NIfTI files and optionally pair with labels.
 
     Args:
-        image_dir: Directory containing image NIfTIs
-        label_dir: Optional directory containing label NIfTIs (matched by filename)
-        pattern: Glob pattern for finding NIfTI files
+        image_dir: Directory containing image NIfTIs.
+        label_dir: Optional directory containing label NIfTIs (matched by filename).
+        pattern: Glob pattern for finding NIfTI files.
         subject_id_fn: Function to extract subject ID from path.
-                      Default: stem without .nii extension
+            Default uses stem without .nii extension.
 
     Returns:
-        List of NiftiSource objects
+        List of NiftiSource objects.
     """
     image_dir = Path(image_dir)
     if not image_dir.exists():

@@ -57,17 +57,19 @@ class QueryCount:
 class Query:
     """Lazy filter builder for RadiObject with explicit materialization.
 
-    Filters accumulate without data access. Call iter_volumes(), materialize(),
-    or count() to materialize results.
+    Filters accumulate without data access. Call `iter_volumes()`, `materialize()`,
+    or `count()` to materialize results.
 
     Example:
-        result = (
-            radi.lazy()
-            .filter("age > 40")
-            .filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
-            .map(normalize_intensity)
-            .materialize("s3://bucket/subset")
-        )
+        Filter and materialize a subset:
+
+            result = (
+                radi.lazy()
+                .filter("age > 40")
+                .filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
+                .map(normalize_intensity)
+                .materialize("s3://bucket/subset")
+            )
     """
 
     def __init__(
@@ -91,20 +93,18 @@ class Query:
         self._output_collections = output_collections
         self._transform_fn = transform_fn
 
-    def _copy(self, **kwargs) -> Query:
-        """Create a copy with modified fields."""
-        return Query(
-            self._source,
-            subject_ids=kwargs.get("subject_ids", self._subject_ids),
-            subject_query=kwargs.get("subject_query", self._subject_query),
-            collection_filters=kwargs.get("collection_filters", self._collection_filters),
-            output_collections=kwargs.get("output_collections", self._output_collections),
-            transform_fn=kwargs.get("transform_fn", self._transform_fn),
-        )
+    def __len__(self) -> int:
+        """Number of subjects matching the query."""
+        return len(self._resolve_final_subject_mask())
 
-    # =========================================================================
-    # SUBJECT-LEVEL FILTERS (operate on obs_meta)
-    # =========================================================================
+    def __repr__(self) -> str:
+        """Concise representation of the Query."""
+        count = self.count()
+        collections = ", ".join(count.n_volumes.keys())
+        return (
+            f"Query({count.n_subjects} subjects, "
+            f"{sum(count.n_volumes.values())} volumes across [{collections}])"
+        )
 
     def filter(self, expr: str) -> Query:
         """Filter subjects using TileDB QueryCondition on obs_meta.
@@ -135,6 +135,30 @@ class Query:
         if self._subject_ids is not None:
             new_ids = self._subject_ids & new_ids
         return self._copy(subject_ids=new_ids)
+
+    def filter_collection(self, collection_name: str, expr: str) -> Query:
+        """Filter volumes in a specific collection using TileDB QueryCondition on `obs`.
+
+        Only subjects that have at least one volume matching the filter will be included.
+
+        Args:
+            collection_name: Name of the collection to filter.
+            expr: TileDB query expression on the collection's `obs` dataframe.
+
+        Returns:
+            New Query with filter applied.
+
+        Example:
+            Only include subjects whose T1w scans have 1mm resolution:
+
+                query.filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
+        """
+        new_filters = dict(self._collection_filters)
+        if collection_name in new_filters:
+            new_filters[collection_name] = f"({new_filters[collection_name]}) and ({expr})"
+        else:
+            new_filters[collection_name] = expr
+        return self._copy(collection_filters=new_filters)
 
     def iloc(self, key: int | slice | list[int] | npt.NDArray[np.bool_]) -> Query:
         """Filter subjects by integer position(s)."""
@@ -178,33 +202,6 @@ class Query:
         sampled = rng.choice(subject_list, size=n, replace=False)
         return self.filter_subjects(sampled)
 
-    # =========================================================================
-    # COLLECTION-LEVEL FILTERS (operate on collection obs)
-    # =========================================================================
-
-    def filter_collection(self, collection_name: str, expr: str) -> Query:
-        """Filter volumes in a specific collection using TileDB QueryCondition on obs.
-
-        Only subjects that have at least one volume matching the filter will be included.
-
-        Args:
-            collection_name: Name of the collection to filter
-            expr: TileDB query expression on the collection's obs dataframe
-
-        Returns:
-            New Query with filter applied
-
-        Example:
-            # Only include subjects whose T1w scans have 1mm resolution
-            query.filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
-        """
-        new_filters = dict(self._collection_filters)
-        if collection_name in new_filters:
-            new_filters[collection_name] = f"({new_filters[collection_name]}) and ({expr})"
-        else:
-            new_filters[collection_name] = expr
-        return self._copy(collection_filters=new_filters)
-
     def select_collections(self, names: Sequence[str]) -> Query:
         """Limit output to specific collections.
 
@@ -221,10 +218,6 @@ class Query:
         if self._output_collections is not None:
             new_collections = self._output_collections & new_collections
         return self._copy(output_collections=new_collections)
-
-    # =========================================================================
-    # TRANSFORM (applied during materialization)
-    # =========================================================================
 
     def map(self, fn: TransformFn) -> Query:
         """Apply transform to each volume during materialization.
@@ -243,109 +236,6 @@ class Query:
 
             return self._copy(transform_fn=composed_fn)
         return self._copy(transform_fn=fn)
-
-    # =========================================================================
-    # MASK RESOLUTION
-    # =========================================================================
-
-    def _resolve_subject_mask(self) -> frozenset[str]:
-        """Resolve subject-level filters to a set of obs_subject_ids.
-
-        This applies:
-        1. Explicit subject_ids filter
-        2. Query expression on obs_meta
-        """
-        all_ids = set(self._source.obs_subject_ids)
-
-        # Apply explicit subject_ids filter
-        if self._subject_ids is not None:
-            all_ids &= self._subject_ids
-
-        # Apply query expression on obs_meta
-        if self._subject_query is not None:
-            filtered = self._source.obs_meta.read(value_filter=self._subject_query)
-            query_ids = set(filtered["obs_subject_id"])
-            all_ids &= query_ids
-
-        return frozenset(all_ids)
-
-    def _resolve_volume_mask(
-        self, collection_name: str, subject_mask: frozenset[str]
-    ) -> frozenset[str]:
-        """Resolve volume-level filters to a set of obs_ids for a collection.
-
-        Uses TileDB dimension slicing for efficient subject filtering,
-        combined with QueryCondition for attribute filters.
-        """
-        vc = self._source.collection(collection_name)
-        effective_ctx = vc.obs._effective_ctx()
-
-        # Build query with dimension slicing for subject_mask
-        with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
-            # Use multi-index for efficient dimension-based filtering
-            subject_list = list(subject_mask) if subject_mask else None
-
-            if subject_list:
-                # Query only rows matching subject_mask using dimension slicing
-                query = arr.query(dims=["obs_subject_id", "obs_id"])
-                if collection_name in self._collection_filters:
-                    query = query.cond(self._collection_filters[collection_name])
-                result = query.multi_index[subject_list, :]
-            else:
-                # No subject filter - apply attribute filter only
-                if collection_name in self._collection_filters:
-                    result = arr.query(cond=self._collection_filters[collection_name])[:]
-                else:
-                    result = arr.query(attrs=[])[:]["obs_id"]
-                    return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in result)
-
-            obs_ids = result["obs_id"]
-            return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
-
-    def _resolve_final_subject_mask(self) -> frozenset[str]:
-        """Resolve to final subject mask after applying all filters.
-
-        Uses TileDB dimension queries to efficiently find subjects with matching volumes.
-        """
-        subject_mask = self._resolve_subject_mask()
-
-        # If there are collection filters, further filter subjects
-        # to only those with matching volumes
-        if self._collection_filters:
-            subjects_with_matching_volumes = set()
-
-            for coll_name in self._collection_filters:
-                if coll_name not in self._source.collection_names:
-                    continue
-
-                vc = self._source.collection(coll_name)
-                effective_ctx = vc.obs._effective_ctx()
-                expr = self._collection_filters[coll_name]
-
-                # Query with attribute filter, only request obs_subject_id dimension
-                with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
-                    result = arr.query(cond=expr, dims=["obs_subject_id"], attrs=[])[:]
-                    subject_ids = result["obs_subject_id"]
-                    for sid in subject_ids:
-                        s = sid.decode() if isinstance(sid, bytes) else str(sid)
-                        if s in subject_mask:
-                            subjects_with_matching_volumes.add(s)
-
-            subject_mask = subject_mask & frozenset(subjects_with_matching_volumes)
-
-        return subject_mask
-
-    def _resolve_output_collections(self) -> tuple[str, ...]:
-        """Resolve which collections to include in output."""
-        if self._output_collections is not None:
-            return tuple(
-                name for name in self._source.collection_names if name in self._output_collections
-            )
-        return self._source.collection_names
-
-    # =========================================================================
-    # MATERIALIZATION (triggers data access)
-    # =========================================================================
 
     def count(self) -> QueryCount:
         """Count subjects and volumes matching the query without loading volume data."""
@@ -516,31 +406,129 @@ class Query:
 
         return RadiObject(uri, ctx=ctx)
 
-    def __len__(self) -> int:
-        """Number of subjects matching the query."""
-        return len(self._resolve_final_subject_mask())
-
-    def __repr__(self) -> str:
-        """Concise representation of the Query."""
-        count = self.count()
-        collections = ", ".join(count.n_volumes.keys())
-        return (
-            f"Query({count.n_subjects} subjects, "
-            f"{sum(count.n_volumes.values())} volumes across [{collections}])"
+    def _copy(self, **kwargs) -> Query:
+        """Create a copy with modified fields."""
+        return Query(
+            self._source,
+            subject_ids=kwargs.get("subject_ids", self._subject_ids),
+            subject_query=kwargs.get("subject_query", self._subject_query),
+            collection_filters=kwargs.get("collection_filters", self._collection_filters),
+            output_collections=kwargs.get("output_collections", self._output_collections),
+            transform_fn=kwargs.get("transform_fn", self._transform_fn),
         )
+
+    def _resolve_subject_mask(self) -> frozenset[str]:
+        """Resolve subject-level filters to a set of obs_subject_ids.
+
+        This applies:
+        1. Explicit subject_ids filter
+        2. Query expression on obs_meta
+        """
+        all_ids = set(self._source.obs_subject_ids)
+
+        # Apply explicit subject_ids filter
+        if self._subject_ids is not None:
+            all_ids &= self._subject_ids
+
+        # Apply query expression on obs_meta
+        if self._subject_query is not None:
+            filtered = self._source.obs_meta.read(value_filter=self._subject_query)
+            query_ids = set(filtered["obs_subject_id"])
+            all_ids &= query_ids
+
+        return frozenset(all_ids)
+
+    def _resolve_volume_mask(
+        self, collection_name: str, subject_mask: frozenset[str]
+    ) -> frozenset[str]:
+        """Resolve volume-level filters to a set of obs_ids for a collection.
+
+        Uses TileDB dimension slicing for efficient subject filtering,
+        combined with QueryCondition for attribute filters.
+        """
+        vc = self._source.collection(collection_name)
+        effective_ctx = vc.obs._effective_ctx()
+
+        # Build query with dimension slicing for subject_mask
+        with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
+            # Use multi-index for efficient dimension-based filtering
+            subject_list = list(subject_mask) if subject_mask else None
+
+            if subject_list:
+                # Query only rows matching subject_mask using dimension slicing
+                query = arr.query(dims=["obs_subject_id", "obs_id"])
+                if collection_name in self._collection_filters:
+                    query = query.cond(self._collection_filters[collection_name])
+                result = query.multi_index[subject_list, :]
+            else:
+                # No subject filter - apply attribute filter only
+                if collection_name in self._collection_filters:
+                    result = arr.query(cond=self._collection_filters[collection_name])[:]
+                else:
+                    result = arr.query(attrs=[])[:]["obs_id"]
+                    return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in result)
+
+            obs_ids = result["obs_id"]
+            return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
+
+    def _resolve_final_subject_mask(self) -> frozenset[str]:
+        """Resolve to final subject mask after applying all filters.
+
+        Uses TileDB dimension queries to efficiently find subjects with matching volumes.
+        """
+        subject_mask = self._resolve_subject_mask()
+
+        # If there are collection filters, further filter subjects
+        # to only those with matching volumes
+        if self._collection_filters:
+            subjects_with_matching_volumes = set()
+
+            for coll_name in self._collection_filters:
+                if coll_name not in self._source.collection_names:
+                    continue
+
+                vc = self._source.collection(coll_name)
+                effective_ctx = vc.obs._effective_ctx()
+                expr = self._collection_filters[coll_name]
+
+                # Query with attribute filter, only request obs_subject_id dimension
+                with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
+                    result = arr.query(cond=expr, dims=["obs_subject_id"], attrs=[])[:]
+                    subject_ids = result["obs_subject_id"]
+                    for sid in subject_ids:
+                        s = sid.decode() if isinstance(sid, bytes) else str(sid)
+                        if s in subject_mask:
+                            subjects_with_matching_volumes.add(s)
+
+            subject_mask = subject_mask & frozenset(subjects_with_matching_volumes)
+
+        return subject_mask
+
+    def _resolve_output_collections(self) -> tuple[str, ...]:
+        """Resolve which collections to include in output."""
+        if self._output_collections is not None:
+            return tuple(
+                name for name in self._source.collection_names if name in self._output_collections
+            )
+        return self._source.collection_names
 
 
 class CollectionQuery:
     """Lazy filter builder for VolumeCollection with explicit materialization.
 
+    Use `.lazy()` to enter lazy mode, then chain `.filter()`, `.head()`, `.map()`,
+    and `.materialize()` to build and execute a transform pipeline.
+
     Example:
-        high_res = (
-            radi.T1w.lazy()
-            .filter("voxel_spacing == '1.0x1.0x1.0'")
-            .head(100)
-            .map(normalize)
-            .materialize("./output")
-        )
+        Filter and materialize high-resolution volumes:
+
+            high_res = (
+                radi.T1w.lazy()
+                .filter("voxel_spacing == '1.0x1.0x1.0'")
+                .head(100)
+                .map(normalize)
+                .materialize("./output")
+            )
     """
 
     def __init__(
@@ -558,19 +546,16 @@ class CollectionQuery:
         self._subject_ids = subject_ids
         self._transform_fn = transform_fn
 
-    def _copy(self, **kwargs) -> CollectionQuery:
-        """Create a copy with modified fields."""
-        return CollectionQuery(
-            self._source,
-            volume_ids=kwargs.get("volume_ids", self._volume_ids),
-            volume_query=kwargs.get("volume_query", self._volume_query),
-            subject_ids=kwargs.get("subject_ids", self._subject_ids),
-            transform_fn=kwargs.get("transform_fn", self._transform_fn),
-        )
+    def __len__(self) -> int:
+        """Number of volumes matching the query."""
+        return len(self._resolve_volume_mask())
 
-    # =========================================================================
-    # FILTER METHODS
-    # =========================================================================
+    def __repr__(self) -> str:
+        """Concise representation of the CollectionQuery."""
+        n = len(self)
+        name = self._source.name or "unnamed"
+        shape = "x".join(str(d) for d in self._source.shape)
+        return f"CollectionQuery('{name}', {n} volumes, shape={shape})"
 
     def filter(self, expr: str) -> CollectionQuery:
         """Filter volumes using TileDB QueryCondition on obs."""
@@ -638,10 +623,6 @@ class CollectionQuery:
         sampled = rng.choice(resolved, size=n, replace=False)
         return self._copy(volume_ids=frozenset(sampled))
 
-    # =========================================================================
-    # TRANSFORM (applied during materialization)
-    # =========================================================================
-
     def map(self, fn: TransformFn) -> CollectionQuery:
         """Apply transform to each volume during materialization.
 
@@ -659,43 +640,6 @@ class CollectionQuery:
 
             return self._copy(transform_fn=composed_fn)
         return self._copy(transform_fn=fn)
-
-    # =========================================================================
-    # MASK RESOLUTION
-    # =========================================================================
-
-    def _resolve_volume_mask(self) -> frozenset[str]:
-        """Resolve all filters to a set of obs_ids using TileDB-native queries."""
-        effective_ctx = self._source.obs._effective_ctx()
-
-        with tiledb.open(self._source.obs.uri, "r", ctx=effective_ctx) as arr:
-            # Build query based on filters
-            if self._subject_ids is not None and self._volume_query is not None:
-                # Both subject and attribute filters - use dimension slicing + QueryCondition
-                query = arr.query(cond=self._volume_query, dims=["obs_id"])
-                result = query.multi_index[list(self._subject_ids), :]
-            elif self._subject_ids is not None:
-                # Subject filter only - use dimension slicing
-                result = arr.query(dims=["obs_id"]).multi_index[list(self._subject_ids), :]
-            elif self._volume_query is not None:
-                # Attribute filter only - use QueryCondition
-                result = arr.query(cond=self._volume_query, dims=["obs_id"])[:]
-            else:
-                # No filters - return all obs_ids
-                result = arr.query(dims=["obs_id"], attrs=[])[:]
-
-            obs_ids = result["obs_id"]
-            all_ids = frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
-
-        # Apply explicit volume_ids filter (intersection with pre-specified IDs)
-        if self._volume_ids is not None:
-            all_ids &= self._volume_ids
-
-        return all_ids
-
-    # =========================================================================
-    # MATERIALIZATION
-    # =========================================================================
 
     def count(self) -> int:
         """Count volumes matching the query."""
@@ -776,13 +720,41 @@ class CollectionQuery:
 
         return self._source.__class__(uri, ctx=ctx)
 
-    def __len__(self) -> int:
-        """Number of volumes matching the query."""
-        return len(self._resolve_volume_mask())
+    def _copy(self, **kwargs) -> CollectionQuery:
+        """Create a copy with modified fields."""
+        return CollectionQuery(
+            self._source,
+            volume_ids=kwargs.get("volume_ids", self._volume_ids),
+            volume_query=kwargs.get("volume_query", self._volume_query),
+            subject_ids=kwargs.get("subject_ids", self._subject_ids),
+            transform_fn=kwargs.get("transform_fn", self._transform_fn),
+        )
 
-    def __repr__(self) -> str:
-        """Concise representation of the CollectionQuery."""
-        n = len(self)
-        name = self._source.name or "unnamed"
-        shape = "x".join(str(d) for d in self._source.shape)
-        return f"CollectionQuery('{name}', {n} volumes, shape={shape})"
+    def _resolve_volume_mask(self) -> frozenset[str]:
+        """Resolve all filters to a set of obs_ids using TileDB-native queries."""
+        effective_ctx = self._source.obs._effective_ctx()
+
+        with tiledb.open(self._source.obs.uri, "r", ctx=effective_ctx) as arr:
+            # Build query based on filters
+            if self._subject_ids is not None and self._volume_query is not None:
+                # Both subject and attribute filters - use dimension slicing + QueryCondition
+                query = arr.query(cond=self._volume_query, dims=["obs_id"])
+                result = query.multi_index[list(self._subject_ids), :]
+            elif self._subject_ids is not None:
+                # Subject filter only - use dimension slicing
+                result = arr.query(dims=["obs_id"]).multi_index[list(self._subject_ids), :]
+            elif self._volume_query is not None:
+                # Attribute filter only - use QueryCondition
+                result = arr.query(cond=self._volume_query, dims=["obs_id"])[:]
+            else:
+                # No filters - return all obs_ids
+                result = arr.query(dims=["obs_id"], attrs=[])[:]
+
+            obs_ids = result["obs_id"]
+            all_ids = frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
+
+        # Apply explicit volume_ids filter (intersection with pre-specified IDs)
+        if self._volume_ids is not None:
+            all_ids &= self._volume_ids
+
+        return all_ids

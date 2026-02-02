@@ -21,21 +21,23 @@ if TYPE_CHECKING:
 class StreamingWriter:
     """Write volumes incrementally without full memory load.
 
-    Context manager that creates a VolumeCollection and writes volumes
+    Context manager that creates a `VolumeCollection` and writes volumes
     one at a time, keeping memory usage bounded.
 
-    Example:
-        # Uniform shape collection
-        with StreamingWriter(uri, shape=(256, 256, 128)) as writer:
-            for nifti_path, subject_id in niftis:
-                data = load_nifti(nifti_path)
-                writer.write_volume(data, obs_id=f"{subject_id}_T1w", obs_subject_id=subject_id)
+    Examples:
+        Uniform shape collection:
 
-        # Heterogeneous shape collection (raw ingestion)
-        with StreamingWriter(uri) as writer:
-            for nifti_path, subject_id in niftis:
-                data = load_nifti(nifti_path)
-                writer.write_volume(data, obs_id=f"{subject_id}_T1w", obs_subject_id=subject_id)
+            with StreamingWriter(uri, shape=(256, 256, 128)) as writer:
+                for nifti_path, subject_id in niftis:
+                    data = load_nifti(nifti_path)
+                    writer.write_volume(data, obs_id=f"{subject_id}_T1w", obs_subject_id=subject_id)
+
+        Heterogeneous shape collection (raw ingestion):
+
+            with StreamingWriter(uri) as writer:
+                for nifti_path, subject_id in niftis:
+                    data = load_nifti(nifti_path)
+                    writer.write_volume(data, obs_id=f"{subject_id}_T1w", obs_subject_id=subject_id)
     """
 
     def __init__(
@@ -55,9 +57,6 @@ class StreamingWriter:
         self._obs_rows: list[dict[str, AttrValue]] = []
         self._initialized = False
         self._finalized = False
-
-    def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
 
     def __enter__(self) -> StreamingWriter:
         """Initialize the VolumeCollection structure."""
@@ -89,6 +88,44 @@ class StreamingWriter:
 
         self._initialized = True
         return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Finalize collection and write obs metadata."""
+        if self._finalized:
+            return
+
+        if exc_type is not None:
+            # Exception occurred, don't finalize
+            return
+
+        effective_ctx = self._effective_ctx()
+
+        # Write obs data
+        if self._obs_rows:
+            obs_uri = f"{self.uri}/obs"
+            obs_df = pd.DataFrame(self._obs_rows)
+
+            obs_subject_ids = obs_df["obs_subject_id"].astype(str).to_numpy()
+            obs_ids = obs_df["obs_id"].astype(str).to_numpy()
+
+            with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
+                attr_data = {
+                    col: obs_df[col].to_numpy()
+                    for col in obs_df.columns
+                    if col not in ("obs_subject_id", "obs_id")
+                }
+                arr[obs_subject_ids, obs_ids] = attr_data
+
+        # Update final volume count
+        with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
+            grp.meta["n_volumes"] = self._volume_count
+
+        self._finalized = True
+
+    @property
+    def n_written(self) -> int:
+        """Number of volumes written so far."""
+        return self._volume_count
 
     def write_volume(
         self,
@@ -145,43 +182,8 @@ class StreamingWriter:
         for data, obs_id, obs_subject_id, attrs in volumes:
             self.write_volume(data, obs_id, obs_subject_id, **attrs)
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Finalize collection and write obs metadata."""
-        if self._finalized:
-            return
-
-        if exc_type is not None:
-            # Exception occurred, don't finalize
-            return
-
-        effective_ctx = self._effective_ctx()
-
-        # Write obs data
-        if self._obs_rows:
-            obs_uri = f"{self.uri}/obs"
-            obs_df = pd.DataFrame(self._obs_rows)
-
-            obs_subject_ids = obs_df["obs_subject_id"].astype(str).to_numpy()
-            obs_ids = obs_df["obs_id"].astype(str).to_numpy()
-
-            with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-                attr_data = {
-                    col: obs_df[col].to_numpy()
-                    for col in obs_df.columns
-                    if col not in ("obs_subject_id", "obs_id")
-                }
-                arr[obs_subject_ids, obs_ids] = attr_data
-
-        # Update final volume count
-        with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["n_volumes"] = self._volume_count
-
-        self._finalized = True
-
-    @property
-    def n_written(self) -> int:
-        """Number of volumes written so far."""
-        return self._volume_count
+    def _effective_ctx(self) -> tiledb.Ctx:
+        return self._ctx if self._ctx else global_ctx()
 
 
 class RadiObjectWriter:
@@ -218,9 +220,6 @@ class RadiObjectWriter:
         self._finalized = False
         self._all_obs_ids: set[str] = set()  # Track obs_ids across all collections
 
-    def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
-
     def __enter__(self) -> RadiObjectWriter:
         """Initialize the RadiObject structure."""
         if self._initialized:
@@ -248,6 +247,27 @@ class RadiObjectWriter:
 
         self._initialized = True
         return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Finalize the RadiObject by updating metadata."""
+        if self._finalized:
+            return
+
+        if exc_type is not None:
+            return
+
+        effective_ctx = self._effective_ctx()
+
+        with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
+            grp.meta["subject_count"] = self._subject_count
+            grp.meta["n_collections"] = len(self._collection_names)
+
+        self._finalized = True
+
+    @property
+    def collection_names(self) -> list[str]:
+        """Names of collections added so far."""
+        return list(self._collection_names)
 
     def write_obs_meta(self, df: pd.DataFrame) -> None:
         """Write subject-level metadata.
@@ -310,31 +330,6 @@ class RadiObjectWriter:
         )
         return writer
 
-    def _register_collection(self, name: str, uri: str) -> None:
-        """Internal: register a completed collection."""
-        effective_ctx = self._effective_ctx()
-
-        with tiledb.Group(f"{self.uri}/collections", "w", ctx=effective_ctx) as grp:
-            grp.add(uri, name=name)
-
-        self._collection_names.append(name)
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Finalize the RadiObject by updating metadata."""
-        if self._finalized:
-            return
-
-        if exc_type is not None:
-            return
-
-        effective_ctx = self._effective_ctx()
-
-        with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["subject_count"] = self._subject_count
-            grp.meta["n_collections"] = len(self._collection_names)
-
-        self._finalized = True
-
     def finalize(self) -> RadiObject:
         """Finalize and return the created RadiObject."""
         from radiobject.radi_object import RadiObject
@@ -344,10 +339,17 @@ class RadiObjectWriter:
 
         return RadiObject(self.uri, ctx=self._ctx)
 
-    @property
-    def collection_names(self) -> list[str]:
-        """Names of collections added so far."""
-        return list(self._collection_names)
+    def _effective_ctx(self) -> tiledb.Ctx:
+        return self._ctx if self._ctx else global_ctx()
+
+    def _register_collection(self, name: str, uri: str) -> None:
+        """Internal: register a completed collection."""
+        effective_ctx = self._effective_ctx()
+
+        with tiledb.Group(f"{self.uri}/collections", "w", ctx=effective_ctx) as grp:
+            grp.add(uri, name=name)
+
+        self._collection_names.append(name)
 
 
 class _CollectionStreamingWriter(StreamingWriter):

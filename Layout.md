@@ -4,6 +4,7 @@
 RadiObject/
 ├── .github/
 │   └── workflows/
+│       ├── docs.yml                   # GitHub Actions workflow for GitHub Pages docs
 │       └── publish.yml                # GitHub Actions workflow for PyPI publishing
 ├── .gitignore
 ├── .python-version
@@ -128,5 +129,6 @@ RadiObject/
 - `__pycache__/` - Python bytecode cache
 - `.pytest_cache/` - Pytest cache
 - `.ruff_cache/` - Ruff linter cache
+- `site/` - MkDocs build output
 - `data/` - Local cached datasets (gitignored)
 - `~/.cache/radiobject/` - User's local cache for downloaded datasets

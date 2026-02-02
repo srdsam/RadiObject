@@ -164,118 +164,6 @@ class VolumeCollection:
         self._source: VolumeCollection | None = _source
         self._volume_ids: frozenset[str] | None = _volume_ids
 
-    @property
-    def uri(self) -> str:
-        """URI of the underlying storage (raises if view without storage)."""
-        if self._uri is not None:
-            return self._uri
-        if self._source is not None:
-            return self._source.uri
-        raise ValueError("VolumeCollection view has no URI. Call materialize(uri) first.")
-
-    @property
-    def is_view(self) -> bool:
-        """True if this VolumeCollection is a filtered view of another."""
-        return self._source is not None
-
-    @property
-    def _root(self) -> VolumeCollection:
-        """The original attached VolumeCollection (follows source chain)."""
-        return self._source._root if self._source else self
-
-    def _check_not_view(self, operation: str) -> None:
-        """Raise if this is a view (views are immutable)."""
-        if self.is_view:
-            raise TypeError(f"Cannot {operation} on a view. Call materialize(uri) first.")
-
-    def _create_view(self, volume_ids: frozenset[str]) -> VolumeCollection:
-        """Create a view with the given volume IDs, intersecting with current filter."""
-        if self._volume_ids is not None:
-            volume_ids = self._volume_ids & volume_ids
-        return VolumeCollection(
-            uri=None,
-            ctx=self._ctx,
-            _source=self._root,
-            _volume_ids=volume_ids,
-        )
-
-    @property
-    def _effective_obs_ids(self) -> list[str]:
-        """Get the list of obs_ids for this collection (filtered if view)."""
-        root = self._root
-        all_ids = list(root._index.keys)
-        if self._volume_ids is not None:
-            return [obs_id for obs_id in all_ids if obs_id in self._volume_ids]
-        return all_ids
-
-    def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
-
-    def copy(self) -> VolumeCollection:
-        """Create detached copy of this collection (views remain views)."""
-        if self.is_view:
-            return VolumeCollection(
-                uri=None,
-                ctx=self._ctx,
-                _source=self._root,
-                _volume_ids=self._volume_ids,
-            )
-        return VolumeCollection(self._uri, ctx=self._ctx)
-
-    @cached_property
-    def iloc(self) -> _ILocIndexer:
-        """Integer-location based indexing for selecting volumes by position."""
-        return _ILocIndexer(self)
-
-    @cached_property
-    def loc(self) -> _LocIndexer:
-        """Label-based indexing for selecting volumes by obs_id."""
-        return _LocIndexer(self)
-
-    @property
-    def obs(self) -> Dataframe:
-        """Observational metadata per volume."""
-        obs_uri = f"{self._root.uri}/obs"
-        return Dataframe(uri=obs_uri, ctx=self._ctx)
-
-    @cached_property
-    def _metadata(self) -> dict:
-        """Cached group metadata."""
-        with tiledb.Group(self._root.uri, "r", ctx=self._effective_ctx()) as grp:
-            return dict(grp.meta)
-
-    @cached_property
-    def _index(self) -> Index:
-        """Cached bidirectional index for obs_id lookups."""
-        n = self._metadata["n_volumes"]
-        if n == 0:
-            return Index.build([])
-        obs_data = self.obs.read()
-        return Index.build(list(obs_data["obs_id"]))
-
-    @property
-    def index(self) -> Index:
-        """Volume index for bidirectional ID/position lookups."""
-        return self._index
-
-    @property
-    def name(self) -> str | None:
-        """Collection name (if set during creation)."""
-        return self._metadata.get("name")
-
-    @property
-    def shape(self) -> tuple[int, int, int] | None:
-        """Volume dimensions (X, Y, Z) if uniform, None if heterogeneous."""
-        m = self._metadata
-        if "x_dim" not in m or "y_dim" not in m or "z_dim" not in m:
-            return None
-        return (int(m["x_dim"]), int(m["y_dim"]), int(m["z_dim"]))
-
-    @property
-    def is_uniform(self) -> bool:
-        """Whether all volumes in this collection have the same shape."""
-        return self.shape is not None
-
     def __len__(self) -> int:
         """Number of volumes in collection (respects view filter)."""
         if self._volume_ids is not None:
@@ -294,28 +182,6 @@ class VolumeCollection:
         name_part = f"'{self.name}', " if self.name else ""
         view_part = ", view" if self.is_view else ""
         return f"VolumeCollection({name_part}{len(self)} volumes, shape={shape_str}{view_part})"
-
-    @property
-    def obs_ids(self) -> list[str]:
-        """All obs_id values in index order (respects view filter)."""
-        return self._effective_obs_ids
-
-    @property
-    def obs_subject_ids(self) -> list[str]:
-        """Get obs_subject_id values for this collection (respects view filter)."""
-        obs_df = self.obs.read()
-        if self._volume_ids is not None:
-            obs_df = obs_df[obs_df["obs_id"].isin(self._volume_ids)]
-        # Maintain order consistent with obs_ids
-        effective_ids = self._effective_obs_ids
-        id_to_subject = dict(zip(obs_df["obs_id"], obs_df["obs_subject_id"]))
-        return [id_to_subject[obs_id] for obs_id in effective_ids]
-
-    def get_obs_row_by_obs_id(self, obs_id: str) -> pd.DataFrame:
-        """Get observation row by obs_id string identifier."""
-        df = self.obs.read()
-        filtered = df[df["obs_id"] == obs_id].reset_index(drop=True)
-        return filtered
 
     @overload
     def __getitem__(self, key: int) -> Volume: ...
@@ -347,52 +213,85 @@ class VolumeCollection:
                 return self.loc[key]
         raise TypeError(f"Key must be int, str, slice, or list, got {type(key)}")
 
-    def validate(self) -> None:
-        """Validate internal consistency of obs vs volume metadata."""
-        self._check_not_view("validate")
+    @property
+    def uri(self) -> str:
+        """URI of the underlying storage (raises if view without storage)."""
+        if self._uri is not None:
+            return self._uri
+        if self._source is not None:
+            return self._source.uri
+        raise ValueError("VolumeCollection view has no URI. Call materialize(uri) first.")
 
-        obs_data = self.obs.read()
-        obs_ids_in_dataframe = set(obs_data["obs_id"])
+    @property
+    def is_view(self) -> bool:
+        """True if this VolumeCollection is a filtered view of another."""
+        return self._source is not None
 
-        # Check each volume's obs_id against obs dataframe
-        obs_ids_in_volumes = set()
-        for i in range(len(self)):
-            vol = self.iloc[i]
-            if vol.obs_id is None:
-                raise ValueError(f"Volume at index {i} lacks required obs_id metadata")
-            obs_ids_in_volumes.add(vol.obs_id)
+    @property
+    def shape(self) -> tuple[int, int, int] | None:
+        """Volume dimensions (X, Y, Z) if uniform, None if heterogeneous."""
+        m = self._metadata
+        if "x_dim" not in m or "y_dim" not in m or "z_dim" not in m:
+            return None
+        return (int(m["x_dim"]), int(m["y_dim"]), int(m["z_dim"]))
 
-            expected_obs_id = obs_data.iloc[i]["obs_id"]
-            if vol.obs_id != expected_obs_id:
-                raise ValueError(
-                    f"Position mismatch at index {i}: "
-                    f"volume.obs_id={vol.obs_id}, obs.iloc[{i}]={expected_obs_id}"
-                )
+    @property
+    def is_uniform(self) -> bool:
+        """Whether all volumes in this collection have the same shape."""
+        return self.shape is not None
 
-        missing_in_obs = obs_ids_in_volumes - obs_ids_in_dataframe
-        if missing_in_obs:
-            raise ValueError(f"Volumes without obs rows: {list(missing_in_obs)[:5]}")
+    @property
+    def name(self) -> str | None:
+        """Collection name (if set during creation)."""
+        return self._metadata.get("name")
 
-        orphan_obs = obs_ids_in_dataframe - obs_ids_in_volumes
-        if orphan_obs:
-            raise ValueError(f"Obs rows without volumes: {list(orphan_obs)[:5]}")
+    @property
+    def obs(self) -> Dataframe:
+        """Observational metadata per volume."""
+        obs_uri = f"{self._root.uri}/obs"
+        return Dataframe(uri=obs_uri, ctx=self._ctx)
 
-        with tiledb.Group(f"{self._root.uri}/volumes", "r", ctx=self._effective_ctx()) as grp:
-            actual_count = len(list(grp))
-        if actual_count != self._metadata["n_volumes"]:
-            raise ValueError(
-                f"n_volumes mismatch: metadata={self._metadata['n_volumes']}, actual={actual_count}"
-            )
+    @property
+    def obs_ids(self) -> list[str]:
+        """All obs_id values in index order (respects view filter)."""
+        return self._effective_obs_ids
 
-    # ===== Lazy Mode (Transform Pipelines) =====
+    @property
+    def obs_subject_ids(self) -> list[str]:
+        """Get obs_subject_id values for this collection (respects view filter)."""
+        obs_df = self.obs.read()
+        if self._volume_ids is not None:
+            obs_df = obs_df[obs_df["obs_id"].isin(self._volume_ids)]
+        # Maintain order consistent with obs_ids
+        effective_ids = self._effective_obs_ids
+        id_to_subject = dict(zip(obs_df["obs_id"], obs_df["obs_subject_id"]))
+        return [id_to_subject[obs_id] for obs_id in effective_ids]
 
-    def lazy(self) -> CollectionQuery:
-        """Enter lazy mode for transform pipelines via map()."""
-        from radiobject.query import CollectionQuery
+    @property
+    def index(self) -> Index:
+        """Volume index for bidirectional ID/position lookups."""
+        return self._index
 
-        return CollectionQuery(self._root, volume_ids=self._volume_ids)
+    @cached_property
+    def iloc(self) -> _ILocIndexer:
+        """Integer-location based indexing for selecting volumes by position."""
+        return _ILocIndexer(self)
 
-    # ===== Filtering Methods (Return Views) =====
+    @cached_property
+    def loc(self) -> _LocIndexer:
+        """Label-based indexing for selecting volumes by obs_id."""
+        return _LocIndexer(self)
+
+    def get_obs_row_by_obs_id(self, obs_id: str) -> pd.DataFrame:
+        """Get observation row by obs_id string identifier."""
+        df = self.obs.read()
+        filtered = df[df["obs_id"] == obs_id].reset_index(drop=True)
+        return filtered
+
+    def filter(self, expr: str) -> VolumeCollection:
+        """Filter volumes using TileDB QueryCondition on obs. Returns view."""
+        matching_ids = self._resolve_filter(expr)
+        return self._create_view(volume_ids=matching_ids)
 
     def head(self, n: int = 5) -> VolumeCollection:
         """Return view of first n volumes."""
@@ -411,32 +310,15 @@ class VolumeCollection:
         sampled = rng.choice(obs_ids, size=n, replace=False)
         return self._create_view(volume_ids=frozenset(sampled))
 
-    def filter(self, expr: str) -> VolumeCollection:
-        """Filter volumes using TileDB QueryCondition on obs. Returns view."""
-        matching_ids = self._resolve_filter(expr)
-        return self._create_view(volume_ids=matching_ids)
+    def lazy(self) -> CollectionQuery:
+        """Enter lazy mode for transform pipelines via map()."""
+        from radiobject.query import CollectionQuery
 
-    def _resolve_filter(self, expr: str) -> frozenset[str]:
-        """Resolve filter expression to set of matching obs_ids."""
-        effective_ctx = self._effective_ctx()
-        obs_uri = f"{self._root.uri}/obs"
-
-        with tiledb.open(obs_uri, "r", ctx=effective_ctx) as arr:
-            result = arr.query(cond=expr, dims=["obs_id"])[:]
-            obs_ids = result["obs_id"]
-            matching = frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
-
-        # Intersect with current view filter
-        if self._volume_ids is not None:
-            matching = matching & self._volume_ids
-
-        return matching
+        return CollectionQuery(self._root, volume_ids=self._volume_ids)
 
     def map(self, fn: TransformFn) -> CollectionQuery:
         """Apply transform to all volumes during materialization. Returns lazy query."""
         return self.lazy().map(fn)
-
-    # ===== Materialization =====
 
     def materialize(
         self,
@@ -493,8 +375,6 @@ class VolumeCollection:
 
         return VolumeCollection(uri, ctx=effective_ctx)
 
-    # ===== ML Integration =====
-
     def to_dataset(
         self,
         patch_size: tuple[int, int, int] | None = None,
@@ -508,30 +388,32 @@ class VolumeCollection:
         Args:
             patch_size: If provided, extract random patches of this size.
             labels: Label source. Can be:
-                - str: Column name in this collection's obs DataFrame
-                - pd.DataFrame: With obs_id as column/index and label values
-                - dict[str, Any]: Mapping from obs_id to label
+                - str: Column name in this collection's `obs` DataFrame
+                - pd.DataFrame: With `obs_id` as column/index and label values
+                - dict[str, Any]: Mapping from `obs_id` to label
                 - None: No labels
             transform: Transform function applied to each sample.
                 MONAI dict transforms (e.g., RandFlipd) work directly.
 
         Returns:
-            VolumeCollectionDataset ready for use with DataLoader.
+            VolumeCollectionDataset ready for use with `DataLoader`.
 
-        Example::
+        Examples:
+            Full volumes with labels from obs column:
 
-            # Full volumes with labels from obs column
-            dataset = radi.CT.to_dataset(labels="has_tumor")
+                dataset = radi.CT.to_dataset(labels="has_tumor")
 
-            # Patch extraction
-            dataset = radi.CT.to_dataset(patch_size=(64, 64, 64), labels="grade")
+            Patch extraction:
 
-            # With MONAI transforms
-            from monai.transforms import NormalizeIntensityd
-            dataset = radi.CT.to_dataset(
-                labels="has_tumor",
-                transform=NormalizeIntensityd(keys="image"),
-            )
+                dataset = radi.CT.to_dataset(patch_size=(64, 64, 64), labels="grade")
+
+            With MONAI transforms:
+
+                from monai.transforms import NormalizeIntensityd
+                dataset = radi.CT.to_dataset(
+                    labels="has_tumor",
+                    transform=NormalizeIntensityd(keys="image"),
+                )
         """
         from radiobject.ml.config import DatasetConfig, LoadingMode
         from radiobject.ml.datasets.collection_dataset import VolumeCollectionDataset
@@ -541,7 +423,23 @@ class VolumeCollection:
 
         return VolumeCollectionDataset(self, config=config, labels=labels, transform=transform)
 
-    # ===== Append Operations =====
+    def to_obs(self) -> pd.DataFrame:
+        """Return obs DataFrame (respects view filter)."""
+        obs_df = self.obs.read()
+        if self._volume_ids is not None:
+            obs_df = obs_df[obs_df["obs_id"].isin(self._volume_ids)].reset_index(drop=True)
+        return obs_df
+
+    def copy(self) -> VolumeCollection:
+        """Create detached copy of this collection (views remain views)."""
+        if self.is_view:
+            return VolumeCollection(
+                uri=None,
+                ctx=self._ctx,
+                _source=self._root,
+                _volume_ids=self._volume_ids,
+            )
+        return VolumeCollection(self._uri, ctx=self._ctx)
 
     def append(
         self,
@@ -553,21 +451,23 @@ class VolumeCollection:
         """Append new volumes atomically.
 
         Volume data and obs metadata are written together to maintain consistency.
-        Cannot be called on views - use materialize() first.
+        Cannot be called on views - use `materialize()` first.
 
         Args:
-            niftis: List of (nifti_path, obs_subject_id) tuples
-            dicom_dirs: List of (dicom_dir, obs_subject_id) tuples
-            reorient: Reorient to canonical orientation (None uses config default)
-            progress: Show tqdm progress bar during volume writes
+            niftis: List of (nifti_path, obs_subject_id) tuples.
+            dicom_dirs: List of (dicom_dir, obs_subject_id) tuples.
+            reorient: Reorient to canonical orientation (None uses config default).
+            progress: Show tqdm progress bar during volume writes.
 
         Example:
-            radi.T1w.append(
-                niftis=[
-                    ("sub101_T1w.nii.gz", "sub-101"),
-                    ("sub102_T1w.nii.gz", "sub-102"),
-                ],
-            )
+            Append new NIfTI files:
+
+                radi.T1w.append(
+                    niftis=[
+                        ("sub101_T1w.nii.gz", "sub-101"),
+                        ("sub102_T1w.nii.gz", "sub-102"),
+                    ],
+                )
         """
         self._check_not_view("append")
 
@@ -588,6 +488,107 @@ class VolumeCollection:
         for prop in ("_index", "_metadata"):
             if prop in self.__dict__:
                 del self.__dict__[prop]
+
+    def validate(self) -> None:
+        """Validate internal consistency of obs vs volume metadata."""
+        self._check_not_view("validate")
+
+        obs_data = self.obs.read()
+        obs_ids_in_dataframe = set(obs_data["obs_id"])
+
+        # Check each volume's obs_id against obs dataframe
+        obs_ids_in_volumes = set()
+        for i in range(len(self)):
+            vol = self.iloc[i]
+            if vol.obs_id is None:
+                raise ValueError(f"Volume at index {i} lacks required obs_id metadata")
+            obs_ids_in_volumes.add(vol.obs_id)
+
+            expected_obs_id = obs_data.iloc[i]["obs_id"]
+            if vol.obs_id != expected_obs_id:
+                raise ValueError(
+                    f"Position mismatch at index {i}: "
+                    f"volume.obs_id={vol.obs_id}, obs.iloc[{i}]={expected_obs_id}"
+                )
+
+        missing_in_obs = obs_ids_in_volumes - obs_ids_in_dataframe
+        if missing_in_obs:
+            raise ValueError(f"Volumes without obs rows: {list(missing_in_obs)[:5]}")
+
+        orphan_obs = obs_ids_in_dataframe - obs_ids_in_volumes
+        if orphan_obs:
+            raise ValueError(f"Obs rows without volumes: {list(orphan_obs)[:5]}")
+
+        with tiledb.Group(f"{self._root.uri}/volumes", "r", ctx=self._effective_ctx()) as grp:
+            actual_count = len(list(grp))
+        if actual_count != self._metadata["n_volumes"]:
+            raise ValueError(
+                f"n_volumes mismatch: metadata={self._metadata['n_volumes']}, actual={actual_count}"
+            )
+
+    @property
+    def _root(self) -> VolumeCollection:
+        """The original attached VolumeCollection (follows source chain)."""
+        return self._source._root if self._source else self
+
+    @property
+    def _effective_obs_ids(self) -> list[str]:
+        """Get the list of obs_ids for this collection (filtered if view)."""
+        root = self._root
+        all_ids = list(root._index.keys)
+        if self._volume_ids is not None:
+            return [obs_id for obs_id in all_ids if obs_id in self._volume_ids]
+        return all_ids
+
+    @cached_property
+    def _metadata(self) -> dict:
+        """Cached group metadata."""
+        with tiledb.Group(self._root.uri, "r", ctx=self._effective_ctx()) as grp:
+            return dict(grp.meta)
+
+    @cached_property
+    def _index(self) -> Index:
+        """Cached bidirectional index for obs_id lookups."""
+        n = self._metadata["n_volumes"]
+        if n == 0:
+            return Index.build([])
+        obs_data = self.obs.read()
+        return Index.build(list(obs_data["obs_id"]))
+
+    def _effective_ctx(self) -> tiledb.Ctx:
+        return self._ctx if self._ctx else global_ctx()
+
+    def _check_not_view(self, operation: str) -> None:
+        """Raise if this is a view (views are immutable)."""
+        if self.is_view:
+            raise TypeError(f"Cannot {operation} on a view. Call materialize(uri) first.")
+
+    def _create_view(self, volume_ids: frozenset[str]) -> VolumeCollection:
+        """Create a view with the given volume IDs, intersecting with current filter."""
+        if self._volume_ids is not None:
+            volume_ids = self._volume_ids & volume_ids
+        return VolumeCollection(
+            uri=None,
+            ctx=self._ctx,
+            _source=self._root,
+            _volume_ids=volume_ids,
+        )
+
+    def _resolve_filter(self, expr: str) -> frozenset[str]:
+        """Resolve filter expression to set of matching obs_ids."""
+        effective_ctx = self._effective_ctx()
+        obs_uri = f"{self._root.uri}/obs"
+
+        with tiledb.open(obs_uri, "r", ctx=effective_ctx) as arr:
+            result = arr.query(cond=expr, dims=["obs_id"])[:]
+            obs_ids = result["obs_id"]
+            matching = frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
+
+        # Intersect with current view filter
+        if self._volume_ids is not None:
+            matching = matching & self._volume_ids
+
+        return matching
 
     def _append_niftis(
         self,
@@ -768,132 +769,6 @@ class VolumeCollection:
             grp.meta["n_volumes"] = new_count
 
     @classmethod
-    def _create(
-        cls,
-        uri: str,
-        shape: tuple[int, int, int] | None = None,
-        obs_schema: dict[str, np.dtype] | None = None,
-        n_volumes: int = 0,
-        name: str | None = None,
-        ctx: tiledb.Ctx | None = None,
-    ) -> VolumeCollection:
-        """Internal: create empty collection with optional uniform dimensions.
-
-        Args:
-            uri: Target URI for the collection
-            shape: If provided, enforces uniform dimensions. If None, allows heterogeneous shapes.
-            obs_schema: Schema for volume-level obs attributes
-            n_volumes: Initial volume count (usually 0)
-            name: Collection name
-            ctx: TileDB context
-        """
-        effective_ctx = ctx if ctx else global_ctx()
-
-        tiledb.Group.create(uri, ctx=effective_ctx)
-
-        volumes_uri = f"{uri}/volumes"
-        tiledb.Group.create(volumes_uri, ctx=effective_ctx)
-
-        obs_uri = f"{uri}/obs"
-        Dataframe.create(obs_uri, schema=obs_schema or {}, ctx=ctx)
-
-        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            if shape is not None:
-                grp.meta["x_dim"] = shape[0]
-                grp.meta["y_dim"] = shape[1]
-                grp.meta["z_dim"] = shape[2]
-            grp.meta["n_volumes"] = n_volumes
-            if name is not None:
-                grp.meta["name"] = name
-            grp.add(volumes_uri, name="volumes")
-            grp.add(obs_uri, name="obs")
-
-        return cls(uri, ctx=ctx)
-
-    @classmethod
-    def _from_volumes(
-        cls,
-        uri: str,
-        volumes: Sequence[tuple[str, Volume]],
-        obs_data: pd.DataFrame | None = None,
-        name: str | None = None,
-        ctx: tiledb.Ctx | None = None,
-    ) -> VolumeCollection:
-        """Internal: create collection from existing volumes (write-once)."""
-        if not volumes:
-            raise ValueError("At least one volume is required")
-
-        first_shape = volumes[0][1].shape[:3]
-        for obs_id, vol in volumes:
-            if vol.shape[:3] != first_shape:
-                raise ValueError(
-                    f"Volume '{obs_id}' has shape {vol.shape[:3]}, expected {first_shape}"
-                )
-
-        effective_ctx = ctx if ctx else global_ctx()
-
-        obs_schema = None
-        if obs_data is not None:
-            obs_schema = {}
-            for col in obs_data.columns:
-                if col in ("obs_id", "obs_subject_id"):
-                    continue
-                dtype = obs_data[col].to_numpy().dtype
-                if dtype == np.dtype("O"):
-                    dtype = np.dtype("U64")
-                obs_schema[col] = dtype
-
-        cls._create(
-            uri,
-            shape=first_shape,
-            obs_schema=obs_schema,
-            n_volumes=len(volumes),
-            name=name,
-            ctx=ctx,
-        )
-
-        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["n_volumes"] = len(volumes)
-
-        def write_volume(args: tuple[int, str, Volume]) -> WriteResult:
-            idx, obs_id, vol = args
-            worker_ctx = create_worker_ctx(ctx)
-            volume_uri = f"{uri}/volumes/{idx}"
-            try:
-                data = vol.to_numpy()
-                new_vol = Volume.from_numpy(volume_uri, data, ctx=worker_ctx)
-                new_vol.set_obs_id(obs_id)
-                return WriteResult(idx, volume_uri, obs_id, success=True)
-            except Exception as e:
-                return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
-
-        write_args = [(idx, obs_id, vol) for idx, (obs_id, vol) in enumerate(volumes)]
-        results = _write_volumes_parallel(
-            write_volume, write_args, progress=False, desc="Writing volumes"
-        )
-
-        with tiledb.Group(f"{uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
-            for result in results:
-                vol_grp.add(result.uri, name=str(result.index))
-
-        obs_ids = np.array([obs_id for obs_id, _ in volumes])
-        if obs_data is not None and "obs_subject_id" in obs_data.columns:
-            obs_subject_ids = obs_data["obs_subject_id"].astype(str).to_numpy()
-        else:
-            obs_subject_ids = obs_ids.copy()
-
-        obs_uri = f"{uri}/obs"
-        with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {}
-            if obs_data is not None:
-                for col in obs_data.columns:
-                    if col not in ("obs_id", "obs_subject_id"):
-                        attr_data[col] = obs_data[col].to_numpy()
-            arr[obs_subject_ids, obs_ids] = attr_data
-
-        return cls(uri, ctx=ctx)
-
-    @classmethod
     def from_niftis(
         cls,
         uri: str,
@@ -908,17 +783,17 @@ class VolumeCollection:
         """Create VolumeCollection from NIfTI files with full metadata capture.
 
         Args:
-            uri: Target URI for the VolumeCollection
-            niftis: List of (nifti_path, obs_subject_id) tuples
-            reorient: Reorient to canonical orientation (None uses config default)
-            validate_dimensions: Raise if dimensions are inconsistent
-            valid_subject_ids: Optional whitelist for FK validation
-            name: Collection name (stored in metadata)
-            ctx: TileDB context
-            progress: Show tqdm progress bar during volume writes
+            uri: Target URI for the VolumeCollection.
+            niftis: List of (nifti_path, obs_subject_id) tuples.
+            reorient: Reorient to canonical orientation (None uses config default).
+            validate_dimensions: Raise if dimensions are inconsistent.
+            valid_subject_ids: Optional whitelist for FK validation.
+            name: Collection name (stored in metadata).
+            ctx: TileDB context.
+            progress: Show tqdm progress bar during volume writes.
 
         Returns:
-            VolumeCollection with obs containing NIfTI metadata
+            VolumeCollection with obs containing NIfTI metadata.
         """
         if not niftis:
             raise ValueError("At least one NIfTI file is required")
@@ -1051,17 +926,17 @@ class VolumeCollection:
         """Create VolumeCollection from DICOM series with full metadata capture.
 
         Args:
-            uri: Target URI for the VolumeCollection
-            dicom_dirs: List of (dicom_dir, obs_subject_id) tuples
-            reorient: Reorient to canonical orientation (None uses config default)
-            validate_dimensions: Raise if dimensions are inconsistent
-            valid_subject_ids: Optional whitelist for FK validation
-            name: Collection name (stored in metadata)
-            ctx: TileDB context
-            progress: Show tqdm progress bar during volume writes
+            uri: Target URI for the VolumeCollection.
+            dicom_dirs: List of (dicom_dir, obs_subject_id) tuples.
+            reorient: Reorient to canonical orientation (None uses config default).
+            validate_dimensions: Raise if dimensions are inconsistent.
+            valid_subject_ids: Optional whitelist for FK validation.
+            name: Collection name (stored in metadata).
+            ctx: TileDB context.
+            progress: Show tqdm progress bar during volume writes.
 
         Returns:
-            VolumeCollection with obs containing DICOM metadata
+            VolumeCollection with obs containing DICOM metadata.
         """
         if not dicom_dirs:
             raise ValueError("At least one DICOM directory is required")
@@ -1177,6 +1052,132 @@ class VolumeCollection:
                 for col in obs_df.columns
                 if col not in ("obs_subject_id", "obs_id")
             }
+            arr[obs_subject_ids, obs_ids] = attr_data
+
+        return cls(uri, ctx=ctx)
+
+    @classmethod
+    def _create(
+        cls,
+        uri: str,
+        shape: tuple[int, int, int] | None = None,
+        obs_schema: dict[str, np.dtype] | None = None,
+        n_volumes: int = 0,
+        name: str | None = None,
+        ctx: tiledb.Ctx | None = None,
+    ) -> VolumeCollection:
+        """Internal: create empty collection with optional uniform dimensions.
+
+        Args:
+            uri: Target URI for the collection
+            shape: If provided, enforces uniform dimensions. If None, allows heterogeneous shapes.
+            obs_schema: Schema for volume-level obs attributes
+            n_volumes: Initial volume count (usually 0)
+            name: Collection name
+            ctx: TileDB context
+        """
+        effective_ctx = ctx if ctx else global_ctx()
+
+        tiledb.Group.create(uri, ctx=effective_ctx)
+
+        volumes_uri = f"{uri}/volumes"
+        tiledb.Group.create(volumes_uri, ctx=effective_ctx)
+
+        obs_uri = f"{uri}/obs"
+        Dataframe.create(obs_uri, schema=obs_schema or {}, ctx=ctx)
+
+        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
+            if shape is not None:
+                grp.meta["x_dim"] = shape[0]
+                grp.meta["y_dim"] = shape[1]
+                grp.meta["z_dim"] = shape[2]
+            grp.meta["n_volumes"] = n_volumes
+            if name is not None:
+                grp.meta["name"] = name
+            grp.add(volumes_uri, name="volumes")
+            grp.add(obs_uri, name="obs")
+
+        return cls(uri, ctx=ctx)
+
+    @classmethod
+    def _from_volumes(
+        cls,
+        uri: str,
+        volumes: Sequence[tuple[str, Volume]],
+        obs_data: pd.DataFrame | None = None,
+        name: str | None = None,
+        ctx: tiledb.Ctx | None = None,
+    ) -> VolumeCollection:
+        """Internal: create collection from existing volumes (write-once)."""
+        if not volumes:
+            raise ValueError("At least one volume is required")
+
+        first_shape = volumes[0][1].shape[:3]
+        for obs_id, vol in volumes:
+            if vol.shape[:3] != first_shape:
+                raise ValueError(
+                    f"Volume '{obs_id}' has shape {vol.shape[:3]}, expected {first_shape}"
+                )
+
+        effective_ctx = ctx if ctx else global_ctx()
+
+        obs_schema = None
+        if obs_data is not None:
+            obs_schema = {}
+            for col in obs_data.columns:
+                if col in ("obs_id", "obs_subject_id"):
+                    continue
+                dtype = obs_data[col].to_numpy().dtype
+                if dtype == np.dtype("O"):
+                    dtype = np.dtype("U64")
+                obs_schema[col] = dtype
+
+        cls._create(
+            uri,
+            shape=first_shape,
+            obs_schema=obs_schema,
+            n_volumes=len(volumes),
+            name=name,
+            ctx=ctx,
+        )
+
+        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
+            grp.meta["n_volumes"] = len(volumes)
+
+        def write_volume(args: tuple[int, str, Volume]) -> WriteResult:
+            idx, obs_id, vol = args
+            worker_ctx = create_worker_ctx(ctx)
+            volume_uri = f"{uri}/volumes/{idx}"
+            try:
+                data = vol.to_numpy()
+                new_vol = Volume.from_numpy(volume_uri, data, ctx=worker_ctx)
+                new_vol.set_obs_id(obs_id)
+                return WriteResult(idx, volume_uri, obs_id, success=True)
+            except Exception as e:
+                return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
+
+        write_args = [(idx, obs_id, vol) for idx, (obs_id, vol) in enumerate(volumes)]
+        results = _write_volumes_parallel(
+            write_volume, write_args, progress=False, desc="Writing volumes"
+        )
+
+        with tiledb.Group(f"{uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
+            for result in results:
+                vol_grp.add(result.uri, name=str(result.index))
+
+        obs_ids = np.array([obs_id for obs_id, _ in volumes])
+        if obs_data is not None and "obs_subject_id" in obs_data.columns:
+            obs_subject_ids = obs_data["obs_subject_id"].astype(str).to_numpy()
+        else:
+            obs_subject_ids = obs_ids.copy()
+
+        obs_uri = f"{uri}/obs"
+        with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
+            attr_data = {}
+            if obs_data is not None:
+                for col in obs_data.columns:
+                    if col not in ("obs_id", "obs_subject_id"):
+                        attr_data[col] = obs_data[col].to_numpy()
             arr[obs_subject_ids, obs_ids] = attr_data
 
         return cls(uri, ctx=ctx)
