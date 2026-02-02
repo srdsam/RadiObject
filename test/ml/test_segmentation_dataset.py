@@ -439,3 +439,168 @@ class TestViewBasedTraining:
         assert "image" in sample
         assert "mask" in sample
         assert sample["image"].shape == (1, 64, 64, 64)
+
+
+class TestOrientationConsistency:
+    """Tests for image/mask orientation consistency in segmentation datasets."""
+
+    def test_image_mask_orientation_match(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify image and mask volumes have matching orientation info."""
+        image_vc = segmentation_collections["image"]
+        mask_vc = segmentation_collections["mask"]
+
+        for i in range(len(image_vc)):
+            image_vol = image_vc.iloc[i]
+            mask_vol = mask_vc.iloc[i]
+
+            image_orient = image_vol.orientation_info
+            mask_orient = mask_vol.orientation_info
+
+            # Both should have orientation info (or both None for synthetic data)
+            if image_orient is not None and mask_orient is not None:
+                assert image_orient.axcodes == mask_orient.axcodes, (
+                    f"Volume {i}: Image orientation {image_orient.axcodes} "
+                    f"!= Mask orientation {mask_orient.axcodes}"
+                )
+
+    def test_image_mask_shape_consistency(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify image and mask volumes have identical shapes."""
+        image_vc = segmentation_collections["image"]
+        mask_vc = segmentation_collections["mask"]
+
+        for i in range(len(image_vc)):
+            image_vol = image_vc.iloc[i]
+            mask_vol = mask_vc.iloc[i]
+
+            assert (
+                image_vol.shape == mask_vol.shape
+            ), f"Volume {i}: Image shape {image_vol.shape} != Mask shape {mask_vol.shape}"
+
+    def test_patch_extraction_alignment(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify patches from same position are correctly aligned."""
+        image_vc = segmentation_collections["image"]
+        mask_vc = segmentation_collections["mask"]
+
+        image_vol = image_vc.iloc[0]
+        mask_vol = mask_vc.iloc[0]
+
+        # Extract same patch from both volumes
+        patch_start = (50, 50, 30)
+        patch_size = (32, 32, 32)
+
+        image_patch = image_vol.slice(
+            slice(patch_start[0], patch_start[0] + patch_size[0]),
+            slice(patch_start[1], patch_start[1] + patch_size[1]),
+            slice(patch_start[2], patch_start[2] + patch_size[2]),
+        )
+        mask_patch = mask_vol.slice(
+            slice(patch_start[0], patch_start[0] + patch_size[0]),
+            slice(patch_start[1], patch_start[1] + patch_size[1]),
+            slice(patch_start[2], patch_start[2] + patch_size[2]),
+        )
+
+        # Both patches should have the same shape
+        assert image_patch.shape == mask_patch.shape == patch_size
+
+        # Verify patches are from the same spatial region (not shifted/misaligned)
+        # For BraTS data, mask should be non-zero only where there's brain tissue
+        # If mask has foreground, image at same location should have values
+        if mask_patch.max() > 0:
+            mask_fg = mask_patch > 0
+            image_at_mask = image_patch[mask_fg]
+            # Image should have non-zero values where mask has foreground
+            # (this verifies spatial alignment - tumor is visible in image)
+            assert image_at_mask.max() > 0, "Image has no signal where mask indicates foreground"
+
+    def test_dataset_batch_orientation_consistency(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify batched samples maintain orientation consistency."""
+        from radiobject.ml.factory import create_segmentation_dataloader
+
+        loader = create_segmentation_dataloader(
+            image=segmentation_collections["image"],
+            mask=segmentation_collections["mask"],
+            batch_size=2,
+            patch_size=(32, 32, 32),
+            num_workers=0,
+        )
+
+        batch = next(iter(loader))
+
+        # Image and mask in batch should have same shape
+        assert batch["image"].shape == batch["mask"].shape
+
+        # Each sample in batch should have consistent dimensions
+        assert batch["image"].shape[0] == batch["mask"].shape[0] == 2  # batch size
+        assert batch["image"].shape[1] == batch["mask"].shape[1] == 1  # channels
+
+
+class TestReorientedVolumeDataset:
+    """Tests for datasets created from reoriented volumes."""
+
+    def test_reoriented_volumes_spatial_alignment(self, temp_dir_module: Path) -> None:
+        """Verify reoriented image/mask remain spatially aligned."""
+        from radiobject.volume import Volume
+
+        # Create synthetic LPS-oriented image and mask
+        rng = np.random.default_rng(42)
+        shape = (32, 32, 16)
+
+        # Image with some structure
+        image_data = rng.random(shape, dtype=np.float32)
+
+        # Mask marking region of interest in image
+        mask_data = np.zeros(shape, dtype=np.float32)
+        mask_data[10:20, 10:20, 5:12] = 1.0  # Box in center
+
+        # Create NIfTI files with LPS orientation
+        import nibabel as nib
+
+        lps_affine = np.array(
+            [
+                [-1.0, 0.0, 0.0, 16.0],
+                [0.0, -1.0, 0.0, 16.0],
+                [0.0, 0.0, 1.0, -8.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+
+        image_nifti_path = temp_dir_module / "test_reorient_image.nii.gz"
+        mask_nifti_path = temp_dir_module / "test_reorient_mask.nii.gz"
+
+        nib.save(nib.Nifti1Image(image_data, lps_affine), image_nifti_path)
+        nib.save(nib.Nifti1Image(mask_data, lps_affine), mask_nifti_path)
+
+        # Load with reorientation to RAS
+        image_vol = Volume.from_nifti(
+            str(temp_dir_module / "reorient_image_vol"),
+            image_nifti_path,
+            reorient=True,
+        )
+        mask_vol = Volume.from_nifti(
+            str(temp_dir_module / "reorient_mask_vol"),
+            mask_nifti_path,
+            reorient=True,
+        )
+
+        # Both should now be RAS
+        assert image_vol.orientation_info.axcodes == ("R", "A", "S")
+        assert mask_vol.orientation_info.axcodes == ("R", "A", "S")
+
+        # Verify spatial alignment is preserved after reorientation
+        image_reoriented = image_vol.to_numpy()
+        mask_reoriented = mask_vol.to_numpy()
+
+        # The mask should still mark valid regions in the image
+        # (foreground region should have non-zero image values)
+        mask_fg = mask_reoriented > 0
+        if mask_fg.sum() > 0:
+            # Image should have signal where mask indicates
+            assert image_reoriented[mask_fg].mean() > 0

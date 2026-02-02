@@ -407,3 +407,138 @@ class TestVolumeIntegration:
 
         with tiledb.open(uri, "r") as arr:
             assert "original_affine" in arr.meta
+
+
+class TestMetadataFloatPrecision:
+    """Tests for metadata float precision through string serialization."""
+
+    def test_affine_precision_roundtrip(self, temp_dir: Path):
+        """Test affine matrix values survive string serialization with acceptable precision."""
+        nifti_path = create_synthetic_nifti_ras(temp_dir)
+        img = nib.load(nifti_path)
+        original_info = detect_nifti_orientation(img)
+        original_affine = np.array(original_info.affine)
+
+        # Serialize and deserialize
+        metadata = orientation_info_to_metadata(original_info)
+        recovered_info = metadata_to_orientation_info(metadata)
+        recovered_affine = np.array(recovered_info.affine)
+
+        # Verify precision within 1e-6 (acceptable for medical imaging)
+        np.testing.assert_array_almost_equal(
+            recovered_affine,
+            original_affine,
+            decimal=6,
+            err_msg="Affine precision loss exceeds acceptable threshold (1e-6)",
+        )
+
+    def test_scaling_factors_metadata_storage(self, temp_dir: Path):
+        """Test scl_slope and scl_inter values stored in TileDB metadata correctly.
+
+        Note: nibabel does not persist scl_slope/scl_inter for float data that doesn't
+        require scaling. This test verifies the RadiObject metadata storage path works
+        correctly for the values that ARE set in the original file.
+        """
+        nifti_path = create_synthetic_nifti_ras(temp_dir)
+
+        # Load the original to see what values nibabel actually provides
+        original_img = nib.load(nifti_path)
+        original_slope = original_img.header.get("scl_slope", 1.0)
+        original_inter = original_img.header.get("scl_inter", 0.0)
+
+        # Handle nibabel's NaN for unset values
+        if np.isnan(original_slope):
+            original_slope = 1.0
+        if np.isnan(original_inter):
+            original_inter = 0.0
+
+        # Store in TileDB
+        uri = str(temp_dir / "scaled_vol")
+        vol = Volume.from_nifti(uri, nifti_path, reorient=False)
+
+        # Verify metadata is stored correctly
+        meta = vol._metadata
+        stored_slope = float(meta.get("nifti_scl_slope", 1.0))
+        stored_inter = float(meta.get("nifti_scl_inter", 0.0))
+
+        # The stored values should match what was read from the file
+        assert (
+            abs(stored_slope - float(original_slope)) < 1e-6
+        ), f"Slope storage error: {original_slope} -> {stored_slope}"
+        assert (
+            abs(stored_inter - float(original_inter)) < 1e-6
+        ), f"Inter storage error: {original_inter} -> {stored_inter}"
+
+    def test_extreme_affine_values_precision(self, temp_dir: Path):
+        """Test precision with extreme but valid affine values."""
+        rng = np.random.default_rng(42)
+        data = rng.random((10, 10, 10), dtype=np.float32)
+
+        # Affine with large translation and small voxel size (realistic MRI scenario)
+        affine = np.array(
+            [
+                [0.001, 0.0, 0.0, -150000.0],  # Very small voxel, large offset
+                [0.0, 0.001, 0.0, -150000.0],
+                [0.0, 0.0, 0.001, -150000.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+
+        img = nib.Nifti1Image(data, affine)
+        img.header.set_sform(affine, code=1)
+
+        nifti_path = temp_dir / "extreme_affine.nii.gz"
+        nib.save(img, nifti_path)
+
+        # Roundtrip through TileDB
+        uri = str(temp_dir / "extreme_vol")
+        vol = Volume.from_nifti(uri, nifti_path, reorient=False)
+
+        export_path = temp_dir / "extreme_export.nii.gz"
+        vol.to_nifti(export_path)
+
+        exported_img = nib.load(export_path)
+        exported_affine = exported_img.affine
+
+        # Check relative precision for non-zero elements
+        for i in range(4):
+            for j in range(4):
+                orig = affine[i, j]
+                exp = exported_affine[i, j]
+                if abs(orig) > 1e-10:
+                    rel_error = abs(orig - exp) / abs(orig)
+                    assert rel_error < 1e-5, (
+                        f"Relative error at [{i},{j}]: {rel_error:.2e} "
+                        f"(original={orig}, exported={exp})"
+                    )
+                else:
+                    assert abs(orig - exp) < 1e-10
+
+    def test_voxel_spacing_precision(self, temp_dir: Path):
+        """Test voxel spacing (diagonal of affine) precision."""
+        rng = np.random.default_rng(42)
+        data = rng.random((10, 10, 10), dtype=np.float32)
+
+        # Typical high-resolution MRI voxel sizes
+        voxel_sizes = [0.5, 0.5, 1.2]  # mm
+        affine = np.diag([*voxel_sizes, 1.0])
+
+        img = nib.Nifti1Image(data, affine)
+        img.header.set_sform(affine, code=1)
+
+        nifti_path = temp_dir / "voxel_spacing.nii.gz"
+        nib.save(img, nifti_path)
+
+        uri = str(temp_dir / "voxel_spacing_vol")
+        vol = Volume.from_nifti(uri, nifti_path, reorient=False)
+
+        export_path = temp_dir / "voxel_spacing_export.nii.gz"
+        vol.to_nifti(export_path)
+
+        exported_img = nib.load(export_path)
+        exported_zooms = exported_img.header.get_zooms()[:3]
+
+        for i, (orig, exp) in enumerate(zip(voxel_sizes, exported_zooms)):
+            assert (
+                abs(orig - exp) < 1e-6
+            ), f"Voxel spacing axis {i}: {orig} -> {exp} (diff={abs(orig - exp):.2e})"

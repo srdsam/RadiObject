@@ -334,8 +334,13 @@ class Volume:
         header = img.header
         metadata["nifti_sform_code"] = str(int(header.get("sform_code", 0)))
         metadata["nifti_qform_code"] = str(int(header.get("qform_code", 0)))
-        metadata["nifti_scl_slope"] = str(float(header.get("scl_slope", 1.0)))
-        metadata["nifti_scl_inter"] = str(float(header.get("scl_inter", 0.0)))
+
+        # Handle scl_slope/scl_inter - nibabel returns nan for unset values
+        scl_slope = header.get("scl_slope", 1.0)
+        scl_inter = header.get("scl_inter", 0.0)
+        metadata["nifti_scl_slope"] = str(1.0 if np.isnan(scl_slope) else float(scl_slope))
+        metadata["nifti_scl_inter"] = str(0.0 if np.isnan(scl_inter) else float(scl_inter))
+
         metadata["nifti_xyzt_units"] = str(int(header.get("xyzt_units", 0)))
 
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
@@ -351,6 +356,7 @@ class Volume:
         dicom_dir: str | Path,
         ctx: tiledb.Ctx | None = None,
         reorient: bool | None = None,
+        dtype: np.dtype | type | None = None,
     ) -> Volume:
         """Create a new Volume from a DICOM series directory.
 
@@ -359,6 +365,8 @@ class Volume:
             dicom_dir: Path to directory containing DICOM files
             ctx: TileDB context (uses global if None)
             reorient: Reorient to canonical orientation. None uses config default.
+            dtype: Output dtype. None preserves original DICOM dtype (uint16/int16).
+                   Use np.float32 for backward-compatible behavior.
         """
         import pydicom
 
@@ -409,8 +417,9 @@ class Volume:
             reoriented_img = nib.Nifti1Image(data, new_affine)
             orientation_info = detect_nifti_orientation(reoriented_img)
 
-        # Create volume
-        vol = cls.from_numpy(uri, data.astype(np.float32), ctx=ctx)
+        # Create volume with requested dtype (preserve original if None)
+        output_data = data if dtype is None else data.astype(dtype)
+        vol = cls.from_numpy(uri, output_data, ctx=ctx)
 
         # Store orientation metadata
         effective_ctx = ctx if ctx else global_ctx()
