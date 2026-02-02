@@ -49,57 +49,67 @@ radi = RadiObject.from_niftis(uri, image_dir="./data", collection_name="CT")
 radi = RadiObject.from_niftis(uri, niftis=[(path, subject_id), ...])
 ```
 
-## Exploration Mode (Pandas-like)
+## Filtering (Returns Views)
 
-Direct indexing with `iloc`, `loc`, `head()`, `tail()`, and `sample()` returns lightweight views for interactive exploration:
+Direct indexing with `iloc`, `loc`, `head()`, `tail()`, `sample()`, and `filter()` returns lightweight views for immediate access:
 
 ```python
 radi = RadiObject("s3://bucket/study")
 
-# Direct indexing - immediate results
-subset = radi.iloc[0:10]        # First 10 subjects
-subset = radi.loc["sub-01"]     # Single subject by ID
-subset = radi.head(5)           # Quick preview
+# Filtering returns views (RadiObject with is_view=True)
+subset = radi.iloc[0:10]              # First 10 subjects
+subset = radi.loc["sub-01"]           # Single subject by ID
+subset = radi.head(5)                 # Quick preview
+subset = radi.filter("age > 40")      # Query expression
+subset = radi.select_collections(["T1w", "FLAIR"])
+
+# Views are immediate - no deferred execution
+subset.is_view  # True
+len(subset)     # Works immediately
 
 # Access collections within view
 vol = subset.T1w.iloc[0]        # Get first T1w volume
 data = vol.to_numpy()           # Load into memory
+
+# Materialize view to new storage
+subset.materialize("s3://bucket/subset")
 ```
 
-Views (`RadiObjectView`) provide immediate access to data and feel like working with pandas DataFrames. Use this mode when interactively exploring data, debugging, or building analysis notebooks.
+Views provide immediate access to data and feel like working with pandas DataFrames. Use this mode for interactive exploration, debugging, and analysis notebooks.
 
-## Pipeline Mode (Lazy Query Builder)
+## Lazy Mode (Transform Pipelines)
 
-The `query()` method returns a lazy filter builder for ETL pipelines and ML training:
+The `lazy()` method returns a lazy filter builder for ETL pipelines with transforms:
 
 ```python
-# Lazy filtering - no data loaded until materialized
+# Lazy filtering with transforms
 result = (
-    radi.query()
+    radi.lazy()
     .filter("age > 40 and diagnosis == 'tumor'")
     .select_collections(["T1w", "FLAIR"])
     .sample(100, seed=42)
-    .to_radi_object("s3://bucket/subset", streaming=True)
+    .map(normalize_intensity)  # Transform during materialization
+    .materialize("s3://bucket/subset", streaming=True)
 )
 
 # Streaming iteration for ML training
-for batch in radi.query().filter("split == 'train'").iter_batches(batch_size=32):
+for batch in radi.lazy().filter("split == 'train'").iter_batches(batch_size=32):
     train_step(batch.volumes["T1w"], batch.volumes["FLAIR"])
 ```
 
-Queries (`Query`) accumulate filters without touching data. Explicit materialization methods (`to_radi_object()`, `iter_volumes()`, `count()`) trigger execution. Use this mode for reproducible pipelines, memory-efficient exports, and ML data loading.
+`Query` accumulates filters without touching data. Explicit materialization methods (`materialize()`, `iter_volumes()`, `count()`) trigger execution. Use lazy mode when you need to apply transforms via `map()`.
 
 ## When to Use Each
 
-| Use Case | Mode | Why |
-|----------|------|-----|
-| Debugging / quick inspection | Exploration | Immediate feedback |
-| Jupyter notebooks | Exploration | Interactive feel |
-| ETL pipelines | Pipeline | Explicit execution, streaming |
-| ML training data | Pipeline | Batched iteration, memory control |
-| Subsetting for export | Pipeline | Memory-efficient streaming writes |
+| Use Case | Mode | Method | Why |
+|----------|------|--------|-----|
+| Quick inspection | Filter | `head()`, `iloc[]` | Immediate feedback |
+| Jupyter notebooks | Filter | `filter()`, `sample()` | Interactive feel |
+| Subsetting for export | Filter + Materialize | `.materialize(uri)` | Explicit write |
+| Apply transforms | Lazy | `.lazy().map().materialize()` | Transform during materialization |
+| ML training data | Lazy | `.lazy().iter_batches()` | Batched iteration, memory control |
 
-Both modes can be combined: start with exploration to understand your data, then use `view.to_query()` to transition to pipeline mode for production.
+For most use cases, direct filtering is sufficient. Use `lazy()` only when you need to apply transforms via `map()`.
 
 ## Context Configuration
 

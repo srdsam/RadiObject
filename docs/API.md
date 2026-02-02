@@ -19,12 +19,11 @@ open docs/api/index.html
 
 | Class | Description |
 |-------|-------------|
-| `RadiObject` | Top-level container for multi-collection radiology data with subject metadata |
-| `RadiObjectView` | Immutable filtered view into a RadiObject |
-| `VolumeCollection` | Collection of volumes organized by obs_id, supports heterogeneous shapes |
+| `RadiObject` | Top-level container for multi-collection radiology data with subject metadata. Supports filtering which returns views. |
+| `VolumeCollection` | Collection of volumes organized by obs_id. Supports heterogeneous shapes and filtering. |
 | `Volume` | Single 3D or 4D radiology acquisition backed by TileDB |
-| `Query` | Lazy filter builder for RadiObject with explicit materialization |
-| `CollectionQuery` | Lazy filter builder for VolumeCollection |
+| `Query` | Lazy filter builder for RadiObject with explicit materialization (via `lazy()`) |
+| `CollectionQuery` | Lazy filter builder for VolumeCollection (via `lazy()`) |
 | `Dataframe` | TileDB-backed DataFrame for obs/obs_meta storage |
 
 ## Configuration Classes
@@ -64,14 +63,18 @@ radi.loc["sub-01"]          # By obs_subject_id
 radi["sub-01"]              # Shorthand for .loc
 radi.obs_subject_ids        # All subject IDs
 
-# Filtering
-radi.filter("age > 40")     # Query expression
-radi.head(10)               # First n subjects
-radi.sample(50, seed=42)    # Random sample
-radi.select_collections(["T1w", "FLAIR"])
+# Filtering (returns RadiObject views)
+subset = radi.filter("age > 40")     # Query expression
+subset = radi.head(10)               # First n subjects
+subset = radi.sample(50, seed=42)    # Random sample
+subset = radi.select_collections(["T1w", "FLAIR"])
+subset.is_view  # True - filtered results are views
 
-# Query builder (pipeline mode)
-radi.query().filter(...).to_radi_object(uri)
+# Materialize view to storage
+subset.materialize("s3://bucket/subset")
+
+# Lazy mode for transforms
+radi.lazy().filter(...).map(transform).materialize(uri)
 ```
 
 ### VolumeCollection
@@ -82,16 +85,16 @@ vc.iloc[0]                  # By position
 vc.loc["obs-123"]           # By obs_id
 vc[0]                       # Shorthand
 
-# Filtering
-vc.filter("voxel_spacing == '1.0x1.0x1.0'")
-vc.head(10)
-vc.sample(50)
+# Filtering (returns VolumeCollection views)
+subset = vc.filter("voxel_spacing == '1.0x1.0x1.0'")
+subset = vc.head(10)
+subset = vc.sample(50)
 
-# Query builder
-vc.query().filter(...).to_volume_collection(uri)
+# Materialize view to storage
+subset.materialize(uri)
 
-# Transform and materialize
-vc.map(lambda v: v * 2).to_volume_collection(uri)
+# Lazy mode for transforms
+vc.lazy().filter(...).map(lambda v: v * 2).materialize(uri)
 ```
 
 ### Volume

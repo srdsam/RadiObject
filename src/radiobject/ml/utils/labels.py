@@ -8,19 +8,21 @@ import pandas as pd
 
 from radiobject._types import LabelSource
 
+__all__ = ["LabelSource", "load_labels"]
+
 if TYPE_CHECKING:
-    from radiobject.ml.reader import VolumeReader
+    from radiobject.volume_collection import VolumeCollection
 
 
 def load_labels(
-    reader: VolumeReader,
+    collection: VolumeCollection,
     labels: LabelSource,
     obs_df: pd.DataFrame | None = None,
 ) -> dict[int, Any] | None:
     """Load labels from various sources, indexed by volume position.
 
     Args:
-        reader: VolumeReader for the primary collection (used to get obs_ids).
+        collection: VolumeCollection for the primary collection (used to get obs_ids).
         labels: Label source - see LabelSource type for options.
         obs_df: Pre-loaded obs DataFrame from the collection. Required when
             labels is a column name string.
@@ -34,7 +36,8 @@ def load_labels(
     if labels is None:
         return None
 
-    n_volumes = len(reader)
+    obs_ids = collection.obs_ids
+    n_volumes = len(obs_ids)
     result: dict[int, Any] = {}
 
     if isinstance(labels, str):
@@ -57,7 +60,7 @@ def load_labels(
             raise ValueError("obs DataFrame must have 'obs_id' column or index")
 
         for idx in range(n_volumes):
-            obs_id = reader.get_obs_id(idx)
+            obs_id = obs_ids[idx]
             if obs_id in label_lookup:
                 result[idx] = label_lookup[obs_id]
 
@@ -78,21 +81,21 @@ def load_labels(
             raise ValueError("Labels DataFrame must have 'obs_id' as column or index")
 
         for idx in range(n_volumes):
-            obs_id = reader.get_obs_id(idx)
+            obs_id = obs_ids[idx]
             if obs_id in label_lookup:
                 result[idx] = label_lookup[obs_id]
 
     elif isinstance(labels, dict):
         # Direct mapping from obs_id to label
         for idx in range(n_volumes):
-            obs_id = reader.get_obs_id(idx)
+            obs_id = obs_ids[idx]
             if obs_id in labels:
                 result[idx] = labels[obs_id]
 
     elif callable(labels):
         # Function that takes obs_id and returns label
         for idx in range(n_volumes):
-            obs_id = reader.get_obs_id(idx)
+            obs_id = obs_ids[idx]
             result[idx] = labels(obs_id)
 
     else:

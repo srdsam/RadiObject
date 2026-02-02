@@ -1,5 +1,35 @@
 # Open-source radiology datasets for programmatic download
 
+## RadiObject Test & Tutorial Datasets
+
+RadiObject includes a unified download system for test and tutorial data. Use the CLI script:
+
+```bash
+# List available datasets
+python scripts/download_dataset.py --list
+
+# Download for tests (NIfTI + DICOM)
+python scripts/download_dataset.py --all-tests
+
+# Download specific dataset
+python scripts/download_dataset.py msd-brain-tumour
+python scripts/download_dataset.py msd-lung
+python scripts/download_dataset.py nsclc-radiomics
+
+# Download without AWS credentials (public sources only)
+python scripts/download_dataset.py msd-brain-tumour --public
+```
+
+| Dataset | Format | Size | Samples | Use Case |
+|---------|--------|------|---------|----------|
+| `msd-brain-tumour` | NIfTI | ~1.5GB | 10 | Tests, tutorials 00-04 |
+| `msd-lung` | NIfTI | ~8.5GB | 63 | ML tutorials 05-06 |
+| `nsclc-radiomics` | DICOM | ~500MB | 10 | DICOM parsing tests |
+
+---
+
+## External Datasets
+
 The best options for immediate programmatic access to DICOM/NIfTI radiology data are **Medical Segmentation Decathlon** (via AWS S3, no auth), **TCIA public collections** (via REST API or `tcia_utils`), and **OpenNeuro/IXI** for NIfTI brain imaging. These sources require no approval process, support command-line downloads, and offer permissive licenses suitable for development and testing.
 
 For testing a new radiology data structure, **start with Medical Segmentation Decathlon** for NIfTI across 10 modality/organ combinations (single `aws s3 sync` command, ~42GB), then **TCIA's LIDC-IDRI** for diverse DICOM CT data via Python. The IXI dataset provides the simplest NIfTI brain MRI access via direct wget URLs.

@@ -43,23 +43,6 @@ def create_distributed_dataloader(
 
     Returns:
         DataLoader with DistributedSampler configured.
-
-    Example::
-
-        # In DDP training script
-        loader = create_distributed_dataloader(
-            radi.CT,
-            rank=local_rank,
-            world_size=world_size,
-            labels="has_tumor",
-            batch_size=4,
-            patch_size=(64, 64, 64),
-        )
-
-        for epoch in range(num_epochs):
-            set_epoch(loader, epoch)  # Important for proper shuffling
-            for batch in loader:
-                ...
     """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
 

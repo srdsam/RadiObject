@@ -1,4 +1,4 @@
-"""Tests for RadiObject and RadiObjectView."""
+"""Tests for RadiObject (attached and views)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 import tiledb
 
-from radiobject.radi_object import RadiObject, RadiObjectView
+from radiobject.radi_object import RadiObject
 from radiobject.volume_collection import VolumeCollection
 
 
@@ -96,6 +96,126 @@ class TestRadiObjectFromVolumeCollections:
             RadiObject._from_volume_collections(uri, collections={})
 
 
+class TestRadiObjectFromCollections:
+    """Tests for RadiObject.from_collections() public factory method."""
+
+    def test_from_collections_in_place(
+        self,
+        temp_dir: Path,
+        volume_collections: dict[str, VolumeCollection],
+        nifti_manifest: list[dict],
+    ):
+        """Collections already at expected URIs are linked, not copied."""
+        uri = str(temp_dir / "from_collections_inplace")
+        collections_uri = f"{uri}/collections"
+
+        # First, create collections at expected locations
+        import tiledb
+
+        from radiobject.radi_object import _copy_volume_collection
+
+        tiledb.Group.create(collections_uri)
+        in_place_collections = {}
+        for name, vc in volume_collections.items():
+            expected_uri = f"{collections_uri}/{name}"
+            _copy_volume_collection(vc, expected_uri, name=name)
+            in_place_collections[name] = VolumeCollection(expected_uri)
+
+        # Use from_collections - should link without copying
+        radi = RadiObject.from_collections(
+            uri=uri,
+            collections=in_place_collections,
+        )
+
+        assert len(radi) == 3
+        assert radi.n_collections == len(volume_collections)
+        assert set(radi.collection_names) == set(volume_collections.keys())
+
+    def test_from_collections_with_copy(
+        self,
+        temp_dir: Path,
+        volume_collections: dict[str, VolumeCollection],
+    ):
+        """Collections from external URIs are copied to expected locations."""
+        uri = str(temp_dir / "from_collections_copy")
+
+        # Use from_collections with collections at different URIs - should copy
+        radi = RadiObject.from_collections(
+            uri=uri,
+            collections=volume_collections,
+        )
+
+        assert len(radi) == 3
+        assert radi.n_collections == len(volume_collections)
+
+    def test_from_collections_with_obs_meta(
+        self,
+        temp_dir: Path,
+        volume_collections: dict[str, VolumeCollection],
+        nifti_manifest: list[dict],
+    ):
+        """Custom obs_meta is used when provided."""
+        uri = str(temp_dir / "from_collections_obs_meta")
+        subject_ids = [entry["sample_id"] for entry in nifti_manifest[:3]]
+        obs_meta_df = pd.DataFrame(
+            {
+                "obs_subject_id": subject_ids,
+                "age": [45, 52, 38],
+                "diagnosis": ["healthy", "tumor", "healthy"],
+            }
+        )
+
+        radi = RadiObject.from_collections(
+            uri=uri,
+            collections=volume_collections,
+            obs_meta=obs_meta_df,
+        )
+
+        assert "age" in radi.obs_meta.columns
+        assert "diagnosis" in radi.obs_meta.columns
+
+    def test_from_collections_derives_obs_meta(
+        self,
+        temp_dir: Path,
+        volume_collections: dict[str, VolumeCollection],
+    ):
+        """obs_meta is derived from collections when not provided."""
+        uri = str(temp_dir / "from_collections_derived")
+
+        radi = RadiObject.from_collections(
+            uri=uri,
+            collections=volume_collections,
+        )
+
+        # obs_meta should be auto-derived from collections
+        assert len(radi) == 3
+        assert len(radi.obs_subject_ids) == 3
+
+    def test_from_collections_string_uri(
+        self,
+        temp_dir: Path,
+        volume_collections: dict[str, VolumeCollection],
+    ):
+        """String URIs are resolved to VolumeCollection objects."""
+        uri = str(temp_dir / "from_collections_string_uri")
+
+        # Pass URI strings instead of VolumeCollection objects
+        uri_collections = {name: vc.uri for name, vc in volume_collections.items()}
+
+        radi = RadiObject.from_collections(
+            uri=uri,
+            collections=uri_collections,
+        )
+
+        assert radi.n_collections == len(volume_collections)
+
+    def test_from_collections_empty_raises(self, temp_dir: Path):
+        """Empty collections dict raises ValueError."""
+        uri = str(temp_dir / "from_collections_empty")
+        with pytest.raises(ValueError, match="At least one collection"):
+            RadiObject.from_collections(uri=uri, collections={})
+
+
 class TestRadiObjectILoc:
     """Tests for iloc (integer-location) indexer."""
 
@@ -110,10 +230,11 @@ class TestRadiObjectILoc:
         ids=["single", "negative", "slice", "list"],
     )
     def test_iloc_indexing(self, populated_radi_object_module: RadiObject, indexer, expected_len):
-        """iloc returns RadiObjectView with expected subjects."""
+        """iloc returns RadiObject view with expected subjects."""
         view = populated_radi_object_module.iloc[indexer]
 
-        assert isinstance(view, RadiObjectView)
+        assert isinstance(view, RadiObject)
+        assert view.is_view
         assert len(view) == expected_len
 
     def test_iloc_out_of_range_raises(self, populated_radi_object_module: RadiObject):
@@ -126,11 +247,12 @@ class TestRadiObjectLoc:
     """Tests for loc (label-based) indexer."""
 
     def test_loc_single_and_list(self, populated_radi_object_module: RadiObject):
-        """loc returns RadiObjectView for single ID or list of IDs."""
+        """loc returns RadiObject view for single ID or list of IDs."""
         subject_ids = populated_radi_object_module.obs_subject_ids
 
         single_view = populated_radi_object_module.loc[subject_ids[1]]
-        assert isinstance(single_view, RadiObjectView)
+        assert isinstance(single_view, RadiObject)
+        assert single_view.is_view
         assert len(single_view) == 1
 
         multi_view = populated_radi_object_module.loc[[subject_ids[0], subject_ids[2]]]
@@ -219,20 +341,8 @@ class TestRadiObjectObsRowRetrieval:
         assert row_via_index["obs_subject_id"].iloc[0] == radi.obs_subject_ids[0]
 
 
-class TestRadiObjectViewFiltering:
-    """Tests for RadiObjectView filtering methods."""
-
-    def test_select_subjects(self, populated_radi_object_module: RadiObject):
-        """select_subjects filters to subset of subjects."""
-        view = populated_radi_object_module.iloc[:]
-        subject_ids = [
-            populated_radi_object_module.obs_subject_ids[0],
-            populated_radi_object_module.obs_subject_ids[2],
-        ]
-        filtered = view.select_subjects(subject_ids)
-
-        assert len(filtered) == 2
-        assert filtered.obs_subject_ids == subject_ids
+class TestRadiObjectFiltering:
+    """Tests for RadiObject view filtering methods."""
 
     def test_select_collections(self, populated_radi_object_module: RadiObject):
         """select_collections filters to subset of collections."""
@@ -242,27 +352,11 @@ class TestRadiObjectViewFiltering:
         assert filtered.n_collections == 1
         assert filtered.collection_names == ("T1w",)
 
-    def test_chained_filters(self, populated_radi_object_module: RadiObject):
-        """Chained filtering narrows both subjects and collections."""
-        subject_ids = [
-            populated_radi_object_module.obs_subject_ids[0],
-            populated_radi_object_module.obs_subject_ids[1],
-        ]
-        view = (
-            populated_radi_object_module.iloc[:]
-            .select_subjects(subject_ids)
-            .select_collections(["flair"])
-        )
 
-        assert len(view) == 2
-        assert view.obs_subject_ids == subject_ids
-        assert view.collection_names == ("flair",)
+class TestRadiObjectMaterialization:
+    """Tests for RadiObject view materialize()."""
 
-
-class TestRadiObjectViewMaterialization:
-    """Tests for RadiObjectView.to_radi_object()."""
-
-    def test_to_radi_object_basic(
+    def test_materialize_basic(
         self,
         temp_dir: Path,
         populated_radi_object: RadiObject,
@@ -270,12 +364,12 @@ class TestRadiObjectViewMaterialization:
         """Materialize full view as new RadiObject."""
         view = populated_radi_object.iloc[:]
         new_uri = str(temp_dir / "materialized_radi")
-        new_radi = view.to_radi_object(new_uri)
+        new_radi = view.materialize(new_uri)
 
         assert len(new_radi) == 3
         assert new_radi.n_collections == 4
 
-    def test_to_radi_object_filtered_subjects(
+    def test_materialize_filtered_subjects(
         self,
         temp_dir: Path,
         populated_radi_object: RadiObject,
@@ -283,13 +377,13 @@ class TestRadiObjectViewMaterialization:
         """Materialize view with filtered subjects."""
         view = populated_radi_object.iloc[[0, 2]]
         new_uri = str(temp_dir / "materialized_filtered")
-        new_radi = view.to_radi_object(new_uri)
+        new_radi = view.materialize(new_uri)
 
         assert len(new_radi) == 2
         expected_ids = [populated_radi_object.obs_subject_ids[i] for i in [0, 2]]
         assert new_radi.obs_subject_ids == expected_ids
 
-    def test_to_radi_object_filtered_collections(
+    def test_materialize_filtered_collections(
         self,
         temp_dir: Path,
         populated_radi_object: RadiObject,
@@ -297,7 +391,7 @@ class TestRadiObjectViewMaterialization:
         """Materialize view with filtered collections."""
         view = populated_radi_object.select_collections(["T1w"])
         new_uri = str(temp_dir / "materialized_one_collection")
-        new_radi = view.to_radi_object(new_uri)
+        new_radi = view.materialize(new_uri)
 
         assert new_radi.n_collections == 1
         assert "T1w" in new_radi.collection_names
@@ -430,7 +524,7 @@ class TestS3Integration:
         subject_ids = s3_populated_radi_object.obs_subject_ids
         view = s3_populated_radi_object.iloc[[0, 2]]
         new_uri = f"{s3_test_base_uri}/materialized_radi"
-        new_radi = view.to_radi_object(new_uri, ctx=s3_tiledb_ctx)
+        new_radi = view.materialize(new_uri, ctx=s3_tiledb_ctx)
 
         assert len(new_radi) == 2
         assert new_radi.obs_subject_ids == [subject_ids[0], subject_ids[2]]

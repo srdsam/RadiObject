@@ -25,7 +25,7 @@ VOXELS_ATTR = "voxels"  # TileDB attribute name for dense volume arrays
 
 
 class Volume:
-    """A single 'Series' or volume from a radiology scan."""
+    """Single 3D/4D radiology acquisition indexed by obs_id in VolumeCollection."""
 
     def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
         self.uri: str = uri
@@ -274,7 +274,7 @@ class Volume:
         data: np.ndarray,
         ctx: tiledb.Ctx | None = None,
     ) -> Volume:
-        """Create a new Volume from a numpy array."""
+        """Create Volume from numpy array."""
         vol = cls.create(uri, shape=data.shape, dtype=data.dtype, ctx=ctx)
         effective_ctx = ctx if ctx else global_ctx()
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:

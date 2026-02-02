@@ -15,8 +15,7 @@ import pandas as pd
 import pytest
 import tiledb
 
-from data import get_test_data_path
-from data.sync import get_manifest
+from radiobject.data import S3_BUCKET, S3_REGION, get_dataset, get_manifest
 from radiobject.volume import Volume
 from radiobject.volume_collection import VolumeCollection
 
@@ -24,18 +23,33 @@ if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
 
 
-# ----- Constants -----
+# ----- Dataset Paths (resolved on first access) -----
 
-DATA_DIR = get_test_data_path()
-NIFTI_DIR = DATA_DIR / "nifti" / "msd_brain_tumour"
-DICOM_DIR = DATA_DIR / "dicom" / "nsclc_radiomics"
+_nifti_data_dir: Path | None = None
+_dicom_data_dir: Path | None = None
+
+
+def _get_nifti_data_dir() -> Path:
+    """Get NIfTI dataset directory, downloading if needed."""
+    global _nifti_data_dir
+    if _nifti_data_dir is None:
+        _nifti_data_dir = get_dataset("msd-brain-tumour")
+    return _nifti_data_dir
+
+
+def _get_dicom_data_dir() -> Path:
+    """Get DICOM dataset directory, downloading if needed."""
+    global _dicom_data_dir
+    if _dicom_data_dir is None:
+        _dicom_data_dir = get_dataset("nsclc-radiomics")
+    return _dicom_data_dir
 
 
 # ----- S3 Configuration -----
 
-S3_TEST_BUCKET = "souzy-scratch"
+S3_TEST_BUCKET = S3_BUCKET
 S3_TEST_PREFIX = "radiobject-tests"
-S3_TEST_REGION = "us-east-2"
+S3_TEST_REGION = S3_REGION
 
 _s3_ctx: tiledb.Ctx | None = None
 
@@ -114,19 +128,18 @@ StorageBackend = Literal["local", "s3"]
 _manifest_cache: dict[str, list[dict]] = {}
 
 
-def _get_manifest(data_type: Literal["nifti", "dicom"]) -> list[dict]:
+def _get_manifest_cached(dataset: str) -> list[dict]:
     """Load manifest (cached). Skips test if not found."""
-    if data_type in _manifest_cache:
-        return _manifest_cache[data_type]
+    if dataset in _manifest_cache:
+        return _manifest_cache[dataset]
 
     try:
-        manifest = get_manifest(data_type)
-        _manifest_cache[data_type] = manifest
+        manifest = get_manifest(dataset)
+        _manifest_cache[dataset] = manifest
         return manifest
     except FileNotFoundError:
         pytest.skip(
-            f"{data_type.upper()} manifest not found. "
-            'Run: python -c "from data import sync_test_data; sync_test_data()"'
+            f"{dataset} manifest not found. " "Run: python scripts/download_dataset.py --all-tests"
         )
 
 
@@ -138,11 +151,12 @@ def _load_nifti_volumes(
     modality: str = "flair",
 ) -> list[tuple[str, Volume]]:
     """Load NIfTI files as Volume objects."""
+    data_dir = _get_nifti_data_dir()
     volumes = []
     for i in range(min(num, len(manifest))):
         entry = manifest[i]
         sample_id = entry["sample_id"]
-        img_path = DATA_DIR / entry["image_path"]
+        img_path = data_dir / entry["image_path"]
         img = nib.load(img_path)
         data = np.asarray(img.dataobj, dtype=np.float32)
 
@@ -166,6 +180,7 @@ def _build_volume_collections(
     ctx: tiledb.Ctx | None = None,
 ) -> dict[str, VolumeCollection]:
     """Build VolumeCollections from real NIfTI data."""
+    data_dir = _get_nifti_data_dir()
     subject_ids = [entry["sample_id"] for entry in manifest[:3]]
     collections: dict[str, VolumeCollection] = {}
 
@@ -174,7 +189,7 @@ def _build_volume_collections(
         obs_data_rows = []
 
         for subj_idx, subj_id in enumerate(subject_ids):
-            img_path = DATA_DIR / manifest[subj_idx]["image_path"]
+            img_path = data_dir / manifest[subj_idx]["image_path"]
             img = nib.load(img_path)
             data = np.asarray(img.dataobj, dtype=np.float32)
 
@@ -256,13 +271,13 @@ def custom_tiledb_ctx() -> tiledb.Ctx:
 @pytest.fixture
 def nifti_manifest() -> list[dict]:
     """Load NIfTI manifest.json."""
-    return _get_manifest("nifti")
+    return _get_manifest_cached("msd-brain-tumour")
 
 
 @pytest.fixture
 def dicom_manifest() -> list[dict]:
     """Load DICOM manifest.json."""
-    return _get_manifest("dicom")
+    return _get_manifest_cached("nsclc-radiomics")
 
 
 # ----- Path Fixtures -----
@@ -273,7 +288,8 @@ def sample_nifti_image(nifti_manifest: list[dict]) -> Path:
     """Path to first NIfTI image sample."""
     if not nifti_manifest:
         pytest.skip("No NIfTI samples available")
-    return DATA_DIR / nifti_manifest[0]["image_path"]
+    data_dir = _get_nifti_data_dir()
+    return data_dir / nifti_manifest[0]["image_path"]
 
 
 @pytest.fixture
@@ -282,7 +298,10 @@ def sample_nifti_label(nifti_manifest: list[dict]) -> Path | None:
     if not nifti_manifest:
         pytest.skip("No NIfTI samples available")
     label_path = nifti_manifest[0].get("label_path")
-    return DATA_DIR / label_path if label_path else None
+    if label_path:
+        data_dir = _get_nifti_data_dir()
+        return data_dir / label_path
+    return None
 
 
 @pytest.fixture
@@ -290,19 +309,22 @@ def sample_dicom_series(dicom_manifest: list[dict]) -> Path:
     """Path to first DICOM series directory."""
     if not dicom_manifest:
         pytest.skip("No DICOM samples available")
-    return DATA_DIR / dicom_manifest[0]["image_dir"]
+    data_dir = _get_dicom_data_dir()
+    return data_dir / dicom_manifest[0]["image_dir"]
 
 
 @pytest.fixture
 def nifti_4d_path(nifti_manifest: list[dict]) -> Path:
     """Path to first MSD BraTS 4D image (240x240x155x4)."""
-    return DATA_DIR / nifti_manifest[0]["image_path"]
+    data_dir = _get_nifti_data_dir()
+    return data_dir / nifti_manifest[0]["image_path"]
 
 
 @pytest.fixture
 def nifti_3d_path(nifti_manifest: list[dict]) -> Path:
     """Path to first MSD BraTS 3D label (segmentation mask)."""
-    return DATA_DIR / nifti_manifest[0]["label_path"]
+    data_dir = _get_nifti_data_dir()
+    return data_dir / nifti_manifest[0]["label_path"]
 
 
 # ----- Array Fixtures -----
@@ -334,7 +356,7 @@ def volumes(temp_dir: Path, nifti_manifest: list[dict]) -> list[tuple[str, Volum
 @pytest.fixture(scope="module")
 def volumes_module(temp_dir_module: Path) -> list[tuple[str, Volume]]:
     """Module-scoped: Create 3 Volumes from BRATS_001-003."""
-    manifest = _get_manifest("nifti")
+    manifest = _get_manifest_cached("msd-brain-tumour")
     return _load_nifti_volumes(temp_dir_module, manifest, num=3, channel=0, modality="flair")
 
 
@@ -367,7 +389,7 @@ def volume_collections(temp_dir: Path, nifti_manifest: list[dict]) -> dict[str, 
 @pytest.fixture(scope="module")
 def volume_collections_module(temp_dir_module: Path) -> dict[str, VolumeCollection]:
     """Module-scoped: Create 4 VolumeCollections from first 3 BraTS samples."""
-    manifest = _get_manifest("nifti")
+    manifest = _get_manifest_cached("msd-brain-tumour")
     modalities = ["flair", "T1w", "T1gd", "T2w"]
     return _build_volume_collections(temp_dir_module, manifest, modalities)
 
@@ -412,7 +434,7 @@ def populated_radi_object_module(
     volume_collections_module: dict[str, VolumeCollection],
 ) -> "RadiObject":
     """Module-scoped: Pre-created RadiObject with 3 subjects and 4 modalities."""
-    manifest = _get_manifest("nifti")
+    manifest = _get_manifest_cached("msd-brain-tumour")
     uri = str(temp_dir_module / "populated_radi_object")
     return _create_radi_object(uri, volume_collections_module, manifest)
 
@@ -487,34 +509,3 @@ def s3_populated_radi_object(
     """Pre-created RadiObject on S3."""
     uri = f"{s3_test_base_uri}/populated_radi_object"
     return _create_radi_object(uri, s3_volume_collections, nifti_manifest, ctx=s3_tiledb_ctx)
-
-
-# ----- Pre-built S3 RadiObject Fixture -----
-
-
-@pytest.fixture(scope="session")
-def prebuilt_radiobject() -> "RadiObject | None":
-    """Pre-built RadiObject from S3 for fast tests (3 BRATS subjects).
-
-    Returns None if S3 is not accessible. Tests using this fixture should
-    check for None and skip appropriately.
-    """
-    from data import DATASETS
-
-    uri = DATASETS.get("brats-3subjects")
-    if not uri:
-        return None
-
-    ctx = _get_s3_ctx()
-    if ctx is None:
-        return None
-
-    try:
-        from radiobject.radi_object import RadiObject
-
-        vfs = tiledb.VFS(ctx=ctx)
-        if not vfs.is_dir(uri):
-            return None
-        return RadiObject(uri, ctx=ctx)
-    except Exception:
-        return None

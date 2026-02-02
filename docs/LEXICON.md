@@ -425,11 +425,11 @@ Where:
 
 | Term | Definition |
 |------|------------|
-| **RadiObject** | Top-level TileDB Group organizing subject metadata (ObsMeta) and multiple VolumeCollections |
-| **RadiObjectView** | Immutable filtered view of a RadiObject supporting copy-on-write materialization via `to_radi_object()` |
+| **RadiObject** | Top-level TileDB Group organizing subject metadata (ObsMeta) and multiple VolumeCollections. Supports filtering which returns views (RadiObject with `is_view=True`). |
+| **is_view** | Boolean property indicating whether a RadiObject/VolumeCollection is a filtered view of another |
 | **obs_subject_id** | Unique string identifier for a subject (patient/participant). Primary key in RadiObject.obs_meta, foreign key in VolumeCollection.obs |
 | **ObsMeta** | Subject-level observational metadata Dataframe in RadiObject, indexed by obs_subject_id |
-| **VolumeCollection** | A TileDB Group organizing multiple Volumes with consistent X/Y/Z dimensions |
+| **VolumeCollection** | A TileDB Group organizing multiple Volumes with consistent X/Y/Z dimensions. Supports filtering which returns views. |
 | **Volume** | A single 3D or 4D radiology acquisition backed by TileDB dense array |
 | **obs_id** | Unique string identifier for a Volume, unique across entire RadiObject (stored in TileDB metadata) |
 | **obs** | Volume-level observation dataframe containing per-volume metadata, indexed by obs_id with obs_subject_id as foreign key |
@@ -454,23 +454,22 @@ Where:
 | **head()** | Return view of first n subjects |
 | **tail()** | Return view of last n subjects |
 | **sample()** | Return view of n randomly sampled subjects with optional seed for reproducibility |
-| **select_collections()** | Filter RadiObject or RadiObjectView to include only specified collections |
+| **select_collections()** | Filter RadiObject to include only specified collections (returns view) |
 | **get_obs_row_by_obs_subject_id()** | Retrieve obs_meta row by subject ID (RadiObject) |
 | **get_obs_row_by_obs_id()** | Retrieve obs row by volume ID (VolumeCollection) |
 
-### RadiObject Query Builder (Pipeline Mode)
+### RadiObject Query Builder (Lazy Mode)
 
 | Term | Definition |
 |------|------------|
 | **Query** | Lazy filter builder for RadiObject that accumulates filters without data access until explicit materialization |
 | **CollectionQuery** | Lazy filter builder for VolumeCollection that accumulates filters on obs without data access |
-| **query()** | Entry point method returning Query (RadiObject) or CollectionQuery (VolumeCollection) for pipeline-style filtering |
-| **filter()** | Add TileDB QueryCondition on obs_meta (Query) or obs (CollectionQuery) |
+| **lazy()** | Entry point method returning Query (RadiObject) or CollectionQuery (VolumeCollection) for lazy transform pipelines |
+| **filter()** | On RadiObject/VolumeCollection: returns view. On Query/CollectionQuery: adds lazy TileDB QueryCondition |
 | **filter_subjects()** | Add explicit subject ID filter to Query |
 | **filter_collection()** | Add TileDB QueryCondition on a specific collection's obs within Query |
-| **select_collections()** | Limit Query output to specific collections (does not affect filtering) |
-| **to_radi_object()** | Materialize Query results as new RadiObject (supports streaming=True for memory efficiency) |
-| **to_volume_collection()** | Materialize CollectionQuery results as new VolumeCollection |
+| **select_collections()** | On RadiObject: returns view. On Query: limits output collections |
+| **materialize()** | Write view or Query/CollectionQuery results to new storage as RadiObject/VolumeCollection |
 | **iter_volumes()** | Streaming iterator yielding Volume objects matching the query |
 | **iter_batches()** | Streaming iterator yielding VolumeBatch for ML training |
 | **count()** | Materialize query to count subjects and volumes without loading volume data |

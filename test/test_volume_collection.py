@@ -209,9 +209,11 @@ class TestVolumeCollectionGetitem:
         assert len(vols) == 2
 
     def test_getitem_empty_list(self, populated_collection_module: VolumeCollection):
-        """collection[[]] returns empty list."""
+        """collection[[]] returns empty VolumeCollection view."""
         vols = populated_collection_module[[]]
-        assert vols == []
+        assert isinstance(vols, VolumeCollection)
+        assert len(vols) == 0
+        assert vols.is_view
 
     def test_getitem_invalid_type_raises(self, populated_collection_module: VolumeCollection):
         """collection[1.5] raises TypeError."""
@@ -298,7 +300,7 @@ class TestVolumeCollectionMap:
         original_data = original_vol.to_numpy()
 
         new_uri = str(temp_dir / "vc_map_transform")
-        new_vc = populated_collection.map(lambda v: v * 5).to_volume_collection(new_uri)
+        new_vc = populated_collection.map(lambda v: v * 5).materialize(new_uri)
 
         new_vol = next(iter(new_vc))
         new_data = new_vol.to_numpy()

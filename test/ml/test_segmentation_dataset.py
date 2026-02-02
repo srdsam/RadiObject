@@ -24,15 +24,17 @@ if TYPE_CHECKING:
 @pytest.fixture(scope="module")
 def segmentation_collections(temp_dir_module: Path) -> dict[str, VolumeCollection]:
     """Create image and mask VolumeCollections from BraTS data."""
-    from data import get_test_data_path
-    from data.sync import get_manifest
+    import json
+
+    from radiobject.data import get_dataset
 
     try:
-        manifest = get_manifest("nifti")
-    except FileNotFoundError:
+        data_dir = get_dataset("msd-brain-tumour", prefer_s3=False)
+        manifest_path = data_dir / "manifest.json"
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+    except (FileNotFoundError, Exception):
         pytest.skip("NIfTI manifest not found")
-
-    data_dir = get_test_data_path()
 
     # Build image collection (first modality from 4D)
     image_volumes = []
@@ -353,3 +355,87 @@ class TestAlignmentValidation:
 
         with pytest.raises(ValueError, match="has .* volumes, expected"):
             SegmentationDataset(image=img_vc, mask=mask_vc)
+
+
+class TestViewBasedTraining:
+    """Tests for view-based train/val splits."""
+
+    def test_view_reads_correct_volumes(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify views read from correct storage locations."""
+        image_vc = segmentation_collections["image"]
+        mask_vc = segmentation_collections["mask"]
+
+        # Create view that skips first volume
+        image_view = image_vc.iloc[1:]
+        mask_view = mask_vc.iloc[1:]
+
+        dataset = SegmentationDataset(image=image_view, mask=mask_view)
+
+        # Position 0 in view should be original position 1
+        sample = dataset[0]
+        expected_subject = image_vc.obs_subject_ids[1]
+        assert sample["obs_subject_id"] == expected_subject
+
+    def test_view_dataset_length(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify view-based dataset has correct length."""
+        image_vc = segmentation_collections["image"]
+        mask_vc = segmentation_collections["mask"]
+
+        # Create view with 2 of 3 volumes
+        image_view = image_vc.iloc[:2]
+        mask_view = mask_vc.iloc[:2]
+
+        dataset = SegmentationDataset(image=image_view, mask=mask_view)
+        assert len(dataset) == 2
+
+    def test_view_obs_ids_match_source(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify obs_ids in samples match the source collection."""
+        image_vc = segmentation_collections["image"]
+        mask_vc = segmentation_collections["mask"]
+
+        # Create view that skips first volume
+        image_view = image_vc.iloc[1:]
+        mask_view = mask_vc.iloc[1:]
+
+        dataset = SegmentationDataset(image=image_view, mask=mask_view)
+
+        # All obs_ids should come from the view's obs_ids
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            assert sample["obs_id"] == image_view.obs_ids[i]
+
+    def test_foreground_sampling_with_views(
+        self, segmentation_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Verify foreground sampling works correctly with views."""
+        image_vc = segmentation_collections["image"]
+        mask_vc = segmentation_collections["mask"]
+
+        # Create view
+        image_view = image_vc.iloc[1:]
+        mask_view = mask_vc.iloc[1:]
+
+        config = DatasetConfig(
+            loading_mode=LoadingMode.PATCH,
+            patch_size=(64, 64, 64),
+            patches_per_volume=2,
+        )
+        dataset = SegmentationDataset(
+            image=image_view,
+            mask=mask_view,
+            config=config,
+            foreground_sampling=True,
+            foreground_threshold=0.001,
+        )
+
+        # Should not crash and produce valid samples
+        sample = dataset[0]
+        assert "image" in sample
+        assert "mask" in sample
+        assert sample["image"].shape == (1, 64, 64, 64)

@@ -9,11 +9,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data import get_test_data_path
+from radiobject.data import get_dataset_path
 from radiobject.radi_object import RadiObject
 from radiobject.volume_collection import VolumeCollection
 
-DATA_DIR = get_test_data_path()
+DATA_DIR = get_dataset_path("msd-brain-tumour")
 
 
 class TestVolumeCollectionAppendNiftis:

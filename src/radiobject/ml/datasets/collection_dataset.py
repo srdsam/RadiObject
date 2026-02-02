@@ -11,7 +11,6 @@ from torch.utils.data import Dataset
 
 from radiobject._types import LabelSource
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.reader import VolumeReader
 from radiobject.ml.utils.labels import load_labels
 from radiobject.ml.utils.validation import validate_collection_alignment, validate_uniform_shapes
 
@@ -20,25 +19,7 @@ if TYPE_CHECKING:
 
 
 class VolumeCollectionDataset(Dataset):
-    """PyTorch Dataset for VolumeCollection(s) - primary ML interface.
-
-    This is the recommended way to create PyTorch Datasets from RadiObject data.
-    Works with single or multiple VolumeCollections (for multi-modal training).
-
-    Example:
-        # Single collection
-        dataset = VolumeCollectionDataset(radi.CT, labels="has_tumor")
-
-        # Multi-modal (aligned collections)
-        dataset = VolumeCollectionDataset(
-            [radi.T1w, radi.FLAIR],
-            labels=labels_df,  # DataFrame with obs_id and label columns
-        )
-
-        # With patch extraction
-        config = DatasetConfig(loading_mode=LoadingMode.PATCH, patch_size=(64, 64, 64))
-        dataset = VolumeCollectionDataset(radi.CT, config=config, labels="grade")
-    """
+    """PyTorch Dataset for VolumeCollection(s) - primary ML interface."""
 
     def __init__(
         self,
@@ -75,27 +56,26 @@ class VolumeCollectionDataset(Dataset):
         self._collections = list(collections)
         self._collection_names = [c.name or f"collection_{i}" for i, c in enumerate(collections)]
 
-        # Create readers
-        self._readers: dict[str, VolumeReader] = {}
+        # Build dict for validation
+        collections_dict: dict[str, VolumeCollection] = {}
         for name, coll in zip(self._collection_names, self._collections):
-            self._readers[name] = VolumeReader(coll, ctx=coll._ctx)
+            collections_dict[name] = coll
 
         # Validate alignment if multi-modal
-        if len(self._readers) > 1:
-            validate_collection_alignment(self._readers)
+        if len(collections_dict) > 1:
+            validate_collection_alignment(collections_dict)
 
         # Validate uniform shapes (required for batched loading)
-        self._volume_shape = validate_uniform_shapes(self._readers)
+        self._volume_shape = validate_uniform_shapes(collections_dict)
 
-        first_reader = self._readers[self._collection_names[0]]
-        self._n_volumes = len(first_reader)
+        first_coll = self._collections[0]
+        self._n_volumes = len(first_coll)
 
         # Load labels from first collection's obs
         self._labels: dict[int, Any] | None = None
         if labels is not None:
-            first_coll = self._collections[0]
             obs_df = first_coll.obs.read() if isinstance(labels, str) else None
-            self._labels = load_labels(first_reader, labels, obs_df)
+            self._labels = load_labels(first_coll, labels, obs_df)
 
         # Compute dataset length based on loading mode
         if self._config.loading_mode == LoadingMode.PATCH:
@@ -118,7 +98,7 @@ class VolumeCollectionDataset(Dataset):
 
     def _get_full_volume_item(self, idx: int) -> dict[str, Any]:
         """Load full volume for all collections."""
-        volumes = [self._readers[name].read_full(idx) for name in self._collection_names]
+        volumes = [coll.iloc[idx].to_numpy() for coll in self._collections]
 
         stacked = np.stack(volumes, axis=0)
         result: dict[str, Any] = {
@@ -147,10 +127,15 @@ class VolumeCollectionDataset(Dataset):
             rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
         )
 
-        volumes = [
-            self._readers[name].read_patch(volume_idx, start, patch_size)
-            for name in self._collection_names
-        ]
+        volumes = []
+        for coll in self._collections:
+            vol = coll.iloc[volume_idx]
+            patch = vol.slice(
+                slice(start[0], start[0] + patch_size[0]),
+                slice(start[1], start[1] + patch_size[1]),
+                slice(start[2], start[2] + patch_size[2]),
+            )
+            volumes.append(patch)
 
         stacked = np.stack(volumes, axis=0)
         result: dict[str, Any] = {
@@ -172,10 +157,7 @@ class VolumeCollectionDataset(Dataset):
         volume_idx = idx // self._volume_shape[2]
         slice_idx = idx % self._volume_shape[2]
 
-        slices = [
-            self._readers[name].read_slice(volume_idx, axis=2, position=slice_idx)
-            for name in self._collection_names
-        ]
+        slices = [coll.iloc[volume_idx].axial(slice_idx) for coll in self._collections]
 
         stacked = np.stack(slices, axis=0)
         result: dict[str, Any] = {
@@ -192,7 +174,7 @@ class VolumeCollectionDataset(Dataset):
         return result
 
     def _add_label(self, result: dict[str, Any], volume_idx: int) -> None:
-        """Add label to result dict if available."""
+        """Add label column to sample dict from label source."""
         if self._labels is not None and volume_idx in self._labels:
             label = self._labels[volume_idx]
             if isinstance(label, (int, float, np.integer, np.floating)):

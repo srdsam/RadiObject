@@ -65,40 +65,46 @@ class _ILocIndexer:
     def __init__(self, collection: VolumeCollection):
         self._collection = collection
 
-    def _get_volume(self, idx: int) -> Volume:
-        """Construct Volume on-demand (lazy loading)."""
-        return Volume(f"{self._collection.uri}/volumes/{idx}", ctx=self._collection._ctx)
+    def _get_volume(self, obs_id: str) -> Volume:
+        """Construct Volume on-demand by obs_id."""
+        root = self._collection._root
+        idx = root._index.get_index(obs_id)
+        return Volume(f"{root.uri}/volumes/{idx}", ctx=root._ctx)
 
     @overload
     def __getitem__(self, key: int) -> Volume: ...
     @overload
-    def __getitem__(self, key: slice) -> list[Volume]: ...
+    def __getitem__(self, key: slice) -> VolumeCollection: ...
     @overload
-    def __getitem__(self, key: list[int]) -> list[Volume]: ...
+    def __getitem__(self, key: list[int]) -> VolumeCollection: ...
     @overload
-    def __getitem__(self, key: npt.NDArray[np.bool_]) -> list[Volume]: ...
+    def __getitem__(self, key: npt.NDArray[np.bool_]) -> VolumeCollection: ...
 
     def __getitem__(
         self, key: int | slice | list[int] | npt.NDArray[np.bool_]
-    ) -> Volume | list[Volume]:
+    ) -> Volume | VolumeCollection:
         """Index by int, slice, list of ints, or boolean mask."""
-        n = len(self._collection)
+        obs_ids = self._collection._effective_obs_ids
+        n = len(obs_ids)
         if isinstance(key, int):
             idx = _normalize_index(key, n)
-            return self._get_volume(idx)
+            return self._get_volume(obs_ids[idx])
 
         elif isinstance(key, slice):
-            indices = range(*key.indices(n))
-            return [self._get_volume(i) for i in indices]
+            indices = list(range(*key.indices(n)))
+            selected_ids = frozenset(obs_ids[i] for i in indices)
+            return self._collection._create_view(volume_ids=selected_ids)
 
         elif isinstance(key, np.ndarray) and key.dtype == np.bool_:
             if len(key) != n:
                 raise ValueError(f"Boolean mask length {len(key)} != volume count {n}")
             indices = np.where(key)[0]
-            return [self._get_volume(int(i)) for i in indices]
+            selected_ids = frozenset(obs_ids[int(i)] for i in indices)
+            return self._collection._create_view(volume_ids=selected_ids)
 
         elif isinstance(key, list):
-            return [self._get_volume(_normalize_index(i, n)) for i in key]
+            selected_ids = frozenset(obs_ids[_normalize_index(i, n)] for i in key)
+            return self._collection._create_view(volume_ids=selected_ids)
 
         raise TypeError(
             f"iloc indices must be int, slice, list[int], or boolean array, got {type(key)}"
@@ -111,23 +117,33 @@ class _LocIndexer:
     def __init__(self, collection: VolumeCollection):
         self._collection = collection
 
-    def _get_volume(self, idx: int) -> Volume:
-        """Construct Volume on-demand (lazy loading)."""
-        return Volume(f"{self._collection.uri}/volumes/{idx}", ctx=self._collection._ctx)
+    def _get_volume(self, obs_id: str) -> Volume:
+        """Construct Volume on-demand by obs_id."""
+        root = self._collection._root
+        idx = root._index.get_index(obs_id)
+        return Volume(f"{root.uri}/volumes/{idx}", ctx=root._ctx)
 
     @overload
     def __getitem__(self, key: str) -> Volume: ...
     @overload
-    def __getitem__(self, key: list[str]) -> list[Volume]: ...
+    def __getitem__(self, key: list[str]) -> VolumeCollection: ...
 
-    def __getitem__(self, key: str | list[str]) -> Volume | list[Volume]:
+    def __getitem__(self, key: str | list[str]) -> Volume | VolumeCollection:
         """Index by obs_id string or list of obs_id strings."""
         if isinstance(key, str):
-            idx = self._collection._index.get_index(key)
-            return self._get_volume(idx)
+            # Validate the key is in the effective set
+            if self._collection.is_view and key not in self._collection._volume_ids:
+                raise KeyError(f"obs_id '{key}' not in view")
+            return self._get_volume(key)
 
         elif isinstance(key, list):
-            return [self._get_volume(self._collection._index.get_index(k)) for k in key]
+            selected_ids = frozenset(key)
+            # Validate all keys are in the effective set
+            if self._collection.is_view:
+                invalid = selected_ids - self._collection._volume_ids
+                if invalid:
+                    raise KeyError(f"obs_ids not in view: {sorted(invalid)[:5]}")
+            return self._collection._create_view(volume_ids=selected_ids)
 
         raise TypeError(f"loc indices must be str or list[str], got {type(key)}")
 
@@ -135,12 +151,76 @@ class _LocIndexer:
 class VolumeCollection:
     """TileDB-backed volume collection indexed by obs_id. Supports uniform or heterogeneous shapes."""
 
-    def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
-        self.uri: str = uri
+    def __init__(
+        self,
+        uri: str | None,
+        ctx: tiledb.Ctx | None = None,
+        *,
+        _source: VolumeCollection | None = None,
+        _volume_ids: frozenset[str] | None = None,
+    ):
+        self._uri: str | None = uri
         self._ctx: tiledb.Ctx | None = ctx
+        self._source: VolumeCollection | None = _source
+        self._volume_ids: frozenset[str] | None = _volume_ids
+
+    @property
+    def uri(self) -> str:
+        """URI of the underlying storage (raises if view without storage)."""
+        if self._uri is not None:
+            return self._uri
+        if self._source is not None:
+            return self._source.uri
+        raise ValueError("VolumeCollection view has no URI. Call materialize(uri) first.")
+
+    @property
+    def is_view(self) -> bool:
+        """True if this VolumeCollection is a filtered view of another."""
+        return self._source is not None
+
+    @property
+    def _root(self) -> VolumeCollection:
+        """The original attached VolumeCollection (follows source chain)."""
+        return self._source._root if self._source else self
+
+    def _check_not_view(self, operation: str) -> None:
+        """Raise if this is a view (views are immutable)."""
+        if self.is_view:
+            raise TypeError(f"Cannot {operation} on a view. Call materialize(uri) first.")
+
+    def _create_view(self, volume_ids: frozenset[str]) -> VolumeCollection:
+        """Create a view with the given volume IDs, intersecting with current filter."""
+        if self._volume_ids is not None:
+            volume_ids = self._volume_ids & volume_ids
+        return VolumeCollection(
+            uri=None,
+            ctx=self._ctx,
+            _source=self._root,
+            _volume_ids=volume_ids,
+        )
+
+    @property
+    def _effective_obs_ids(self) -> list[str]:
+        """Get the list of obs_ids for this collection (filtered if view)."""
+        root = self._root
+        all_ids = list(root._index.keys)
+        if self._volume_ids is not None:
+            return [obs_id for obs_id in all_ids if obs_id in self._volume_ids]
+        return all_ids
 
     def _effective_ctx(self) -> tiledb.Ctx:
         return self._ctx if self._ctx else global_ctx()
+
+    def copy(self) -> VolumeCollection:
+        """Create detached copy of this collection (views remain views)."""
+        if self.is_view:
+            return VolumeCollection(
+                uri=None,
+                ctx=self._ctx,
+                _source=self._root,
+                _volume_ids=self._volume_ids,
+            )
+        return VolumeCollection(self._uri, ctx=self._ctx)
 
     @cached_property
     def iloc(self) -> _ILocIndexer:
@@ -155,13 +235,13 @@ class VolumeCollection:
     @property
     def obs(self) -> Dataframe:
         """Observational metadata per volume."""
-        obs_uri = f"{self.uri}/obs"
+        obs_uri = f"{self._root.uri}/obs"
         return Dataframe(uri=obs_uri, ctx=self._ctx)
 
     @cached_property
     def _metadata(self) -> dict:
         """Cached group metadata."""
-        with tiledb.Group(self.uri, "r", ctx=self._effective_ctx()) as grp:
+        with tiledb.Group(self._root.uri, "r", ctx=self._effective_ctx()) as grp:
             return dict(grp.meta)
 
     @cached_property
@@ -197,25 +277,39 @@ class VolumeCollection:
         return self.shape is not None
 
     def __len__(self) -> int:
-        """Number of volumes in collection."""
+        """Number of volumes in collection (respects view filter)."""
+        if self._volume_ids is not None:
+            return len(self._volume_ids)
         return int(self._metadata["n_volumes"])
 
     def __iter__(self):
-        """Iterate over volumes in index order."""
-        for i in range(len(self)):
-            yield self.iloc[i]
+        """Iterate over volumes in index order (respects view filter)."""
+        for obs_id in self._effective_obs_ids:
+            yield self.loc[obs_id]
 
     def __repr__(self) -> str:
         """Concise representation of the VolumeCollection."""
         shape = self.shape
         shape_str = "x".join(str(d) for d in shape) if shape else "heterogeneous"
         name_part = f"'{self.name}', " if self.name else ""
-        return f"VolumeCollection({name_part}{len(self)} volumes, shape={shape_str})"
+        view_part = ", view" if self.is_view else ""
+        return f"VolumeCollection({name_part}{len(self)} volumes, shape={shape_str}{view_part})"
 
     @property
     def obs_ids(self) -> list[str]:
-        """All obs_id values in index order."""
-        return list(self._index.keys)
+        """All obs_id values in index order (respects view filter)."""
+        return self._effective_obs_ids
+
+    @property
+    def obs_subject_ids(self) -> list[str]:
+        """Get obs_subject_id values for this collection (respects view filter)."""
+        obs_df = self.obs.read()
+        if self._volume_ids is not None:
+            obs_df = obs_df[obs_df["obs_id"].isin(self._volume_ids)]
+        # Maintain order consistent with obs_ids
+        effective_ids = self._effective_obs_ids
+        id_to_subject = dict(zip(obs_df["obs_id"], obs_df["obs_subject_id"]))
+        return [id_to_subject[obs_id] for obs_id in effective_ids]
 
     def get_obs_row_by_obs_id(self, obs_id: str) -> pd.DataFrame:
         """Get observation row by obs_id string identifier."""
@@ -228,14 +322,16 @@ class VolumeCollection:
     @overload
     def __getitem__(self, key: str) -> Volume: ...
     @overload
-    def __getitem__(self, key: slice) -> list[Volume]: ...
+    def __getitem__(self, key: slice) -> VolumeCollection: ...
     @overload
-    def __getitem__(self, key: list[int]) -> list[Volume]: ...
+    def __getitem__(self, key: list[int]) -> VolumeCollection: ...
     @overload
-    def __getitem__(self, key: list[str]) -> list[Volume]: ...
+    def __getitem__(self, key: list[str]) -> VolumeCollection: ...
 
-    def __getitem__(self, key: int | str | slice | list[int] | list[str]) -> Volume | list[Volume]:
-        """Index by int, str, slice, or list."""
+    def __getitem__(
+        self, key: int | str | slice | list[int] | list[str]
+    ) -> Volume | VolumeCollection:
+        """Index by int, str, slice, or list. Slices/lists return views."""
         if isinstance(key, int):
             return self.iloc[key]
         elif isinstance(key, str):
@@ -244,7 +340,7 @@ class VolumeCollection:
             return self.iloc[key]
         elif isinstance(key, list):
             if len(key) == 0:
-                return []
+                return self._create_view(volume_ids=frozenset())
             if isinstance(key[0], int):
                 return self.iloc[key]
             elif isinstance(key[0], str):
@@ -252,7 +348,9 @@ class VolumeCollection:
         raise TypeError(f"Key must be int, str, slice, or list, got {type(key)}")
 
     def validate(self) -> None:
-        """Validate internal consistency of the VolumeCollection."""
+        """Validate internal consistency of obs vs volume metadata."""
+        self._check_not_view("validate")
+
         obs_data = self.obs.read()
         obs_ids_in_dataframe = set(obs_data["obs_id"])
 
@@ -279,42 +377,121 @@ class VolumeCollection:
         if orphan_obs:
             raise ValueError(f"Obs rows without volumes: {list(orphan_obs)[:5]}")
 
-        with tiledb.Group(f"{self.uri}/volumes", "r", ctx=self._effective_ctx()) as grp:
+        with tiledb.Group(f"{self._root.uri}/volumes", "r", ctx=self._effective_ctx()) as grp:
             actual_count = len(list(grp))
         if actual_count != self._metadata["n_volumes"]:
             raise ValueError(
                 f"n_volumes mismatch: metadata={self._metadata['n_volumes']}, actual={actual_count}"
             )
 
-    # ===== Query Builder (Pipeline Mode) =====
+    # ===== Lazy Mode (Transform Pipelines) =====
 
-    def query(self) -> CollectionQuery:
-        """Create a lazy CollectionQuery builder for pipeline-style filtering."""
+    def lazy(self) -> CollectionQuery:
+        """Enter lazy mode for transform pipelines via map()."""
         from radiobject.query import CollectionQuery
 
-        return CollectionQuery(self)
+        return CollectionQuery(self._root, volume_ids=self._volume_ids)
 
-    # ===== Convenience Filtering Methods =====
+    # ===== Filtering Methods (Return Views) =====
 
-    def head(self, n: int = 5) -> CollectionQuery:
-        """Return query for first n volumes."""
-        return self.query().head(n)
+    def head(self, n: int = 5) -> VolumeCollection:
+        """Return view of first n volumes."""
+        return self.iloc[:n]
 
-    def tail(self, n: int = 5) -> CollectionQuery:
-        """Return query for last n volumes."""
-        return self.query().tail(n)
+    def tail(self, n: int = 5) -> VolumeCollection:
+        """Return view of last n volumes."""
+        total = len(self)
+        return self.iloc[max(0, total - n) :]
 
-    def sample(self, n: int = 5, seed: int | None = None) -> CollectionQuery:
-        """Return query for n randomly sampled volumes."""
-        return self.query().sample(n, seed)
+    def sample(self, n: int = 5, seed: int | None = None) -> VolumeCollection:
+        """Return view of n randomly sampled volumes."""
+        rng = np.random.default_rng(seed)
+        obs_ids = self._effective_obs_ids
+        n = min(n, len(obs_ids))
+        sampled = rng.choice(obs_ids, size=n, replace=False)
+        return self._create_view(volume_ids=frozenset(sampled))
 
-    def filter(self, expr: str) -> CollectionQuery:
-        """Filter volumes using TileDB QueryCondition on obs."""
-        return self.query().filter(expr)
+    def filter(self, expr: str) -> VolumeCollection:
+        """Filter volumes using TileDB QueryCondition on obs. Returns view."""
+        matching_ids = self._resolve_filter(expr)
+        return self._create_view(volume_ids=matching_ids)
+
+    def _resolve_filter(self, expr: str) -> frozenset[str]:
+        """Resolve filter expression to set of matching obs_ids."""
+        effective_ctx = self._effective_ctx()
+        obs_uri = f"{self._root.uri}/obs"
+
+        with tiledb.open(obs_uri, "r", ctx=effective_ctx) as arr:
+            result = arr.query(cond=expr, dims=["obs_id"])[:]
+            obs_ids = result["obs_id"]
+            matching = frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
+
+        # Intersect with current view filter
+        if self._volume_ids is not None:
+            matching = matching & self._volume_ids
+
+        return matching
 
     def map(self, fn: TransformFn) -> CollectionQuery:
-        """Apply transform to all volumes during materialization."""
-        return self.query().map(fn)
+        """Apply transform to all volumes during materialization. Returns lazy query."""
+        return self.lazy().map(fn)
+
+    # ===== Materialization =====
+
+    def materialize(
+        self,
+        uri: str,
+        name: str | None = None,
+        ctx: tiledb.Ctx | None = None,
+    ) -> VolumeCollection:
+        """Write this collection (or view) to new storage.
+
+        Creates a new VolumeCollection at the target URI containing all volumes
+        in this view. For views, only the filtered volumes are written.
+        """
+        from radiobject.streaming import StreamingWriter
+
+        obs_ids = self._effective_obs_ids
+        if not obs_ids:
+            raise ValueError("No volumes to materialize")
+
+        # Get obs DataFrame for this view
+        obs_df = self.obs.read()
+        if self._volume_ids is not None:
+            obs_df = obs_df[obs_df["obs_id"].isin(self._volume_ids)].reset_index(drop=True)
+
+        collection_name = name or self._root.name
+
+        # Build obs schema from source
+        obs_schema: dict[str, np.dtype] = {}
+        for col in self._root.obs.columns:
+            if col in ("obs_id", "obs_subject_id"):
+                continue
+            obs_schema[col] = self._root.obs.dtypes[col]
+
+        effective_ctx = ctx if ctx else self._effective_ctx()
+
+        with StreamingWriter(
+            uri=uri,
+            shape=self._root.shape,
+            obs_schema=obs_schema,
+            name=collection_name,
+            ctx=effective_ctx,
+        ) as writer:
+            for obs_id in obs_ids:
+                vol = self.loc[obs_id]
+                data = vol.to_numpy()
+
+                obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
+                attrs = {k: v for k, v in obs_row.items() if k not in ("obs_id", "obs_subject_id")}
+                writer.write_volume(
+                    data=data,
+                    obs_id=obs_id,
+                    obs_subject_id=obs_row["obs_subject_id"],
+                    **attrs,
+                )
+
+        return VolumeCollection(uri, ctx=effective_ctx)
 
     # ===== ML Integration =====
 
@@ -376,6 +553,7 @@ class VolumeCollection:
         """Append new volumes atomically.
 
         Volume data and obs metadata are written together to maintain consistency.
+        Cannot be called on views - use materialize() first.
 
         Args:
             niftis: List of (nifti_path, obs_subject_id) tuples
@@ -391,6 +569,8 @@ class VolumeCollection:
                 ],
             )
         """
+        self._check_not_view("append")
+
         if niftis is None and dicom_dirs is None:
             raise ValueError("Must provide either niftis or dicom_dirs")
         if niftis is not None and dicom_dirs is not None:

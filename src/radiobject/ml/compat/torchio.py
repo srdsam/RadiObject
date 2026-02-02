@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Sequence
 import torch
 from torch.utils.data import Dataset
 
-from radiobject.ml.reader import VolumeReader
-from radiobject.ml.utils.labels import LabelSource, load_labels
+from radiobject._types import LabelSource
+from radiobject.ml.utils.labels import load_labels
 
 if TYPE_CHECKING:
     from radiobject.volume_collection import VolumeCollection
@@ -23,38 +23,13 @@ except ImportError:
 
 
 def _require_torchio() -> None:
+    """Raise ImportError if TorchIO not installed."""
     if not HAS_TORCHIO:
         raise ImportError("TorchIO required. Install with: pip install radiobject[torchio]")
 
 
 class VolumeCollectionSubjectsDataset(Dataset):
-    """TorchIO-compatible dataset yielding Subject objects from VolumeCollection(s).
-
-    Use this when you need TorchIO's Queue for efficient patch-based training,
-    or when using TorchIO's specialized transforms.
-
-    Example:
-        # Single collection
-        dataset = VolumeCollectionSubjectsDataset(radi.CT, labels="has_tumor")
-
-        # Multi-modal
-        dataset = VolumeCollectionSubjectsDataset(
-            [radi.T1w, radi.FLAIR],
-            labels=labels_df,
-        )
-
-        # With TorchIO transforms
-        transform = tio.Compose([
-            tio.ZNormalization(),
-            tio.RandomFlip(axes=('LR',)),
-        ])
-        dataset = VolumeCollectionSubjectsDataset(radi.CT, labels="grade", transform=transform)
-
-        # With TorchIO Queue for patch training
-        sampler = tio.data.UniformSampler(patch_size=64)
-        queue = tio.Queue(dataset, max_length=100, samples_per_volume=10, sampler=sampler)
-        loader = DataLoader(queue, batch_size=16, num_workers=0)
-    """
+    """TorchIO-compatible dataset yielding Subject objects from VolumeCollection(s)."""
 
     def __init__(
         self,
@@ -87,20 +62,14 @@ class VolumeCollectionSubjectsDataset(Dataset):
         self._collection_names = [c.name or f"collection_{i}" for i, c in enumerate(collections)]
         self._transform = transform
 
-        # Create readers
-        self._readers: dict[str, VolumeReader] = {}
-        for name, coll in zip(self._collection_names, self._collections):
-            self._readers[name] = VolumeReader(coll, ctx=coll._ctx)
-
-        first_reader = self._readers[self._collection_names[0]]
-        self._n_subjects = len(first_reader)
+        first_coll = self._collections[0]
+        self._n_subjects = len(first_coll)
 
         # Load labels from first collection's obs
         self._labels: dict[int, Any] | None = None
         if labels is not None:
-            first_coll = self._collections[0]
             obs_df = first_coll.obs.read() if isinstance(labels, str) else None
-            self._labels = load_labels(first_reader, labels, obs_df)
+            self._labels = load_labels(first_coll, labels, obs_df)
 
     def __len__(self) -> int:
         return self._n_subjects
@@ -109,8 +78,8 @@ class VolumeCollectionSubjectsDataset(Dataset):
         """Return TorchIO Subject with images for all collections."""
         subject_dict: dict[str, Any] = {}
 
-        for name in self._collection_names:
-            data = self._readers[name].read_full(idx)
+        for name, coll in zip(self._collection_names, self._collections):
+            data = coll.iloc[idx].to_numpy()
             tensor = torch.from_numpy(data).unsqueeze(0).float()
             subject_dict[name] = tio.ScalarImage(tensor=tensor)
 

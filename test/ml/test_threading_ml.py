@@ -1,13 +1,12 @@
 """ML-specific threading and multiprocessing tests.
 
 These tests investigate DataLoader worker isolation, memory scaling,
-and thread safety of VolumeReader.
+and thread safety of VolumeCollection access.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,7 +18,6 @@ import torch
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
 from radiobject.ml.datasets import VolumeCollectionDataset
-from radiobject.ml.reader import VolumeReader
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
@@ -168,12 +166,11 @@ class TestIPCSerializationOverhead:
 
 
 class TestConcurrentVolumeReadsThreadSafety:
-    """Stress test VolumeReader thread safety."""
+    """Stress test VolumeCollection thread safety."""
 
     def test_concurrent_reads_same_volume(self, populated_radi_object_module: "RadiObject") -> None:
         """Test concurrent reads of the same volume."""
         collection = populated_radi_object_module.collection("flair")
-        reader = VolumeReader(collection)
 
         errors: list[Exception] = []
         results: list[np.ndarray] = []
@@ -181,7 +178,7 @@ class TestConcurrentVolumeReadsThreadSafety:
 
         def read_volume(idx: int) -> None:
             try:
-                data = reader.read_full(idx % len(reader))
+                data = collection.iloc[idx % len(collection)].to_numpy()
                 with lock:
                     results.append(data)
             except Exception as e:
@@ -207,7 +204,6 @@ class TestConcurrentVolumeReadsThreadSafety:
     ) -> None:
         """Test concurrent reads of different volumes."""
         collection = populated_radi_object_module.collection("flair")
-        reader = VolumeReader(collection)
 
         errors: list[Exception] = []
         results: dict[int, np.ndarray] = {}
@@ -215,7 +211,7 @@ class TestConcurrentVolumeReadsThreadSafety:
 
         def read_volume(idx: int) -> None:
             try:
-                data = reader.read_full(idx)
+                data = collection.iloc[idx].to_numpy()
                 with lock:
                     results[idx] = data
             except Exception as e:
@@ -223,7 +219,7 @@ class TestConcurrentVolumeReadsThreadSafety:
                     errors.append(e)
 
         # Read all volumes concurrently
-        n_volumes = len(reader)
+        n_volumes = len(collection)
         with ThreadPoolExecutor(max_workers=n_volumes) as executor:
             futures = [executor.submit(read_volume, i) for i in range(n_volumes)]
             for f in as_completed(futures):
@@ -235,20 +231,24 @@ class TestConcurrentVolumeReadsThreadSafety:
     def test_concurrent_patch_reads(self, populated_radi_object_module: "RadiObject") -> None:
         """Test concurrent patch extraction."""
         collection = populated_radi_object_module.collection("flair")
-        reader = VolumeReader(collection)
+        patch_size = (64, 64, 64)
 
         errors: list[Exception] = []
         results: list[np.ndarray] = []
         lock = threading.Lock()
-        patch_size = (64, 64, 64)
 
         def read_patch(idx: int) -> None:
             try:
-                vol_idx = idx % len(reader)
+                vol_idx = idx % len(collection)
                 rng = np.random.default_rng(seed=idx)
-                shape = reader.shape
+                shape = collection.shape
                 start = tuple(rng.integers(0, shape[i] - patch_size[i] + 1) for i in range(3))
-                data = reader.read_patch(vol_idx, start, patch_size)
+                vol = collection.iloc[vol_idx]
+                data = vol.slice(
+                    slice(start[0], start[0] + patch_size[0]),
+                    slice(start[1], start[1] + patch_size[1]),
+                    slice(start[2], start[2] + patch_size[2]),
+                )
                 with lock:
                     results.append(data)
             except Exception as e:
@@ -267,54 +267,3 @@ class TestConcurrentVolumeReadsThreadSafety:
         # All patches should have correct shape
         for patch in results:
             assert patch.shape == patch_size
-
-
-class TestVolumeReaderContextCaching:
-    """Test VolumeReader context caching behavior."""
-
-    def test_context_cached_per_process(self, populated_radi_object_module: "RadiObject") -> None:
-        """Verify context is cached per (pid, config_hash)."""
-        collection = populated_radi_object_module.collection("flair")
-        reader = VolumeReader(collection)
-
-        # First read creates context
-        _ = reader.read_full(0)
-
-        # Second read should use cached context
-        _ = reader.read_full(1)
-
-        # Check the cache has an entry for this process
-        from radiobject.ml.reader import _PROCESS_CTX_CACHE
-
-        pid = os.getpid()
-        matching_keys = [k for k in _PROCESS_CTX_CACHE if k[0] == pid]
-        assert len(matching_keys) >= 1
-
-    def test_different_configs_different_cache_entries(
-        self, populated_radi_object_module: "RadiObject"
-    ) -> None:
-        """Verify different configs create different cache entries."""
-        import tiledb
-
-        collection = populated_radi_object_module.collection("flair")
-
-        # Reader with default config
-        reader1 = VolumeReader(collection)
-        _ = reader1.read_full(0)
-
-        # Reader with custom config
-        cfg = tiledb.Config()
-        cfg["sm.memory_budget"] = str(256 * 1024 * 1024)
-        custom_ctx = tiledb.Ctx(cfg)
-
-        reader2 = VolumeReader(collection, ctx=custom_ctx)
-        _ = reader2.read_full(0)
-
-        from radiobject.ml.reader import _PROCESS_CTX_CACHE
-
-        pid = os.getpid()
-        matching_keys = [k for k in _PROCESS_CTX_CACHE if k[0] == pid]
-
-        # Should have at least 2 entries (different configs)
-        # Note: may have more from other tests
-        assert len(matching_keys) >= 1

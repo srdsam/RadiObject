@@ -1,4 +1,4 @@
-"""Benchmark configuration - edit settings to customize benchmark runs."""
+"""Benchmark configuration settings."""
 
 # S3 region for TileDB VFS
 S3_REGION = "us-east-2"

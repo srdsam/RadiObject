@@ -9,8 +9,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from radiobject.ml.reader import VolumeReader
-
 if TYPE_CHECKING:
     from radiobject.volume_collection import VolumeCollection
 
@@ -25,14 +23,18 @@ class PatchVolumeDataset(Dataset):
         patches_per_volume: int = 1,
         transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ):
-        self._reader = VolumeReader(collection)
+        self._collection = collection
         self._patch_size = patch_size
         self._patches_per_volume = patches_per_volume
         self._transform = transform
 
-        self._n_volumes = len(self._reader)
-        self._volume_shape = self._reader.shape
+        self._obs_ids = collection.obs_ids
+        self._n_volumes = len(self._obs_ids)
+        self._volume_shape = collection.shape
         self._length = self._n_volumes * patches_per_volume
+
+        if self._volume_shape is None:
+            raise ValueError("Collection must have uniform shape for patch extraction")
 
         for i, dim in enumerate(patch_size):
             if dim > self._volume_shape[i]:
@@ -54,14 +56,19 @@ class PatchVolumeDataset(Dataset):
             rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
         )
 
-        data = self._reader.read_patch(volume_idx, start, self._patch_size)
+        vol = self._collection.iloc[volume_idx]
+        data = vol.slice(
+            slice(start[0], start[0] + self._patch_size[0]),
+            slice(start[1], start[1] + self._patch_size[1]),
+            slice(start[2], start[2] + self._patch_size[2]),
+        )
 
         result: dict[str, Any] = {
             "image": torch.from_numpy(data).unsqueeze(0),
             "idx": volume_idx,
             "patch_idx": patch_idx,
             "patch_start": start,
-            "obs_id": self._reader.get_obs_id(volume_idx),
+            "obs_id": self._obs_ids[volume_idx],
         }
 
         if self._transform is not None:
@@ -90,20 +97,24 @@ class GridPatchDataset(Dataset):
         stride: tuple[int, int, int] | None = None,
         transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ):
-        self._reader = VolumeReader(collection)
+        self._collection = collection
         self._patch_size = patch_size
         self._stride = stride or patch_size
         self._transform = transform
 
-        self._n_volumes = len(self._reader)
-        self._volume_shape = self._reader.shape
+        self._obs_ids = collection.obs_ids
+        self._n_volumes = len(self._obs_ids)
+        self._volume_shape = collection.shape
+
+        if self._volume_shape is None:
+            raise ValueError("Collection must have uniform shape for grid patch extraction")
 
         self._grid_positions = self._compute_grid_positions()
         self._patches_per_volume = len(self._grid_positions)
         self._length = self._n_volumes * self._patches_per_volume
 
     def _compute_grid_positions(self) -> list[tuple[int, int, int]]:
-        """Compute all valid patch start positions."""
+        """Compute grid patch positions for inference."""
         positions = []
         for x in range(0, self._volume_shape[0] - self._patch_size[0] + 1, self._stride[0]):
             for y in range(0, self._volume_shape[1] - self._patch_size[1] + 1, self._stride[1]):
@@ -121,14 +132,19 @@ class GridPatchDataset(Dataset):
         patch_idx = idx % self._patches_per_volume
         start = self._grid_positions[patch_idx]
 
-        data = self._reader.read_patch(volume_idx, start, self._patch_size)
+        vol = self._collection.iloc[volume_idx]
+        data = vol.slice(
+            slice(start[0], start[0] + self._patch_size[0]),
+            slice(start[1], start[1] + self._patch_size[1]),
+            slice(start[2], start[2] + self._patch_size[2]),
+        )
 
         result: dict[str, Any] = {
             "image": torch.from_numpy(data).unsqueeze(0),
             "idx": volume_idx,
             "patch_idx": patch_idx,
             "patch_start": start,
-            "obs_id": self._reader.get_obs_id(volume_idx),
+            "obs_id": self._obs_ids[volume_idx],
         }
 
         if self._transform is not None:

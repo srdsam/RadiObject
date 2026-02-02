@@ -146,7 +146,7 @@ class StreamingWriter:
             self.write_volume(data, obs_id, obs_subject_id, **attrs)
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Finalize the collection by writing obs data and updating metadata."""
+        """Finalize collection and write obs metadata."""
         if self._finalized:
             return
 

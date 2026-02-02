@@ -10,7 +10,6 @@ import torch
 from torch.utils.data import Dataset
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.reader import VolumeReader
 from radiobject.ml.utils.validation import validate_collection_alignment, validate_uniform_shapes
 
 if TYPE_CHECKING:
@@ -18,26 +17,7 @@ if TYPE_CHECKING:
 
 
 class SegmentationDataset(Dataset):
-    """PyTorch Dataset for segmentation training with explicit image/mask separation.
-
-    Unlike VolumeCollectionDataset which stacks collections as channels, this dataset
-    returns separate "image" and "mask" tensors. This is cleaner for segmentation
-    workflows where transforms need to be applied differently to images vs masks.
-
-    Example:
-        from monai.transforms import NormalizeIntensityd, RandFlipd
-
-        dataset = SegmentationDataset(
-            image=radi.CT,
-            mask=radi.seg,
-            patch_size=(64, 64, 64),
-            image_transform=NormalizeIntensityd(keys="image"),
-            spatial_transform=RandFlipd(keys=["image", "mask"], prob=0.5),
-            foreground_sampling=True,
-        )
-
-        # Returns: {"image": (1,X,Y,Z), "mask": (1,X,Y,Z), "obs_subject_id": str, ...}
-    """
+    """PyTorch Dataset for segmentation training with explicit image/mask separation."""
 
     def __init__(
         self,
@@ -73,17 +53,21 @@ class SegmentationDataset(Dataset):
         self._foreground_threshold = foreground_threshold
         self._foreground_max_retries = foreground_max_retries
 
-        # Create readers
-        self._image_reader = VolumeReader(image, ctx=image._ctx)
-        self._mask_reader = VolumeReader(mask, ctx=mask._ctx)
+        # Store collections directly
+        self._image = image
+        self._mask = mask
+
+        # Cache obs_ids and obs_subject_ids for fast access
+        self._obs_ids = image.obs_ids
+        self._obs_subject_ids = image.obs_subject_ids
 
         # Validate alignment between image and mask collections
-        readers = {"image": self._image_reader, "mask": self._mask_reader}
-        validate_collection_alignment(readers)
+        collections = {"image": self._image, "mask": self._mask}
+        validate_collection_alignment(collections)
 
         # Validate uniform shapes
-        self._volume_shape = validate_uniform_shapes(readers)
-        self._n_volumes = len(self._image_reader)
+        self._volume_shape = validate_uniform_shapes(collections)
+        self._n_volumes = len(self._image)
 
         # Compute dataset length
         if self._config.loading_mode == LoadingMode.PATCH:
@@ -106,15 +90,15 @@ class SegmentationDataset(Dataset):
 
     def _get_full_volume_item(self, idx: int) -> dict[str, Any]:
         """Load full volume for image and mask."""
-        image_data = self._image_reader.read_full(idx)
-        mask_data = self._mask_reader.read_full(idx)
+        image_data = self._image.iloc[idx].to_numpy()
+        mask_data = self._mask.iloc[idx].to_numpy()
 
         result: dict[str, Any] = {
             "image": torch.from_numpy(image_data).unsqueeze(0),
             "mask": torch.from_numpy(mask_data).unsqueeze(0),
             "idx": idx,
-            "obs_id": self._image_reader.get_obs_id(idx),
-            "obs_subject_id": self._image_reader.get_obs_subject_id(idx),
+            "obs_id": self._obs_ids[idx],
+            "obs_subject_id": self._obs_subject_ids[idx],
         }
 
         return self._apply_transforms(result)
@@ -138,8 +122,19 @@ class SegmentationDataset(Dataset):
                 rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
             )
 
-        image_data = self._image_reader.read_patch(volume_idx, start, patch_size)
-        mask_data = self._mask_reader.read_patch(volume_idx, start, patch_size)
+        image_vol = self._image.iloc[volume_idx]
+        mask_vol = self._mask.iloc[volume_idx]
+
+        image_data = image_vol.slice(
+            slice(start[0], start[0] + patch_size[0]),
+            slice(start[1], start[1] + patch_size[1]),
+            slice(start[2], start[2] + patch_size[2]),
+        )
+        mask_data = mask_vol.slice(
+            slice(start[0], start[0] + patch_size[0]),
+            slice(start[1], start[1] + patch_size[1]),
+            slice(start[2], start[2] + patch_size[2]),
+        )
 
         result: dict[str, Any] = {
             "image": torch.from_numpy(image_data).unsqueeze(0),
@@ -147,8 +142,8 @@ class SegmentationDataset(Dataset):
             "idx": volume_idx,
             "patch_idx": patch_idx,
             "patch_start": start,
-            "obs_id": self._image_reader.get_obs_id(volume_idx),
-            "obs_subject_id": self._image_reader.get_obs_subject_id(volume_idx),
+            "obs_id": self._obs_ids[volume_idx],
+            "obs_subject_id": self._obs_subject_ids[volume_idx],
         }
 
         return self._apply_transforms(result)
@@ -162,13 +157,18 @@ class SegmentationDataset(Dataset):
     ) -> tuple[int, int, int]:
         """Sample a patch position biased toward foreground regions."""
         rng = np.random.default_rng(seed=seed)
+        mask_vol = self._mask.iloc[volume_idx]
 
         for attempt in range(self._foreground_max_retries):
             start = tuple(
                 rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
             )
 
-            mask_patch = self._mask_reader.read_patch(volume_idx, start, patch_size)
+            mask_patch = mask_vol.slice(
+                slice(start[0], start[0] + patch_size[0]),
+                slice(start[1], start[1] + patch_size[1]),
+                slice(start[2], start[2] + patch_size[2]),
+            )
             foreground_ratio = np.count_nonzero(mask_patch) / mask_patch.size
 
             if foreground_ratio >= self._foreground_threshold:
@@ -182,22 +182,22 @@ class SegmentationDataset(Dataset):
         volume_idx = idx // self._volume_shape[2]
         slice_idx = idx % self._volume_shape[2]
 
-        image_data = self._image_reader.read_slice(volume_idx, axis=2, position=slice_idx)
-        mask_data = self._mask_reader.read_slice(volume_idx, axis=2, position=slice_idx)
+        image_data = self._image.iloc[volume_idx].axial(slice_idx)
+        mask_data = self._mask.iloc[volume_idx].axial(slice_idx)
 
         result: dict[str, Any] = {
             "image": torch.from_numpy(image_data).unsqueeze(0),
             "mask": torch.from_numpy(mask_data).unsqueeze(0),
             "idx": volume_idx,
             "slice_idx": slice_idx,
-            "obs_id": self._image_reader.get_obs_id(volume_idx),
-            "obs_subject_id": self._image_reader.get_obs_subject_id(volume_idx),
+            "obs_id": self._obs_ids[volume_idx],
+            "obs_subject_id": self._obs_subject_ids[volume_idx],
         }
 
         return self._apply_transforms(result)
 
     def _apply_transforms(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Apply transforms in order: spatial (both) then image-only."""
+        """Apply spatial and image transforms to sample dict."""
         # Spatial transform affects both image and mask
         if self._spatial_transform is not None:
             result = self._spatial_transform(result)

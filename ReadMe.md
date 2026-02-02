@@ -32,8 +32,10 @@ radi = RadiObject.from_niftis(
 vol = radi.CT.iloc[0]            # First CT volume
 data = vol[100:200, :, :]        # Partial read (only loads needed tiles)
 
-# Query filtering
-subset = radi.query().filter("age > 40").to_view()
+# Filtering (returns views)
+subset = radi.filter("age > 40")       # Query expression
+subset = radi.head(10)                 # First 10 subjects
+subset.materialize("./subset")         # Write to storage
 ```
 
 Works with local paths or S3 URIs (`s3://bucket/dataset`).
@@ -43,6 +45,21 @@ Works with local paths or S3 URIs (`s3://bucket/dataset`).
 NIfTI requires decompressing entire volumes; TileDB reads only the tiles needed.
 This enables **200-660x faster** partial reads. [See benchmarks →](docs/BENCHMARKS.md)
 
+## Sample Data
+
+Download sample datasets for tutorials and testing:
+
+```bash
+# Install download dependencies
+pip install radiobject[download]
+
+# Download BraTS brain tumor data (for tutorials 00-04)
+python scripts/download_dataset.py msd-brain-tumour
+
+# List all available datasets
+python scripts/download_dataset.py --list
+```
+
 ## Documentation
 
 - **[Tutorials](notebooks/README.md)** - Interactive notebooks
@@ -50,6 +67,7 @@ This enables **200-660x faster** partial reads. [See benchmarks →](docs/BENCHM
 - **[ML Integration](docs/ML_INTEGRATION.md)** - MONAI/TorchIO setup
 - **[Design](docs/DESIGN.md)** - Architecture decisions
 - **[Benchmarks](docs/BENCHMARKS.md)** - Performance analysis
+- **[Datasets](docs/DATASETS.md)** - Available datasets and download instructions
 
 ## License
 

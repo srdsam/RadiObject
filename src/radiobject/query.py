@@ -5,12 +5,13 @@ Query Design:
 Queries work by building up filter conditions and resolving them to masks (sets of IDs).
 The flow is:
 
-1. Start with RadiObject.query() or VolumeCollection.query()
+1. Start with RadiObject.lazy() or VolumeCollection.lazy()
 2. Add filter conditions (obs_meta filters, collection filters)
-3. Resolve to masks:
+3. Add transforms via .map() for compute-intensive operations
+4. Resolve to masks:
    - Subject mask: set of obs_subject_ids matching criteria
    - Volume mask: set of obs_ids within each collection matching criteria
-4. Apply masks via materialization (iter_volumes, to_radi_object, etc.)
+5. Apply masks via materialization (iter_volumes, materialize, etc.)
 
 Key Concepts:
 - obs_meta: Subject-level metadata (indexed by obs_subject_id)
@@ -56,15 +57,16 @@ class QueryCount:
 class Query:
     """Lazy filter builder for RadiObject with explicit materialization.
 
-    Filters accumulate without data access. Call iter_volumes(), to_radi_object(),
+    Filters accumulate without data access. Call iter_volumes(), materialize(),
     or count() to materialize results.
 
     Example:
         result = (
-            radi.query()
+            radi.lazy()
             .filter("age > 40")
             .filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
-            .to_radi_object("s3://bucket/subset")
+            .map(normalize_intensity)
+            .materialize("s3://bucket/subset")
         )
     """
 
@@ -423,7 +425,7 @@ class Query:
                 obs_ids=obs_ids,
             )
 
-    def to_radi_object(
+    def materialize(
         self,
         uri: str,
         streaming: bool = True,
@@ -440,25 +442,24 @@ class Query:
             streaming: Use streaming writer for memory efficiency (default: True)
             ctx: TileDB context
         """
-        from radiobject.radi_object import RadiObject, RadiObjectView
+        from radiobject.radi_object import RadiObject
         from radiobject.streaming import RadiObjectWriter
 
         subject_mask = self._resolve_final_subject_mask()
         output_collections = self._resolve_output_collections()
 
-        # If no transform, delegate to RadiObjectView for efficiency
+        # If no transform, create a RadiObject view and materialize it
         if self._transform_fn is None:
-            view = RadiObjectView(
-                source=self._source,
-                obs_subject_ids=list(subject_mask),
-                collection_names=list(output_collections),
+            view = RadiObject(
+                uri=None,
+                ctx=ctx,
+                _source=self._source,
+                _subject_ids=subject_mask,
+                _collection_names=frozenset(output_collections),
             )
-            if streaming:
-                return view.to_radi_object_streaming(uri, ctx=ctx)
-            return view.to_radi_object(uri, ctx=ctx)
+            return view.materialize(uri, streaming=streaming, ctx=ctx)
 
         # With transform: use streaming writer and apply transform to each volume
-        # Build filtered obs_meta
         obs_meta_df = self._source.obs_meta.read()
         filtered_obs_meta = obs_meta_df[
             obs_meta_df["obs_subject_id"].isin(subject_mask)
@@ -483,11 +484,9 @@ class Query:
                 if not volume_mask:
                     continue
 
-                # Get obs data for filtered volumes
                 obs_df = src_collection.obs.read()
                 filtered_obs = obs_df[obs_df["obs_id"].isin(volume_mask)]
 
-                # Extract obs schema
                 obs_schema: dict[str, np.dtype] = {}
                 for col in src_collection.obs.columns:
                     if col in ("obs_id", "obs_subject_id"):
@@ -503,7 +502,6 @@ class Query:
                         vol = src_collection.loc[obs_id]
                         data = vol.to_numpy()
 
-                        # Apply transform
                         data = self._transform_fn(data)
 
                         attrs = {
@@ -536,9 +534,13 @@ class CollectionQuery:
     """Lazy filter builder for VolumeCollection with explicit materialization.
 
     Example:
-        high_res = radi.T1w.query().filter("voxel_spacing == '1.0x1.0x1.0'").head(100)
-        for vol in high_res.iter_volumes():
-            process(vol)
+        high_res = (
+            radi.T1w.lazy()
+            .filter("voxel_spacing == '1.0x1.0x1.0'")
+            .head(100)
+            .map(normalize)
+            .materialize("./output")
+        )
     """
 
     def __init__(
@@ -720,7 +722,7 @@ class CollectionQuery:
         arrays = [self._source.loc[obs_id].to_numpy() for obs_id in sorted(volume_mask)]
         return np.stack(arrays, axis=0)
 
-    def to_volume_collection(
+    def materialize(
         self,
         uri: str,
         name: str | None = None,
@@ -741,14 +743,12 @@ class CollectionQuery:
         obs_df = self.to_obs()
         collection_name = name or self._source.name
 
-        # Extract obs schema
         obs_schema: dict[str, np.dtype] = {}
         for col in self._source.obs.columns:
             if col in ("obs_id", "obs_subject_id"):
                 continue
             obs_schema[col] = self._source.obs.dtypes[col]
 
-        # If transform is set, output is heterogeneous (shape may change)
         output_shape = None if self._transform_fn is not None else self._source.shape
 
         with StreamingWriter(
@@ -762,7 +762,6 @@ class CollectionQuery:
                 vol = self._source.loc[obs_id]
                 data = vol.to_numpy()
 
-                # Apply transform if set
                 if self._transform_fn is not None:
                     data = self._transform_fn(data)
 

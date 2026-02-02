@@ -1,10 +1,4 @@
-"""Papermill runner for framework benchmarks.
-
-Run benchmarks with different configurations:
-    uv run python run_benchmarks.py
-
-Outputs are saved to ../assets/benchmark/
-"""
+"""Papermill runner for framework benchmarks."""
 
 from pathlib import Path
 
@@ -49,7 +43,7 @@ CONFIGS = [
 ]
 
 
-def run_benchmarks():
+def run_benchmarks() -> None:
     """Execute benchmark notebook with each configuration."""
     for config in CONFIGS:
         name = config["name"]
@@ -67,7 +61,7 @@ def run_benchmarks():
                 NOTEBOOK,
                 str(output_notebook),
                 parameters=params,
-                kernel_name="python3",
+                kernel_name="radiobject",
             )
             print(f"Completed: {name}")
         except Exception as e:

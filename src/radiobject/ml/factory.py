@@ -50,36 +50,6 @@ def create_training_dataloader(
 
     Returns:
         DataLoader configured for training with shuffle enabled.
-
-    Example with single collection::
-
-        loader = create_training_dataloader(radi.CT, labels="has_tumor")
-
-    Example with multi-modal::
-
-        loader = create_training_dataloader(
-            [radi.T1w, radi.FLAIR],
-            labels=labels_df,  # DataFrame with obs_id and label columns
-        )
-
-    Example with MONAI transforms::
-
-        from monai.transforms import Compose, RandFlipd, NormalizeIntensityd
-
-        transform = Compose([
-            NormalizeIntensityd(keys="image"),
-            RandFlipd(keys="image", prob=0.5, spatial_axis=[0, 1, 2]),
-        ])
-        loader = create_training_dataloader(radi.CT, labels="grade", transform=transform)
-
-    Example with TorchIO (use VolumeCollectionSubjectsDataset instead)::
-
-        from radiobject.ml import VolumeCollectionSubjectsDataset
-        import torchio as tio
-
-        transform = tio.Compose([tio.ZNormalization(), tio.RandomFlip()])
-        dataset = VolumeCollectionSubjectsDataset([radi.T1w], labels="grade", transform=transform)
-        loader = DataLoader(dataset, batch_size=4)
     """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
 
@@ -245,23 +215,6 @@ def create_segmentation_dataloader(
 
     Returns:
         DataLoader yielding {"image": (B,1,X,Y,Z), "mask": (B,1,X,Y,Z), ...}
-
-    Example::
-
-        from monai.transforms import NormalizeIntensityd, RandFlipd
-
-        train_loader = create_segmentation_dataloader(
-            image=radi.CT,
-            mask=radi.seg,
-            patch_size=(64, 64, 64),
-            image_transform=NormalizeIntensityd(keys="image"),
-            spatial_transform=RandFlipd(keys=["image", "mask"], prob=0.5),
-            foreground_sampling=True,
-        )
-
-        for batch in train_loader:
-            images = batch["image"]  # Shape: (B, 1, 64, 64, 64)
-            masks = batch["mask"].long()  # Shape: (B, 1, 64, 64, 64)
     """
     loading_mode = LoadingMode.PATCH if patch_size else LoadingMode.FULL_VOLUME
 

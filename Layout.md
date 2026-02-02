@@ -7,7 +7,6 @@ RadiObject/
 ├── CLAUDE.md
 ├── LICENSE
 ├── Lexicon.md
-├── Performance.md
 ├── README.md
 ├── pyproject.toml
 ├── uv.lock
@@ -31,12 +30,13 @@ RadiObject/
 │   ├── BENCHMARKS.md               # Performance analysis and comparisons
 │   ├── CONTRIBUTING.md             # Development setup, testing
 │   ├── DATA_ACCESS.md              # Exploration vs pipeline modes, queries
+│   ├── DATASETS.md                 # Available datasets and download instructions
 │   ├── DESIGN.md                   # TileDB structure, orientation handling
 │   ├── ML_INTEGRATION.md           # MONAI and TorchIO usage
+│   ├── PERFORMANCE.md              # Performance benchmarks and optimization
 │   └── S3_SETUP.md                 # Optional cloud storage configuration
 ├── notebooks/
 │   ├── README.md                   # Tutorial setup guide
-│   ├── config.py                   # Tutorial configuration (URIs)
 │   ├── 00_ingest_brats.ipynb
 │   ├── 01_radi_object.ipynb
 │   ├── 02_volume_collection.ipynb
@@ -45,7 +45,7 @@ RadiObject/
 │   ├── 05_ingest_msd.ipynb
 │   └── 06_ml_training.ipynb
 ├── scripts/
-│   └── download_tutorial_data.py   # Downloads BraTS sample data for tutorials
+│   └── download_dataset.py         # CLI for downloading datasets from public/S3 sources
 ├── src/
 │   └── radiobject/
 │       ├── __init__.py
@@ -63,6 +63,10 @@ RadiObject/
 │       ├── utils.py
 │       ├── volume.py
 │       ├── volume_collection.py
+│       ├── data/
+│       │   ├── __init__.py         # Central data configuration + tutorial helpers
+│       │   ├── registry.py         # Dataset metadata registry (DatasetInfo, DatasetFormat)
+│       │   └── sync.py             # Unified download API (get_dataset, sync_from_s3, etc.)
 │       └── ml/
 │           ├── __init__.py
 │           ├── config.py
@@ -121,5 +125,5 @@ RadiObject/
 - `__pycache__/` - Python bytecode cache
 - `.pytest_cache/` - Pytest cache
 - `.ruff_cache/` - Ruff linter cache
-- `data/` - Local test data (synced from S3)
-- `data/benchmark/` - Locally-created tiled RadiObject datasets for benchmarking
+- `data/` - Local cached datasets (gitignored)
+- `~/.cache/radiobject/` - User's local cache for downloaded datasets

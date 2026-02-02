@@ -40,16 +40,16 @@ class _SubjectILocIndexer:
         self._radi_object = radi_object
 
     @overload
-    def __getitem__(self, key: int) -> RadiObjectView: ...
+    def __getitem__(self, key: int) -> RadiObject: ...
     @overload
-    def __getitem__(self, key: slice) -> RadiObjectView: ...
+    def __getitem__(self, key: slice) -> RadiObject: ...
     @overload
-    def __getitem__(self, key: list[int]) -> RadiObjectView: ...
+    def __getitem__(self, key: list[int]) -> RadiObject: ...
     @overload
-    def __getitem__(self, key: npt.NDArray[np.bool_]) -> RadiObjectView: ...
+    def __getitem__(self, key: npt.NDArray[np.bool_]) -> RadiObject: ...
 
-    def __getitem__(self, key: int | slice | list[int] | npt.NDArray[np.bool_]) -> RadiObjectView:
-        """Returns a RadiObjectView filtered to selected subject indices."""
+    def __getitem__(self, key: int | slice | list[int] | npt.NDArray[np.bool_]) -> RadiObject:
+        """Returns a RadiObject view filtered to selected subject indices."""
         n = len(self._radi_object)
         if isinstance(key, int):
             idx = _normalize_index(key, n)
@@ -77,12 +77,12 @@ class _SubjectLocIndexer:
         self._radi_object = radi_object
 
     @overload
-    def __getitem__(self, key: str) -> RadiObjectView: ...
+    def __getitem__(self, key: str) -> RadiObject: ...
     @overload
-    def __getitem__(self, key: list[str]) -> RadiObjectView: ...
+    def __getitem__(self, key: list[str]) -> RadiObject: ...
 
-    def __getitem__(self, key: str | list[str]) -> RadiObjectView:
-        """Returns a RadiObjectView filtered to selected obs_subject_ids."""
+    def __getitem__(self, key: str | list[str]) -> RadiObject:
+        """Returns a RadiObject view filtered to selected obs_subject_ids."""
         if isinstance(key, str):
             return self._radi_object._filter_by_subject_ids([key])
         elif isinstance(key, list):
@@ -91,14 +91,102 @@ class _SubjectLocIndexer:
 
 
 class RadiObject:
-    """Top-level container for multi-collection radiology data with subject metadata."""
+    """Top-level container for multi-collection radiology data with subject metadata.
 
-    def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
-        self.uri: str = uri
+    RadiObject can be either "attached" (backed by storage at a URI) or a "view"
+    (filtered subset referencing a source RadiObject). Views are created by
+    filtering operations and read data from their source with filters applied.
+
+    Attached (has URI):
+        radi = RadiObject("s3://bucket/dataset")
+        radi.is_view  # False
+        radi.uri      # "s3://bucket/dataset"
+
+    View (filtered, no URI):
+        subset = radi.filter("age > 40")
+        subset.is_view  # True
+        subset.uri      # None
+        subset._root    # Original RadiObject
+
+    Views are immutable. To persist a view, use materialize(uri).
+    """
+
+    def __init__(
+        self,
+        uri: str | None,
+        ctx: tiledb.Ctx | None = None,
+        *,
+        # View state (internal use only)
+        _source: RadiObject | None = None,
+        _subject_ids: frozenset[str] | None = None,
+        _collection_names: frozenset[str] | None = None,
+    ):
+        self._uri: str | None = uri
         self._ctx: tiledb.Ctx | None = ctx
+        # View state
+        self._source: RadiObject | None = _source
+        self._subject_ids: frozenset[str] | None = _subject_ids
+        self._collection_names_filter: frozenset[str] | None = _collection_names
+
+    @property
+    def uri(self) -> str | None:
+        """URI of this RadiObject, or None if this is a view."""
+        return self._uri
+
+    @property
+    def is_view(self) -> bool:
+        """True if this RadiObject is a filtered view of another."""
+        return self._source is not None
+
+    @property
+    def _root(self) -> RadiObject:
+        """The original attached RadiObject (follows source chain)."""
+        if self._source is None:
+            return self
+        return self._source._root
 
     def _effective_ctx(self) -> tiledb.Ctx:
+        if self._source is not None:
+            return self._source._effective_ctx()
         return self._ctx if self._ctx else global_ctx()
+
+    def _effective_uri(self) -> str:
+        """Get the storage URI (from root if this is a view)."""
+        if self._source is not None:
+            return self._source._effective_uri()
+        if self._uri is None:
+            raise ValueError("RadiObject has no URI")
+        return self._uri
+
+    # ===== View Factory =====
+
+    def _create_view(
+        self,
+        subject_ids: frozenset[str] | None = None,
+        collection_names: frozenset[str] | None = None,
+    ) -> RadiObject:
+        """Create a view with specified filters, intersecting with current filters."""
+        # Intersect subject_ids with current filter
+        if self._subject_ids is not None and subject_ids is not None:
+            subject_ids = self._subject_ids & subject_ids
+        elif self._subject_ids is not None:
+            subject_ids = self._subject_ids
+        # subject_ids stays as passed if self._subject_ids is None
+
+        # Intersect collection_names with current filter
+        if self._collection_names_filter is not None and collection_names is not None:
+            collection_names = self._collection_names_filter & collection_names
+        elif self._collection_names_filter is not None:
+            collection_names = self._collection_names_filter
+        # collection_names stays as passed if self._collection_names_filter is None
+
+        return RadiObject(
+            uri=None,
+            ctx=self._ctx,
+            _source=self._root,  # Always point to root to avoid deep chains
+            _subject_ids=subject_ids,
+            _collection_names=collection_names,
+        )
 
     # ===== Subject Indexing =====
 
@@ -115,14 +203,33 @@ class RadiObject:
     # ===== ObsMeta (Subject Metadata) =====
 
     @property
-    def obs_meta(self) -> Dataframe:
-        """Subject-level observational metadata."""
-        obs_meta_uri = f"{self.uri}/obs_meta"
+    def obs_meta(self) -> pd.DataFrame | Dataframe:
+        """Subject-level observational metadata.
+
+        Returns Dataframe for attached RadiObject, pd.DataFrame for views.
+        """
+        if self.is_view:
+            # Return filtered DataFrame
+            full_obs_meta = self._root.obs_meta.read()
+            if self._subject_ids is not None:
+                return full_obs_meta[
+                    full_obs_meta["obs_subject_id"].isin(self._subject_ids)
+                ].reset_index(drop=True)
+            return full_obs_meta
+        obs_meta_uri = f"{self._effective_uri()}/obs_meta"
         return Dataframe(uri=obs_meta_uri, ctx=self._ctx)
 
     @cached_property
     def _index(self) -> Index:
         """Cached bidirectional index for obs_subject_id lookups."""
+        if self.is_view:
+            # Build index from filtered subject_ids
+            if self._subject_ids is not None:
+                # Preserve order from root
+                root_ids = self._root.obs_subject_ids
+                filtered = [sid for sid in root_ids if sid in self._subject_ids]
+                return Index.build(filtered)
+            return self._root._index
         n = self._metadata.get("subject_count", 0)
         if n == 0:
             return Index.build([])
@@ -142,6 +249,11 @@ class RadiObject:
 
     def get_obs_row_by_obs_subject_id(self, obs_subject_id: str) -> pd.DataFrame:
         """Get obs_meta row by obs_subject_id string identifier."""
+        if self.is_view:
+            obs_meta_df = self.obs_meta
+            return obs_meta_df[obs_meta_df["obs_subject_id"] == obs_subject_id].reset_index(
+                drop=True
+            )
         df = self.obs_meta.read()
         filtered = df[df["obs_subject_id"] == obs_subject_id].reset_index(drop=True)
         return filtered
@@ -157,19 +269,7 @@ class RadiObject:
         return obs_ids
 
     def get_volume(self, obs_id: str) -> Volume:
-        """Get a volume by obs_id from any collection.
-
-        obs_id must be unique across the entire RadiObject.
-
-        Args:
-            obs_id: Unique volume identifier
-
-        Returns:
-            Volume object
-
-        Raises:
-            KeyError: If obs_id not found in any collection
-        """
+        """Get a volume by obs_id from any collection."""
         for name in self.collection_names:
             coll = self.collection(name)
             if obs_id in coll.index:
@@ -181,13 +281,19 @@ class RadiObject:
     @cached_property
     def _metadata(self) -> dict:
         """Cached group metadata."""
-        with tiledb.Group(self.uri, "r", ctx=self._effective_ctx()) as grp:
+        uri = self._effective_uri()
+        with tiledb.Group(uri, "r", ctx=self._effective_ctx()) as grp:
             return dict(grp.meta)
 
     @cached_property
     def collection_names(self) -> tuple[str, ...]:
         """Names of all VolumeCollections."""
-        collections_uri = f"{self.uri}/collections"
+        if self.is_view and self._collection_names_filter is not None:
+            # Return filtered collection names (preserving root order)
+            root_names = self._root.collection_names
+            return tuple(name for name in root_names if name in self._collection_names_filter)
+        uri = self._effective_uri()
+        collections_uri = f"{uri}/collections"
         with tiledb.Group(collections_uri, "r", ctx=self._effective_ctx()) as grp:
             return tuple(obj.name for obj in grp)
 
@@ -195,7 +301,8 @@ class RadiObject:
         """Get a VolumeCollection by name."""
         if name not in self.collection_names:
             raise KeyError(f"Collection '{name}' not found. Available: {self.collection_names}")
-        collection_uri = f"{self.uri}/collections/{name}"
+        uri = self._effective_uri()
+        collection_uri = f"{uri}/collections/{name}"
         return VolumeCollection(collection_uri, ctx=self._ctx)
 
     def __getattr__(self, name: str) -> VolumeCollection:
@@ -208,35 +315,25 @@ class RadiObject:
             raise AttributeError(f"'{type(self).__name__}' has no collection '{name}'")
 
     def rename_collection(self, old_name: str, new_name: str) -> None:
-        """Rename a collection.
-
-        Args:
-            old_name: Current collection name
-            new_name: New collection name
-
-        Raises:
-            KeyError: If old_name doesn't exist
-            ValueError: If new_name already exists
-        """
+        """Rename a collection."""
+        self._check_not_view("rename_collection")
         if old_name not in self.collection_names:
             raise KeyError(f"Collection '{old_name}' not found")
         if new_name in self.collection_names:
             raise ValueError(f"Collection '{new_name}' already exists")
 
         effective_ctx = self._effective_ctx()
-        collections_uri = f"{self.uri}/collections"
+        uri = self._effective_uri()
+        collections_uri = f"{uri}/collections"
         old_uri = f"{collections_uri}/{old_name}"
 
-        # Update collection's internal name metadata
         with tiledb.Group(old_uri, "w", ctx=effective_ctx) as grp:
             grp.meta["name"] = new_name
 
-        # Update the group member name
         with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
             grp.remove(old_name)
             grp.add(old_uri, name=new_name)
 
-        # Invalidate cached property
         if "collection_names" in self.__dict__:
             del self.__dict__["collection_names"]
 
@@ -244,6 +341,8 @@ class RadiObject:
 
     def __len__(self) -> int:
         """Number of subjects."""
+        if self.is_view:
+            return len(self._index)
         return int(self._metadata.get("subject_count", 0))
 
     @property
@@ -256,28 +355,24 @@ class RadiObject:
         return iter(self.collection_names)
 
     @overload
-    def __getitem__(self, key: str) -> RadiObjectView: ...
+    def __getitem__(self, key: str) -> RadiObject: ...
     @overload
-    def __getitem__(self, key: list[str]) -> RadiObjectView: ...
+    def __getitem__(self, key: list[str]) -> RadiObject: ...
 
-    def __getitem__(self, key: str | list[str]) -> RadiObjectView:
+    def __getitem__(self, key: str | list[str]) -> RadiObject:
         """Bracket indexing for subjects by obs_subject_id.
 
         Alias for .loc[] - allows `radi["BraTS001"]` as shorthand for `radi.loc["BraTS001"]`.
-
-        Args:
-            key: Single obs_subject_id or list of obs_subject_ids
-
-        Returns:
-            RadiObjectView filtered to matching subjects
         """
         return self.loc[key]
 
     def __repr__(self) -> str:
         """Concise representation of the RadiObject."""
         collections = ", ".join(self.collection_names) if self.collection_names else "none"
+        view_indicator = " (view)" if self.is_view else ""
         return (
-            f"RadiObject({len(self)} subjects, {self.n_collections} collections: [{collections}])"
+            f"RadiObject({len(self)} subjects, {self.n_collections} collections: "
+            f"[{collections}]){view_indicator}"
         )
 
     def describe(self) -> str:
@@ -285,7 +380,7 @@ class RadiObject:
         lines = [
             "RadiObject Summary",
             "==================",
-            f"URI: {self.uri}",
+            f"URI: {self.uri or '(view)'}",
             f"Subjects: {len(self)}",
             f"Collections: {self.n_collections}",
             "",
@@ -299,105 +394,289 @@ class RadiObject:
             uniform_str = "" if coll.is_uniform else " (mixed shapes)"
             lines.append(f"  - {name}: {len(coll)} volumes, shape={shape_str}{uniform_str}")
 
-        # Find label columns (non-string columns that aren't IDs)
-        obs_meta = self.obs_meta.read()
+        # Find label columns
+        obs_meta_df = self.obs_meta if self.is_view else self.obs_meta.read()
         label_cols = []
-        for col in obs_meta.columns:
+        for col in obs_meta_df.columns:
             if col in ("obs_subject_id", "obs_id"):
                 continue
-            dtype = obs_meta[col].dtype
-            # Check if it looks like a label column (categorical or numeric with few values)
+            dtype = obs_meta_df[col].dtype
             if dtype in (np.int64, np.int32, np.float64, np.float32, object):
-                n_unique = obs_meta[col].nunique()
-                if n_unique <= 10:  # Likely a label column
+                n_unique = obs_meta_df[col].nunique()
+                if n_unique <= 10:
                     label_cols.append(col)
 
         if label_cols:
             lines.append("")
             lines.append("Label Columns:")
             for col in label_cols:
-                value_counts = obs_meta[col].value_counts().to_dict()
+                value_counts = obs_meta_df[col].value_counts().to_dict()
                 lines.append(f"  - {col}: {value_counts}")
 
         return "\n".join(lines)
 
-    # ===== Query Builder (Pipeline Mode) =====
+    # ===== Lazy Mode (returns Query for transform pipelines) =====
 
-    def query(self) -> Query:
-        """Create a lazy Query builder for pipeline-style filtering."""
+    def lazy(self) -> Query:
+        """Enter lazy mode for transform pipelines.
+
+        Returns a Query that accumulates transforms without executing them.
+        Use this when you need to apply transforms via .map().
+
+        Example:
+            normalized = (
+                radi.CT
+                .lazy()
+                .filter("quality == 'good'")
+                .map(normalize_intensity)
+                .materialize("./normalized")
+            )
+        """
         from radiobject.query import Query
 
-        return Query(self)
+        return Query(
+            self._root,
+            subject_ids=self._subject_ids,
+            output_collections=self._collection_names_filter,
+        )
 
-    # ===== Filtering (Interactive Mode - returns RadiObjectView) =====
+    # ===== Immutability Check =====
 
-    def _filter_by_indices(self, indices: list[int]) -> RadiObjectView:
+    def _check_not_view(self, operation: str) -> None:
+        """Raise if attempting to modify a view."""
+        if self.is_view:
+            raise ValueError(
+                f"Cannot {operation} on a view. Call materialize(uri) first to create "
+                "an attached RadiObject."
+            )
+
+    # ===== Filtering (returns RadiObject view) =====
+
+    def _filter_by_indices(self, indices: list[int]) -> RadiObject:
         """Create a view filtered to specific subject indices."""
-        subject_ids = [self._index.get_key(i) for i in indices]
-        return RadiObjectView(
-            source=self,
-            obs_subject_ids=subject_ids,
-            collection_names=list(self.collection_names),
-        )
+        subject_ids = frozenset(self._index.get_key(i) for i in indices)
+        return self._create_view(subject_ids=subject_ids)
 
-    def _filter_by_subject_ids(self, obs_subject_ids: list[str]) -> RadiObjectView:
+    def _filter_by_subject_ids(self, obs_subject_ids: list[str]) -> RadiObject:
         """Create a view filtered to specific obs_subject_ids."""
+        current_ids = set(self._index.keys)
         for sid in obs_subject_ids:
-            if sid not in self._index:
+            if sid not in current_ids:
                 raise KeyError(f"obs_subject_id '{sid}' not found")
-        return RadiObjectView(
-            source=self,
-            obs_subject_ids=obs_subject_ids,
-            collection_names=list(self.collection_names),
-        )
+        return self._create_view(subject_ids=frozenset(obs_subject_ids))
 
-    def select_collections(self, names: list[str]) -> RadiObjectView:
+    def select_collections(self, names: list[str]) -> RadiObject:
         """Create a view with only specified collections."""
+        current_names = set(self.collection_names)
         for name in names:
-            if name not in self.collection_names:
+            if name not in current_names:
                 raise KeyError(f"Collection '{name}' not found")
-        return RadiObjectView(
-            source=self,
-            obs_subject_ids=self.obs_subject_ids,
-            collection_names=names,
-        )
+        return self._create_view(collection_names=frozenset(names))
 
-    def filter(self, expr: str) -> RadiObjectView:
+    def filter(self, expr: str) -> RadiObject:
         """Filter subjects using a query expression on obs_meta.
 
         Args:
             expr: TileDB QueryCondition string (e.g., "tumor_grade == 'HGG' and age > 40")
 
         Returns:
-            RadiObjectView filtered to matching subjects
+            RadiObject view filtered to matching subjects
         """
-        filtered = self.obs_meta.read(value_filter=expr)
-        subject_ids = list(filtered["obs_subject_id"])
-        return self._filter_by_subject_ids(subject_ids)
+        if self.is_view:
+            # Filter from the obs_meta DataFrame
+            obs_meta_df = self.obs_meta
+            # Use pandas query for view filtering
+            filtered = obs_meta_df.query(expr)
+            subject_ids = frozenset(filtered["obs_subject_id"])
+        else:
+            # Use TileDB QueryCondition for attached RadiObject
+            filtered = self.obs_meta.read(value_filter=expr)
+            subject_ids = frozenset(filtered["obs_subject_id"])
+        return self._create_view(subject_ids=subject_ids)
 
-    def head(self, n: int = 5) -> RadiObjectView:
+    def head(self, n: int = 5) -> RadiObject:
         """Return view of first n subjects."""
         n = min(n, len(self))
         return self._filter_by_indices(list(range(n)))
 
-    def tail(self, n: int = 5) -> RadiObjectView:
+    def tail(self, n: int = 5) -> RadiObject:
         """Return view of last n subjects."""
         total = len(self)
         n = min(n, total)
         return self._filter_by_indices(list(range(total - n, total)))
 
-    def sample(self, n: int = 5, seed: int | None = None) -> RadiObjectView:
-        """Return view of n randomly sampled subjects.
-
-        Args:
-            n: Number of subjects to sample
-            seed: Random seed for reproducibility
-        """
+    def sample(self, n: int = 5, seed: int | None = None) -> RadiObject:
+        """Return view of n randomly sampled subjects."""
         rng = np.random.default_rng(seed)
         total = len(self)
         n = min(n, total)
         indices = list(rng.choice(total, size=n, replace=False))
         return self._filter_by_indices(sorted(indices))
+
+    # ===== Materialization =====
+
+    def materialize(
+        self,
+        uri: str,
+        streaming: bool = True,
+        ctx: tiledb.Ctx | None = None,
+    ) -> RadiObject:
+        """Write this RadiObject (or view) to storage.
+
+        For attached RadiObjects, this copies the entire dataset.
+        For views, this writes only the filtered subset.
+
+        Args:
+            uri: Target URI for the new RadiObject
+            streaming: Use streaming writer for memory efficiency (default: True)
+            ctx: TileDB context
+
+        Returns:
+            New attached RadiObject at the target URI
+        """
+        # Get filtered obs_meta
+        if self.is_view:
+            filtered_obs_meta = self.obs_meta  # Already filtered DataFrame
+        else:
+            filtered_obs_meta = self.obs_meta.read()
+
+        # Build obs_meta schema
+        obs_meta_schema: dict[str, np.dtype] = {}
+        for col in filtered_obs_meta.columns:
+            if col in ("obs_subject_id", "obs_id"):
+                continue
+            dtype = filtered_obs_meta[col].to_numpy().dtype
+            if dtype == np.dtype("O"):
+                dtype = np.dtype("U64")
+            obs_meta_schema[col] = dtype
+
+        if streaming:
+            return self._materialize_streaming(uri, filtered_obs_meta, obs_meta_schema, ctx)
+        return self._materialize_batch(uri, filtered_obs_meta, obs_meta_schema, ctx)
+
+    def _materialize_streaming(
+        self,
+        uri: str,
+        obs_meta_df: pd.DataFrame,
+        obs_meta_schema: dict[str, np.dtype],
+        ctx: tiledb.Ctx | None,
+    ) -> RadiObject:
+        """Materialize view to storage using streaming writer."""
+        from radiobject.streaming import RadiObjectWriter
+
+        subject_ids = set(obs_meta_df["obs_subject_id"])
+
+        with RadiObjectWriter(uri, obs_meta_schema=obs_meta_schema, ctx=ctx) as writer:
+            writer.write_obs_meta(obs_meta_df)
+
+            for coll_name in self.collection_names:
+                src_collection = self.collection(coll_name)
+                obs_df = src_collection.obs.read()
+                filtered_obs = obs_df[obs_df["obs_subject_id"].isin(subject_ids)]
+
+                if len(filtered_obs) == 0:
+                    continue
+
+                # Extract obs schema
+                obs_schema: dict[str, np.dtype] = {}
+                for col in src_collection.obs.columns:
+                    if col in ("obs_id", "obs_subject_id"):
+                        continue
+                    obs_schema[col] = src_collection.obs.dtypes[col]
+
+                with writer.add_collection(
+                    coll_name, src_collection.shape, obs_schema
+                ) as coll_writer:
+                    for _, row in filtered_obs.iterrows():
+                        obs_id = row["obs_id"]
+                        vol = src_collection.loc[obs_id]
+                        attrs = {
+                            k: v for k, v in row.items() if k not in ("obs_id", "obs_subject_id")
+                        }
+                        coll_writer.write_volume(
+                            data=vol.to_numpy(),
+                            obs_id=obs_id,
+                            obs_subject_id=row["obs_subject_id"],
+                            **attrs,
+                        )
+
+        return RadiObject(uri, ctx=ctx)
+
+    def _materialize_batch(
+        self,
+        uri: str,
+        obs_meta_df: pd.DataFrame,
+        obs_meta_schema: dict[str, np.dtype],
+        ctx: tiledb.Ctx | None,
+    ) -> RadiObject:
+        """Materialize view to storage using batch writer."""
+        effective_ctx = ctx if ctx else self._effective_ctx()
+        subject_ids = list(obs_meta_df["obs_subject_id"])
+
+        RadiObject._create(
+            uri,
+            obs_meta_schema=obs_meta_schema,
+            n_subjects=len(subject_ids),
+            ctx=ctx,
+        )
+
+        # Write obs_meta
+        obs_meta_uri = f"{uri}/obs_meta"
+        obs_subject_ids_arr = obs_meta_df["obs_subject_id"].astype(str).to_numpy()
+        obs_ids_arr = (
+            obs_meta_df["obs_id"].astype(str).to_numpy()
+            if "obs_id" in obs_meta_df.columns
+            else obs_subject_ids_arr
+        )
+        with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
+            attr_data = {
+                col: obs_meta_df[col].to_numpy()
+                for col in obs_meta_df.columns
+                if col not in ("obs_subject_id", "obs_id")
+            }
+            arr[obs_subject_ids_arr, obs_ids_arr] = attr_data
+
+        # Copy collections
+        collections_uri = f"{uri}/collections"
+        for coll_name in self.collection_names:
+            src_collection = self.collection(coll_name)
+            new_vc_uri = f"{collections_uri}/{coll_name}"
+
+            _copy_filtered_volume_collection(
+                src_collection,
+                new_vc_uri,
+                obs_subject_ids=subject_ids,
+                name=coll_name,
+                ctx=ctx,
+            )
+
+            with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
+                grp.add(new_vc_uri, name=coll_name)
+
+        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
+            grp.meta["n_collections"] = len(self.collection_names)
+            grp.meta["subject_count"] = len(subject_ids)
+
+        return RadiObject(uri, ctx=ctx)
+
+    def copy(self) -> RadiObject:
+        """Create an independent in-memory copy, detached from the view chain.
+
+        Useful when you want to break the reference to the source RadiObject.
+        Note: This does NOT persist data. Call materialize(uri) to write to storage.
+        """
+        if not self.is_view:
+            # For attached RadiObject, just return self (already independent)
+            return self
+        # Create a new view with the same filters but mark it as "detached"
+        # In practice, since we always point to _root, this is already independent
+        return RadiObject(
+            uri=None,
+            ctx=self._ctx,
+            _source=self._root,
+            _subject_ids=self._subject_ids,
+            _collection_names=self._collection_names_filter,
+        )
 
     # ===== Append Operations (Mutations) =====
 
@@ -409,44 +688,16 @@ class RadiObject:
         reorient: bool | None = None,
         progress: bool = False,
     ) -> None:
-        """Append new subjects and their volumes atomically.
+        """Append new subjects and their volumes atomically."""
+        self._check_not_view("append")
 
-        All data is written together - obs_meta entries and volumes are added
-        in a single operation to maintain consistency.
-
-        Args:
-            niftis: List of (nifti_path, obs_subject_id) tuples to append
-            dicom_dirs: List of (dicom_dir, obs_subject_id) tuples to append
-            obs_meta: Subject-level metadata for NEW subjects. Required if any
-                      obs_subject_ids don't already exist. Must contain obs_subject_id column.
-            reorient: Reorient to canonical orientation (None uses config default)
-            progress: Show tqdm progress bar during volume writes
-
-        Example:
-            # Append new subjects with their scans
-            radi.append(
-                niftis=[
-                    ("sub101_T1w.nii.gz", "sub-101"),
-                    ("sub101_FLAIR.nii.gz", "sub-101"),
-                    ("sub102_T1w.nii.gz", "sub-102"),
-                ],
-                obs_meta=pd.DataFrame({
-                    "obs_subject_id": ["sub-101", "sub-102"],
-                    "age": [45, 52],
-                }),
-            )
-
-            # Append scans for existing subjects (no obs_meta needed)
-            radi.append(
-                niftis=[("sub001_PET.nii.gz", "sub-001")],  # sub-001 already exists
-            )
-        """
         if niftis is None and dicom_dirs is None:
             raise ValueError("Must provide either niftis or dicom_dirs")
         if niftis is not None and dicom_dirs is not None:
             raise ValueError("Cannot provide both niftis and dicom_dirs")
 
         effective_ctx = self._effective_ctx()
+        uri = self._effective_uri()
 
         # Collect all subject IDs from input
         if niftis is not None:
@@ -469,20 +720,18 @@ class RadiObject:
             missing = new_subject_ids - obs_meta_ids
             if missing:
                 raise ValueError(f"obs_meta missing entries for: {sorted(missing)[:5]}")
-            # Filter obs_meta to only new subjects
             obs_meta = obs_meta[obs_meta["obs_subject_id"].isin(new_subject_ids)]
 
         # Append obs_meta for new subjects
         if obs_meta is not None and len(obs_meta) > 0:
-            obs_meta_uri = f"{self.uri}/obs_meta"
+            obs_meta_uri = f"{uri}/obs_meta"
             obs_subject_ids_arr = obs_meta["obs_subject_id"].astype(str).to_numpy()
             obs_ids_arr = (
                 obs_meta["obs_id"].astype(str).to_numpy()
                 if "obs_id" in obs_meta.columns
                 else obs_subject_ids_arr
             )
-            # Only write attributes that exist in the target schema
-            existing_columns = set(self.obs_meta.columns)
+            existing_columns = set(self._root.obs_meta.columns)
             with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
                 attr_data = {
                     col: obs_meta[col].to_numpy()
@@ -491,9 +740,8 @@ class RadiObject:
                 }
                 arr[obs_subject_ids_arr, obs_ids_arr] = attr_data
 
-            # Update subject_count
             new_count = len(self) + len(obs_meta)
-            with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
+            with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
                 grp.meta["subject_count"] = new_count
 
         # Process and group input files
@@ -515,7 +763,7 @@ class RadiObject:
         progress: bool = False,
     ) -> None:
         """Internal: append NIfTI files to existing collections or create new ones."""
-        # Extract metadata and group by (shape, series_type)
+        uri = self._effective_uri()
         file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
         for nifti_path, obs_subject_id in niftis:
             path = Path(nifti_path)
@@ -529,7 +777,7 @@ class RadiObject:
         for path, subject_id, shape, series_type in file_info:
             groups[(shape, series_type)].append((path, subject_id))
 
-        collections_uri = f"{self.uri}/collections"
+        collections_uri = f"{uri}/collections"
         existing_collections = set(self.collection_names)
 
         groups_iter = groups.items()
@@ -539,20 +787,16 @@ class RadiObject:
             groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
 
         for (shape, series_type), items in groups_iter:
-            # Find or create collection
             collection_name = series_type
             if collection_name in existing_collections:
-                # Append to existing collection
                 vc = self.collection(collection_name)
                 if vc.shape != shape:
                     collection_name = f"{series_type}_{shape[0]}x{shape[1]}x{shape[2]}"
 
             if collection_name in existing_collections:
-                # Append to existing
                 vc = self.collection(collection_name)
                 vc.append(niftis=items, reorient=reorient, progress=progress)
             else:
-                # Create new collection
                 vc_uri = f"{collections_uri}/{collection_name}"
                 VolumeCollection.from_niftis(
                     uri=vc_uri,
@@ -565,7 +809,7 @@ class RadiObject:
                 )
                 with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
                     grp.add(vc_uri, name=collection_name)
-                with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
+                with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
                     grp.meta["n_collections"] = self.n_collections + 1
                 existing_collections.add(collection_name)
 
@@ -577,6 +821,7 @@ class RadiObject:
         progress: bool = False,
     ) -> None:
         """Internal: append DICOM series to existing collections or create new ones."""
+        uri = self._effective_uri()
         file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
         for dicom_dir, obs_subject_id in dicom_dirs:
             path = Path(dicom_dir)
@@ -584,14 +829,14 @@ class RadiObject:
                 raise FileNotFoundError(f"DICOM directory not found: {path}")
             metadata = extract_dicom_metadata(path)
             dims = metadata.dimensions
-            shape = (dims[1], dims[0], dims[2])  # Swap to X, Y, Z
+            shape = (dims[1], dims[0], dims[2])
             file_info.append((path, obs_subject_id, shape, metadata.modality))
 
         groups: dict[tuple[tuple[int, int, int], str], list[tuple[Path, str]]] = defaultdict(list)
         for path, subject_id, shape, modality in file_info:
             groups[(shape, modality)].append((path, subject_id))
 
-        collections_uri = f"{self.uri}/collections"
+        collections_uri = f"{uri}/collections"
         existing_collections = set(self.collection_names)
 
         groups_iter = groups.items()
@@ -623,22 +868,15 @@ class RadiObject:
                 )
                 with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
                     grp.add(vc_uri, name=collection_name)
-                with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
+                with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
                     grp.meta["n_collections"] = self.n_collections + 1
                 existing_collections.add(collection_name)
 
     # ===== Validation =====
 
     def validate(self) -> None:
-        """Validate internal consistency of the RadiObject and all collections.
-
-        Checks:
-        1. subject_count metadata matches actual obs_meta rows
-        2. n_collections metadata matches actual collection count
-        3. Each VolumeCollection passes its own validate()
-        4. FK constraint: all obs_subject_ids in each collection's obs exist in obs_meta
-        5. obs_id uniqueness across all collections
-        """
+        """Validate internal consistency of the RadiObject and all collections."""
+        self._check_not_view("validate")
         obs_meta_data = self.obs_meta.read()
         actual_subject_count = len(obs_meta_data)
         stored_subject_count = self._metadata.get("subject_count", 0)
@@ -654,11 +892,9 @@ class RadiObject:
                 f"n_collections mismatch: metadata={stored_n_collections}, actual={actual_n_collections}"
             )
 
-        # Validate each collection
         for name in self.collection_names:
             self.collection(name).validate()
 
-        # Validate FK constraint: obs_subject_ids in collections must exist in obs_meta
         obs_meta_subject_ids = set(obs_meta_data["obs_subject_id"])
         for name in self.collection_names:
             vc = self.collection(name)
@@ -671,8 +907,7 @@ class RadiObject:
                     f"{sorted(orphan_subjects)[:5]}"
                 )
 
-        # Validate obs_id uniqueness across all collections
-        seen_obs_ids: dict[str, str] = {}  # obs_id -> collection_name
+        seen_obs_ids: dict[str, str] = {}
         for name in self.collection_names:
             vc = self.collection(name)
             for obs_id in vc.obs_ids:
@@ -772,6 +1007,143 @@ class RadiObject:
         return radi_result
 
     @classmethod
+    def from_collections(
+        cls,
+        uri: str,
+        collections: dict[str, VolumeCollection | str],
+        obs_meta: pd.DataFrame | None = None,
+        ctx: tiledb.Ctx | None = None,
+    ) -> RadiObject:
+        """Create RadiObject from existing VolumeCollections.
+
+        Links collections without copying when they're already at expected URIs
+        ({uri}/collections/{name}). Copies collections that are elsewhere.
+
+        Args:
+            uri: Target URI for RadiObject
+            collections: Dict mapping collection names to VolumeCollection objects or URIs
+            obs_meta: Optional subject-level metadata. If None, derived from collections.
+            ctx: TileDB context
+
+        Example:
+            # Collections already at expected locations (no copy)
+            ct_vc = radi.CT.lazy().map(transform).materialize(uri=f"{URI}/collections/CT")
+            seg_vc = radi.seg.lazy().map(transform).materialize(uri=f"{URI}/collections/seg")
+            radi = RadiObject.from_collections(
+                uri=URI,
+                collections={"CT": ct_vc, "seg": seg_vc},
+            )
+
+            # Collections from elsewhere (will be copied)
+            radi = RadiObject.from_collections(
+                uri="./new_dataset",
+                collections={"T1w": existing_t1w_collection},
+            )
+        """
+        if not collections:
+            raise ValueError("At least one collection is required")
+
+        effective_ctx = ctx if ctx else global_ctx()
+        collections_uri = f"{uri}/collections"
+
+        # Resolve string URIs to VolumeCollection objects
+        resolved: dict[str, VolumeCollection] = {}
+        for name, vc_or_uri in collections.items():
+            if isinstance(vc_or_uri, str):
+                resolved[name] = VolumeCollection(vc_or_uri, ctx=ctx)
+            else:
+                resolved[name] = vc_or_uri
+
+        # Determine which collections need copying vs linking
+        in_place: dict[str, VolumeCollection] = {}
+        to_copy: dict[str, VolumeCollection] = {}
+
+        for name, vc in resolved.items():
+            expected_uri = f"{collections_uri}/{name}"
+            if vc.uri == expected_uri:
+                in_place[name] = vc
+            else:
+                to_copy[name] = vc
+
+        # Check if collections group already exists (from materialize)
+        vfs = tiledb.VFS(ctx=effective_ctx)
+        collections_group_exists = vfs.is_dir(collections_uri)
+
+        # Create root group
+        tiledb.Group.create(uri, ctx=effective_ctx)
+
+        # Create or use existing collections group
+        if not collections_group_exists:
+            tiledb.Group.create(collections_uri, ctx=effective_ctx)
+
+        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
+            grp.add(collections_uri, name="collections")
+
+        # Link in-place collections (no copy needed)
+        with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
+            for name, vc in in_place.items():
+                grp.add(vc.uri, name=name)
+
+        # Copy external collections
+        for name, vc in to_copy.items():
+            new_uri = f"{collections_uri}/{name}"
+            _copy_volume_collection(vc, new_uri, name=name, ctx=ctx)
+            with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
+                grp.add(new_uri, name=name)
+
+        # Derive obs_meta if not provided
+        if obs_meta is None:
+            all_subject_ids: set[str] = set()
+            for vc in resolved.values():
+                obs_df = vc.obs.read()
+                all_subject_ids.update(obs_df["obs_subject_id"].tolist())
+            sorted_ids = sorted(all_subject_ids)
+            obs_meta = pd.DataFrame(
+                {
+                    "obs_subject_id": sorted_ids,
+                    "obs_id": sorted_ids,
+                }
+            )
+
+        # Build obs_meta schema
+        n_subjects = len(obs_meta)
+        obs_meta_schema: dict[str, np.dtype] = {}
+        for col in obs_meta.columns:
+            if col in ("obs_subject_id", "obs_id"):
+                continue
+            dtype = obs_meta[col].to_numpy().dtype
+            if dtype == np.dtype("O"):
+                dtype = np.dtype("U64")
+            obs_meta_schema[col] = dtype
+
+        # Create obs_meta
+        obs_meta_uri = f"{uri}/obs_meta"
+        Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
+
+        if len(obs_meta) > 0:
+            obs_subject_ids = obs_meta["obs_subject_id"].astype(str).to_numpy()
+            obs_ids = (
+                obs_meta["obs_id"].astype(str).to_numpy()
+                if "obs_id" in obs_meta.columns
+                else obs_subject_ids
+            )
+            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
+                attr_data = {
+                    col: obs_meta[col].to_numpy()
+                    for col in obs_meta.columns
+                    if col not in ("obs_subject_id", "obs_id")
+                }
+                arr[obs_subject_ids, obs_ids] = attr_data
+
+        # Link obs_meta to root and set metadata
+        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
+            grp.add(obs_meta_uri, name="obs_meta")
+            grp.meta["n_collections"] = len(resolved)
+            grp.meta["subject_count"] = n_subjects
+
+        return cls(uri, ctx=ctx)
+
+    @classmethod
     def from_niftis(
         cls,
         uri: str,
@@ -788,7 +1160,7 @@ class RadiObject:
         """Create RadiObject from NIfTI files with raw data storage.
 
         Ingestion stores volumes in their original dimensions without any
-        preprocessing. Use `collection.map()` for post-hoc transformations.
+        preprocessing. Use `collection.lazy().map()` for post-hoc transformations.
 
         Three input modes:
         1. images: Dict mapping collection names to paths/globs/lists (recommended)
@@ -852,15 +1224,12 @@ class RadiObject:
         # --- NORMALIZE ALL INPUTS TO images DICT ---
 
         if images is not None:
-            # New mode: images dict provided directly
             if niftis is not None or image_dir is not None or collection_name is not None:
                 raise ValueError("Cannot use 'images' with legacy parameters")
             if not images:
                 raise ValueError("images dict cannot be empty")
-            # images is ready to use
 
         elif image_dir is not None:
-            # Legacy mode: image_dir → discover files and convert to images dict
             if niftis is not None:
                 raise ValueError("Cannot specify both 'niftis' and 'image_dir'")
             from radiobject.ingest import discover_nifti_pairs
@@ -869,10 +1238,8 @@ class RadiObject:
             niftis = [(s.image_path, s.subject_id) for s in sources]
 
             if collection_name:
-                # Explicit name - all to one collection
                 images = {collection_name: niftis}
             else:
-                # Group by inferred modality
                 modality_groups: dict[str, list[tuple[str | Path, str]]] = defaultdict(list)
                 for path, sid in niftis:
                     series_type = infer_series_type(Path(path))
@@ -880,12 +1247,9 @@ class RadiObject:
                 images = dict(modality_groups)
 
         elif niftis is not None:
-            # Legacy mode: niftis list → convert to images dict
             if collection_name:
-                # All to one collection
                 images = {collection_name: niftis}
             else:
-                # Group by inferred modality
                 modality_groups: dict[str, list[tuple[str | Path, str]]] = defaultdict(list)
                 for path, sid in niftis:
                     series_type = infer_series_type(Path(path))
@@ -938,7 +1302,6 @@ class RadiObject:
                     f"obs_subject_ids in niftis not found in obs_meta: {sorted(missing)[:5]}"
                 )
         else:
-            # Auto-generate obs_meta from unique subject IDs
             sorted_ids = sorted(all_subject_ids)
             obs_meta = pd.DataFrame(
                 {
@@ -947,14 +1310,11 @@ class RadiObject:
                 }
             )
 
-        # Check for empty groups
         if not groups or all(len(nifti_list) == 0 for nifti_list in groups.values()):
             raise ValueError("No NIfTI files found")
 
-        # Create VolumeCollection for each group
         effective_ctx = ctx if ctx else global_ctx()
 
-        # Ensure parent directories exist
         tiledb.Group.create(uri, ctx=effective_ctx)
         collections_uri = f"{uri}/collections"
         tiledb.Group.create(collections_uri, ctx=effective_ctx)
@@ -971,12 +1331,11 @@ class RadiObject:
             vc_uri = f"{collections_uri}/{coll_name}"
             nifti_list = [(path, subject_id) for path, subject_id in items]
 
-            # Create collection without shape constraint (heterogeneous shapes allowed)
             vc = VolumeCollection.from_niftis(
                 uri=vc_uri,
                 niftis=nifti_list,
                 reorient=reorient,
-                validate_dimensions=False,  # Allow heterogeneous shapes
+                validate_dimensions=False,
                 name=coll_name,
                 ctx=ctx,
                 progress=progress,
@@ -986,7 +1345,6 @@ class RadiObject:
             with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
                 grp.add(vc_uri, name=coll_name)
 
-        # Create obs_meta Dataframe
         n_subjects = len(obs_meta)
         obs_meta_schema: dict[str, np.dtype] = {}
         for col in obs_meta.columns:
@@ -1000,7 +1358,6 @@ class RadiObject:
         obs_meta_uri = f"{uri}/obs_meta"
         Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
 
-        # Write obs_meta data
         if len(obs_meta) > 0:
             obs_subject_ids = obs_meta["obs_subject_id"].astype(str).to_numpy()
             obs_ids = (
@@ -1015,7 +1372,6 @@ class RadiObject:
                         attr_data[col] = obs_meta[col].to_numpy()
                 arr[obs_subject_ids, obs_ids] = attr_data
 
-        # Update group metadata
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_collections"] = len(collections)
             grp.meta["subject_count"] = n_subjects
@@ -1062,10 +1418,8 @@ class RadiObject:
         if not dicom_dirs:
             raise ValueError("At least one DICOM directory is required")
 
-        # Collect all subject IDs
         all_subject_ids = {sid for _, sid in dicom_dirs}
 
-        # Validate FK constraint if obs_meta provided
         if obs_meta is not None:
             if "obs_subject_id" not in obs_meta.columns:
                 raise ValueError("obs_meta must contain 'obs_subject_id' column")
@@ -1076,7 +1430,6 @@ class RadiObject:
                     f"obs_subject_ids in dicom_dirs not found in obs_meta: {sorted(missing)[:5]}"
                 )
         else:
-            # Auto-generate obs_meta from unique subject IDs
             sorted_ids = sorted(all_subject_ids)
             obs_meta = pd.DataFrame(
                 {
@@ -1085,7 +1438,6 @@ class RadiObject:
                 }
             )
 
-        # Extract metadata for each DICOM series
         file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
         for dicom_dir, obs_subject_id in dicom_dirs:
             path = Path(dicom_dir)
@@ -1093,24 +1445,18 @@ class RadiObject:
                 raise FileNotFoundError(f"DICOM directory not found: {path}")
 
             metadata = extract_dicom_metadata(path)
-            # DICOM dimensions tuple is (rows, columns, n_slices)
-            # Swap to (columns, rows, n_slices) to match X, Y, Z convention
             dims = metadata.dimensions
             shape = (dims[1], dims[0], dims[2])
-            # Use modality as group key (could also use series_description)
             group_key = metadata.modality
             file_info.append((path, obs_subject_id, shape, group_key))
 
-        # Group by (shape, modality)
         groups: dict[tuple[tuple[int, int, int], str], list[tuple[Path, str]]] = defaultdict(list)
         for path, subject_id, shape, group_key in file_info:
             key = (shape, group_key)
             groups[key].append((path, subject_id))
 
-        # Create VolumeCollection for each group
         effective_ctx = ctx if ctx else global_ctx()
 
-        # Ensure parent directories exist
         tiledb.Group.create(uri, ctx=effective_ctx)
         collections_uri = f"{uri}/collections"
         tiledb.Group.create(collections_uri, ctx=effective_ctx)
@@ -1125,13 +1471,12 @@ class RadiObject:
             groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
 
         for (shape, modality), items in groups_iter:
-            # Generate unique collection name
-            collection_name = modality
-            if collection_name in used_names:
-                collection_name = f"{modality}_{shape[0]}x{shape[1]}x{shape[2]}"
-            used_names.add(collection_name)
+            coll_name = modality
+            if coll_name in used_names:
+                coll_name = f"{modality}_{shape[0]}x{shape[1]}x{shape[2]}"
+            used_names.add(coll_name)
 
-            vc_uri = f"{collections_uri}/{collection_name}"
+            vc_uri = f"{collections_uri}/{coll_name}"
             dicom_list = [(path, subject_id) for path, subject_id in items]
 
             vc = VolumeCollection.from_dicoms(
@@ -1139,17 +1484,15 @@ class RadiObject:
                 dicom_dirs=dicom_list,
                 reorient=reorient,
                 validate_dimensions=True,
-                name=collection_name,
+                name=coll_name,
                 ctx=ctx,
                 progress=progress,
             )
-            collections[collection_name] = vc
+            collections[coll_name] = vc
 
-            # Register with group
             with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
-                grp.add(vc_uri, name=collection_name)
+                grp.add(vc_uri, name=coll_name)
 
-        # Create obs_meta Dataframe
         n_subjects = len(obs_meta)
         obs_meta_schema: dict[str, np.dtype] = {}
         for col in obs_meta.columns:
@@ -1163,7 +1506,6 @@ class RadiObject:
         obs_meta_uri = f"{uri}/obs_meta"
         Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
 
-        # Write obs_meta data
         if len(obs_meta) > 0:
             obs_subject_ids = obs_meta["obs_subject_id"].astype(str).to_numpy()
             obs_ids = (
@@ -1178,7 +1520,6 @@ class RadiObject:
                         attr_data[col] = obs_meta[col].to_numpy()
                 arr[obs_subject_ids, obs_ids] = attr_data
 
-        # Update group metadata
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_collections"] = len(collections)
             grp.meta["subject_count"] = n_subjects
@@ -1186,237 +1527,6 @@ class RadiObject:
             grp.add(collections_uri, name="collections")
 
         return cls(uri, ctx=ctx)
-
-
-class RadiObjectView:
-    """Immutable view into a RadiObject with filtered subjects/collections.
-
-    RadiObjectView is designed for interactive mode - quick inspection and
-    pandas-like access patterns. For pipeline/ETL workloads, use `to_query()`
-    to get a lazy Query builder.
-    """
-
-    def __init__(
-        self,
-        source: RadiObject,
-        obs_subject_ids: list[str],
-        collection_names: list[str],
-    ):
-        self._source = source
-        self._obs_subject_ids = tuple(obs_subject_ids)
-        self._collection_names = tuple(collection_names)
-
-    @property
-    def obs_subject_ids(self) -> list[str]:
-        """Selected obs_subject_ids."""
-        return list(self._obs_subject_ids)
-
-    @property
-    def collection_names(self) -> tuple[str, ...]:
-        """Selected collection names."""
-        return self._collection_names
-
-    @property
-    def obs_meta(self) -> pd.DataFrame:
-        """Subject metadata for filtered subjects."""
-        full_obs_meta = self._source.obs_meta.read()
-        return full_obs_meta[
-            full_obs_meta["obs_subject_id"].isin(self._obs_subject_ids)
-        ].reset_index(drop=True)
-
-    def __len__(self) -> int:
-        """Number of subjects in view."""
-        return len(self._obs_subject_ids)
-
-    @property
-    def n_collections(self) -> int:
-        """Number of collections in view."""
-        return len(self._collection_names)
-
-    def __repr__(self) -> str:
-        """Concise representation of the RadiObjectView."""
-        collections = ", ".join(self._collection_names) if self._collection_names else "none"
-        return f"RadiObjectView({len(self)} subjects, {self.n_collections} collections: [{collections}])"
-
-    # ===== Bridge to Query (Pipeline Mode) =====
-
-    def to_query(self) -> Query:
-        """Convert this view to a Query for pipeline-style operations.
-
-        Use this when you need to chain additional filters or use streaming
-        materialization after initial interactive exploration.
-
-        Example:
-            view = radi.iloc[0:100]  # Interactive: quick look at first 100
-            query = view.to_query()  # Bridge to pipeline mode
-            new_radi = query.filter("age > 40").to_radi_object("...", streaming=True)
-        """
-        from radiobject.query import Query
-
-        return Query(
-            self._source,
-            subject_ids=frozenset(self._obs_subject_ids),
-            output_collections=frozenset(self._collection_names),
-        )
-
-    # ===== Further Filtering (chainable) =====
-
-    def select_subjects(self, obs_subject_ids: list[str]) -> RadiObjectView:
-        """Further filter to subset of subjects."""
-        current_set = set(self._obs_subject_ids)
-        for sid in obs_subject_ids:
-            if sid not in current_set:
-                raise KeyError(f"obs_subject_id '{sid}' not in view")
-        return RadiObjectView(
-            source=self._source,
-            obs_subject_ids=obs_subject_ids,
-            collection_names=list(self._collection_names),
-        )
-
-    def select_collections(self, names: list[str]) -> RadiObjectView:
-        """Further filter to subset of collections."""
-        current_set = set(self._collection_names)
-        for name in names:
-            if name not in current_set:
-                raise KeyError(f"Collection '{name}' not in view")
-        return RadiObjectView(
-            source=self._source,
-            obs_subject_ids=list(self._obs_subject_ids),
-            collection_names=names,
-        )
-
-    # ===== Write to new RadiObject (materialization) =====
-
-    def to_radi_object(self, uri: str, ctx: tiledb.Ctx | None = None) -> RadiObject:
-        """Materialize this view as a new RadiObject."""
-        effective_ctx = ctx if ctx else self._source._effective_ctx()
-
-        obs_meta_df = self._source.obs_meta.read()
-        filtered_obs_meta = obs_meta_df[
-            obs_meta_df["obs_subject_id"].isin(self._obs_subject_ids)
-        ].reset_index(drop=True)
-
-        obs_meta_schema = {}
-        for col in filtered_obs_meta.columns:
-            if col in ("obs_subject_id", "obs_id"):
-                continue
-            dtype = filtered_obs_meta[col].to_numpy().dtype
-            if dtype == np.dtype("O"):
-                dtype = np.dtype("U64")
-            obs_meta_schema[col] = dtype
-
-        RadiObject._create(
-            uri,
-            obs_meta_schema=obs_meta_schema,
-            n_subjects=len(self._obs_subject_ids),
-            ctx=ctx,
-        )
-
-        obs_meta_uri = f"{uri}/obs_meta"
-        obs_subject_ids = filtered_obs_meta["obs_subject_id"].astype(str).to_numpy()
-        obs_ids = (
-            filtered_obs_meta["obs_id"].astype(str).to_numpy()
-            if "obs_id" in filtered_obs_meta.columns
-            else obs_subject_ids
-        )
-        with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {}
-            for col in filtered_obs_meta.columns:
-                if col not in ("obs_subject_id", "obs_id"):
-                    attr_data[col] = filtered_obs_meta[col].to_numpy()
-            arr[obs_subject_ids, obs_ids] = attr_data
-
-        collections_uri = f"{uri}/collections"
-        for coll_name in self._collection_names:
-            src_collection = self._source.collection(coll_name)
-            new_vc_uri = f"{collections_uri}/{coll_name}"
-
-            _copy_filtered_volume_collection(
-                src_collection,
-                new_vc_uri,
-                obs_subject_ids=list(self._obs_subject_ids),
-                name=coll_name,
-                ctx=ctx,
-            )
-
-            with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
-                grp.add(new_vc_uri, name=coll_name)
-
-        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["n_collections"] = len(self._collection_names)
-            grp.meta["subject_count"] = len(self._obs_subject_ids)
-
-        return RadiObject(uri, ctx=ctx)
-
-    def to_radi_object_streaming(self, uri: str, ctx: tiledb.Ctx | None = None) -> RadiObject:
-        """Materialize this view as a new RadiObject using streaming writes.
-
-        Memory-efficient alternative to to_radi_object() that writes volumes
-        one at a time instead of loading all into memory.
-        """
-        from radiobject.streaming import RadiObjectWriter
-
-        obs_meta_df = self.obs_meta
-
-        # Build obs_meta schema
-        obs_meta_schema: dict[str, np.dtype] = {}
-        for col in obs_meta_df.columns:
-            if col in ("obs_subject_id", "obs_id"):
-                continue
-            dtype = obs_meta_df[col].to_numpy().dtype
-            if dtype == np.dtype("O"):
-                dtype = np.dtype("U64")
-            obs_meta_schema[col] = dtype
-
-        with RadiObjectWriter(uri, obs_meta_schema=obs_meta_schema, ctx=ctx) as writer:
-            writer.write_obs_meta(obs_meta_df)
-
-            for coll_name in self._collection_names:
-                src_collection = self._source.collection(coll_name)
-                obs_df = src_collection.obs.read()
-                filtered_obs = obs_df[obs_df["obs_subject_id"].isin(self._obs_subject_ids)]
-
-                if len(filtered_obs) == 0:
-                    continue
-
-                # Extract obs schema
-                obs_schema: dict[str, np.dtype] = {}
-                for col in src_collection.obs.columns:
-                    if col in ("obs_id", "obs_subject_id"):
-                        continue
-                    obs_schema[col] = src_collection.obs.dtypes[col]
-
-                with writer.add_collection(
-                    coll_name, src_collection.shape, obs_schema
-                ) as coll_writer:
-                    for _, row in filtered_obs.iterrows():
-                        obs_id = row["obs_id"]
-                        vol = src_collection.loc[obs_id]
-                        attrs = {
-                            k: v for k, v in row.items() if k not in ("obs_id", "obs_subject_id")
-                        }
-                        coll_writer.write_volume(
-                            data=vol.to_numpy(),
-                            obs_id=obs_id,
-                            obs_subject_id=row["obs_subject_id"],
-                            **attrs,
-                        )
-
-        return RadiObject(uri, ctx=ctx)
-
-    # ===== Access collections in view =====
-
-    def collection(self, name: str) -> VolumeCollection:
-        """Get a VolumeCollection by name (from source)."""
-        if name not in self._collection_names:
-            raise KeyError(f"Collection '{name}' not in view")
-        return self._source.collection(name)
-
-    def __getattr__(self, name: str) -> VolumeCollection:
-        """Attribute access to collections."""
-        if name.startswith("_"):
-            raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
-        return self.collection(name)
 
 
 # ===== Helper Functions =====
@@ -1441,7 +1551,6 @@ def _copy_volume_collection(
     """Copy a VolumeCollection to a new URI."""
     effective_ctx = ctx if ctx else global_ctx()
 
-    # Preserve source name if not explicitly provided
     collection_name = name if name is not None else src.name
 
     VolumeCollection._create(
@@ -1497,7 +1606,6 @@ def _copy_filtered_volume_collection(
     """Copy a VolumeCollection, filtering to volumes matching obs_subject_ids."""
     effective_ctx = ctx if ctx else global_ctx()
 
-    # Preserve source name if not explicitly provided
     collection_name = name if name is not None else src.name
 
     obs_df = src.obs.read()
