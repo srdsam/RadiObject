@@ -188,6 +188,7 @@ def create_segmentation_dataloader(
     spatial_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     foreground_sampling: bool = False,
     foreground_threshold: float = 0.01,
+    foreground_max_retries: int = 10,
     patches_per_volume: int = 1,
 ) -> DataLoader:
     """Create a DataLoader for segmentation training with separate image/mask handling.
@@ -211,6 +212,7 @@ def create_segmentation_dataloader(
             foreground (non-zero mask values).
         foreground_threshold: Minimum fraction of foreground voxels in patch
             when foreground_sampling is enabled.
+        foreground_max_retries: Maximum random attempts before accepting any patch.
         patches_per_volume: Number of patches to extract per volume per epoch.
 
     Returns:
@@ -232,6 +234,7 @@ def create_segmentation_dataloader(
         spatial_transform=spatial_transform,
         foreground_sampling=foreground_sampling,
         foreground_threshold=foreground_threshold,
+        foreground_max_retries=foreground_max_retries,
     )
 
     effective_workers = num_workers if num_workers > 0 else 0

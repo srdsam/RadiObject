@@ -1,5 +1,9 @@
 # RadiObject
 
+[![PyPI version](https://badge.fury.io/py/radiobject.svg)](https://pypi.org/project/radiobject/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **What?** A TileDB-backed data structure for radiology data at scale.
 
 **Why?** NIfTI/DICOM must be read from local disk and don't support partial reads.

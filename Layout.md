@@ -2,6 +2,9 @@
 
 ```
 RadiObject/
+├── .github/
+│   └── workflows/
+│       └── publish.yml                # GitHub Actions workflow for PyPI publishing
 ├── .gitignore
 ├── .python-version
 ├── CLAUDE.md

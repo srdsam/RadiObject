@@ -7,7 +7,7 @@ from radiobject.radi_object import RadiObject
 from radiobject.volume import Volume
 from radiobject.volume_collection import VolumeCollection
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "RadiObject",
     "Volume",

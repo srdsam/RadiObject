@@ -3146,7 +3146,7 @@ wheels = [
 
 [[package]]
 name = "radiobject"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
@@ -3154,6 +3154,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "nibabel" },
     { name = "numpy" },
+    { name = "pandas" },
     { name = "psutil" },
     { name = "pydantic" },
     { name = "pydicom" },
@@ -3165,7 +3166,6 @@ dependencies = [
 dev = [
     { name = "jupyter" },
     { name = "nbconvert" },
-    { name = "pandas" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
@@ -3174,7 +3174,6 @@ docs = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
-    { name = "pandas" },
 ]
 download = [
     { name = "requests" },
@@ -3182,7 +3181,6 @@ download = [
 ]
 ml = [
     { name = "monai" },
-    { name = "pandas" },
     { name = "scikit-learn" },
     { name = "simpleitk" },
     { name = "tcia-utils" },
@@ -3217,7 +3215,7 @@ requires-dist = [
     { name = "botocore", extras = ["crt"], specifier = ">=1.42.36" },
     { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.1.1" },
     { name = "jupyter", marker = "extra == 'tutorials'", specifier = ">=1.1.1" },
-    { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "matplotlib", specifier = ">=3.8.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.5.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5.0" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.24.0" },
@@ -3226,11 +3224,9 @@ requires-dist = [
     { name = "nbconvert", marker = "extra == 'dev'", specifier = ">=7.16.6" },
     { name = "nibabel", specifier = ">=5.2.0" },
     { name = "numpy", specifier = ">=1.26.0" },
-    { name = "pandas", marker = "extra == 'dev'", specifier = ">=2.0.0" },
-    { name = "pandas", marker = "extra == 'docs'", specifier = ">=2.0.0" },
-    { name = "pandas", marker = "extra == 'ml'", specifier = ">=2.0.0" },
+    { name = "pandas", specifier = ">=2.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
-    { name = "psutil", specifier = ">=7.2.2" },
+    { name = "psutil", specifier = ">=5.9.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydicom", specifier = ">=2.4.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
