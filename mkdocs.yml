@@ -54,32 +54,41 @@ nav:
           - "3. VolumeCollection": notebooks/02_volume_collection.ipynb
           - "4. Volume Operations": notebooks/03_volume.ipynb
       - Advanced:
-          - "5. Storage Config": notebooks/04_storage_configuration.ipynb
+          - "5. Storage Config": notebooks/04_configuration.ipynb
           - "6. Multi-Collection": notebooks/05_ingest_msd.ipynb
           - "7. ML Training": notebooks/06_ml_training.ipynb
 
   - How-to Guides:
       - Overview: how-to/index.md
-      - Data Access: DATA_ACCESS.md
-      - ML Integration: ML_INTEGRATION.md
-      - S3 Setup: S3_SETUP.md
-      - Download Datasets: DATASETS.md
-      - Contributing: CONTRIBUTING.md
+      - Data Management:
+          - Ingest Data: how-to/ingest-data.md
+          - Query & Filter: how-to/query-filter-data.md
+          - Lazy Queries: how-to/lazy-queries.md
+          - Streaming Writes: how-to/streaming-writes.md
+          - Append Data: how-to/append-data.md
+      - ML Training:
+          - ML Integration: how-to/ml-training.md
+          - Tuning Concurrency: how-to/tuning-concurrency.md
+      - Infrastructure:
+          - S3 Setup: how-to/s3-setup.md
+          - Download Datasets: how-to/datasets.md
+          - Contributing: how-to/contributing.md
 
   - Reference:
       - Overview: reference/index.md
+      - Configuration: reference/configuration.md
       - API:
           - RadiObject: api/radi_object.md
           - VolumeCollection: api/volume_collection.md
           - Volume: api/volume.md
           - Query: api/query.md
-          - Configuration: api/ctx.md
-      - Benchmarks: BENCHMARKS.md
-      - Lexicon: LEXICON.md
-      - Layout: LAYOUT.md
+          - Context: api/ctx.md
+      - Benchmarks: reference/benchmarks.md
+      - Lexicon: reference/lexicon.md
+      - Layout: reference/layout.md
 
   - Explanation:
       - Overview: explanation/index.md
-      - Architecture: DESIGN.md
-      - Threading Model: CONTEXT.md
-      - Performance Analysis: PERFORMANCE.md
+      - Architecture: explanation/architecture.md
+      - Threading Model: explanation/threading-model.md
+      - Performance Analysis: explanation/performance-analysis.md

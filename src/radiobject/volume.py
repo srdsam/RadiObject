@@ -10,8 +10,7 @@ import nibabel as nib
 import numpy as np
 import tiledb
 
-from radiobject.ctx import SliceOrientation, get_config
-from radiobject.ctx import ctx as global_ctx
+from radiobject.ctx import SliceOrientation, radi_cfg, tdb_ctx
 from radiobject.orientation import (
     OrientationInfo,
     detect_dicom_orientation,
@@ -194,7 +193,7 @@ class Volume:
             arr.meta["obs_id"] = obs_id
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
+        return self._ctx if self._ctx else tdb_ctx()
 
     @cached_property
     def _schema(self) -> tiledb.ArraySchema:
@@ -219,12 +218,12 @@ class Volume:
         if len(shape) not in (3, 4):
             raise ValueError(f"Shape must be 3D or 4D, got {len(shape)}D")
 
-        effective_ctx = ctx if ctx else global_ctx()
-        config = get_config()
+        effective_ctx = ctx if ctx else tdb_ctx()
+        config = radi_cfg()
 
         # Build dimensions with orientation-aware tiling
         dim_names = ["x", "y", "z", "t"][: len(shape)]
-        tile_extents = config.tile.extents_for_shape(shape)
+        tile_extents = config.write.tile.extents_for_shape(shape)
 
         dims = [
             tiledb.Dim(
@@ -240,7 +239,7 @@ class Volume:
 
         # Build attribute with compression
         filters = tiledb.FilterList()
-        compression_filter = config.compression.as_filter()
+        compression_filter = config.write.compression.as_filter()
         if compression_filter:
             filters.append(compression_filter)
 
@@ -261,7 +260,7 @@ class Volume:
 
         # Persist tile orientation metadata
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
-            arr.meta["tile_orientation"] = config.tile.orientation.value
+            arr.meta["tile_orientation"] = config.write.tile.orientation.value
 
         return cls(uri, ctx=ctx)
 
@@ -274,7 +273,7 @@ class Volume:
     ) -> Volume:
         """Create Volume from numpy array."""
         vol = cls.create(uri, shape=data.shape, dtype=data.dtype, ctx=ctx)
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
             arr[:] = data
         return vol
@@ -295,8 +294,10 @@ class Volume:
             ctx: TileDB context (uses global if None).
             reorient: Reorient to canonical orientation (None uses config default).
         """
-        config = get_config()
-        should_reorient = reorient if reorient is not None else config.orientation.reorient_on_load
+        config = radi_cfg()
+        should_reorient = (
+            reorient if reorient is not None else config.write.orientation.reorient_on_load
+        )
 
         img = nib.load(nifti_path)
         data = np.asarray(img.dataobj)
@@ -308,7 +309,7 @@ class Volume:
         # Reorient if requested
         if should_reorient and not orientation_info.is_canonical:
             data, new_affine = reorient_to_canonical(
-                data, original_affine, target=config.orientation.canonical_target
+                data, original_affine, target=config.write.orientation.canonical_target
             )
             # Update orientation info for reoriented data
             reoriented_img = nib.Nifti1Image(data, new_affine)
@@ -318,12 +319,12 @@ class Volume:
         vol = cls.from_numpy(uri, data, ctx=ctx)
 
         # Store orientation metadata
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
         metadata = orientation_info_to_metadata(
             orientation_info,
             original_affine=(
                 original_affine
-                if should_reorient and config.orientation.store_original_affine
+                if should_reorient and config.write.orientation.store_original_affine
                 else None
             ),
         )
@@ -368,8 +369,10 @@ class Volume:
         """
         import pydicom
 
-        config = get_config()
-        should_reorient = reorient if reorient is not None else config.orientation.reorient_on_load
+        config = radi_cfg()
+        should_reorient = (
+            reorient if reorient is not None else config.write.orientation.reorient_on_load
+        )
 
         dicom_path = Path(dicom_dir)
 
@@ -409,7 +412,7 @@ class Volume:
         # Reorient if requested
         if should_reorient and not orientation_info.is_canonical:
             data, new_affine = reorient_to_canonical(
-                data, original_affine, target=config.orientation.canonical_target
+                data, original_affine, target=config.write.orientation.canonical_target
             )
             # Update orientation info
             reoriented_img = nib.Nifti1Image(data, new_affine)
@@ -420,12 +423,12 @@ class Volume:
         vol = cls.from_numpy(uri, output_data, ctx=ctx)
 
         # Store orientation metadata
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
         metadata = orientation_info_to_metadata(
             orientation_info,
             original_affine=(
                 original_affine
-                if should_reorient and config.orientation.store_original_affine
+                if should_reorient and config.write.orientation.store_original_affine
                 else None
             ),
         )

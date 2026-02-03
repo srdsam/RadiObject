@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import tiledb
 
-from radiobject.ctx import SliceOrientation, TileConfig, configure
+from radiobject import SliceOrientation, TileConfig, WriteConfig, configure, radi_reset
 from radiobject.volume import Volume
 
 logger = logging.getLogger(__name__)
@@ -62,13 +62,13 @@ class TestVolumeTileOrientation:
         assert vol.tile_orientation == SliceOrientation.AXIAL
 
     def test_tile_orientation_from_config(self, temp_dir: Path) -> None:
-        configure(tile=TileConfig(orientation=SliceOrientation.SAGITTAL))
+        configure(write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.SAGITTAL)))
         try:
             uri = str(temp_dir / "vol_sagittal")
             vol = Volume.create(uri, shape=(32, 32, 16))
             assert vol.tile_orientation == SliceOrientation.SAGITTAL
         finally:
-            configure(tile=TileConfig(orientation=SliceOrientation.AXIAL))
+            radi_reset()
 
 
 class TestVolumeFromNumpy:
@@ -325,9 +325,6 @@ class TestDtypePreservation:
             np.int16,
             np.int32,
             np.int64,
-            pytest.param(
-                np.float16, marks=pytest.mark.skip(reason="TileDB does not support float16")
-            ),
             np.float32,
             np.float64,
         ],

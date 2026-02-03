@@ -115,28 +115,6 @@ class ReadConfig(BaseModel):
     )
 
 
-class IOConfig(BaseModel):
-    """I/O and memory settings (deprecated, use ReadConfig)."""
-
-    memory_budget_mb: int = Field(
-        default=1024,
-        ge=64,
-        description="Memory budget for TileDB operations (MB)",
-    )
-    concurrency: int = Field(
-        default=4,
-        ge=1,
-        le=64,
-        description="Number of TileDB internal I/O threads",
-    )
-    max_workers: int = Field(
-        default=4,
-        ge=1,
-        le=32,
-        description="Max parallel workers for volume I/O operations",
-    )
-
-
 class S3Config(BaseModel):
     """S3/cloud storage settings."""
 
@@ -187,32 +165,6 @@ class RadiObjectConfig(BaseModel):
     write: WriteConfig = Field(default_factory=WriteConfig)
     read: ReadConfig = Field(default_factory=ReadConfig)
     s3: S3Config = Field(default_factory=S3Config)
-
-    # Deprecated flat access (for backwards compatibility)
-    _tile: TileConfig | None = None
-    _compression: CompressionConfig | None = None
-    _io: IOConfig | None = None
-    _orientation: OrientationConfig | None = None
-
-    @property
-    def tile(self) -> TileConfig:
-        """Tile configuration (deprecated, use write.tile)."""
-        return self.write.tile
-
-    @property
-    def compression(self) -> CompressionConfig:
-        """Compression configuration (deprecated, use write.compression)."""
-        return self.write.compression
-
-    @property
-    def orientation(self) -> OrientationConfig:
-        """Orientation configuration (deprecated, use write.orientation)."""
-        return self.write.orientation
-
-    @property
-    def io(self) -> ReadConfig:
-        """I/O configuration (deprecated, use read)."""
-        return self.read
 
     @model_validator(mode="after")
     def validate_compression_level(self) -> Self:
@@ -285,12 +237,19 @@ _config: RadiObjectConfig = RadiObjectConfig()
 _ctx: tiledb.Ctx | None = None
 
 
-def get_config() -> RadiObjectConfig:
-    """Get the current global configuration."""
+def radi_cfg() -> RadiObjectConfig:
+    """Get the current RadiObject configuration."""
     return _config
 
 
-def ctx() -> tiledb.Ctx:
+def radi_reset() -> None:
+    """Reset RadiObject configuration to defaults."""
+    global _config, _ctx
+    _config = RadiObjectConfig()
+    _ctx = None
+
+
+def tdb_ctx() -> tiledb.Ctx:
     """Get the global TileDB context (lazily built from config)."""
     global _ctx
     if _ctx is None:
@@ -298,65 +257,44 @@ def ctx() -> tiledb.Ctx:
     return _ctx
 
 
+def tdb_cfg() -> tiledb.Config:
+    """Get the underlying TileDB Config object for advanced users."""
+    return _config.to_tiledb_config()
+
+
 def configure(
     *,
     write: WriteConfig | None = None,
     read: ReadConfig | None = None,
     s3: S3Config | None = None,
-    # Deprecated flat arguments for backwards compatibility
-    tile: TileConfig | None = None,
-    compression: CompressionConfig | None = None,
-    io: IOConfig | ReadConfig | None = None,
-    orientation: OrientationConfig | None = None,
 ) -> None:
     """Update global configuration.
 
     Examples:
-        Using the new nested API:
+        Configure write settings (tile strategy, compression):
 
-            configure(write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.AXIAL)))
-            configure(read=ReadConfig(memory_budget_mb=2048))
+            configure(write=WriteConfig(
+                tile=TileConfig(orientation=SliceOrientation.AXIAL),
+                compression=CompressionConfig(algorithm=Compressor.ZSTD, level=5),
+            ))
 
-        Using the deprecated flat API (still supported):
+        Configure read settings (memory, concurrency):
 
-            configure(tile=TileConfig(x=128, y=128, z=32))
-            configure(compression=CompressionConfig(algorithm=Compressor.LZ4))
+            configure(read=ReadConfig(memory_budget_mb=2048, max_workers=8))
+
+        Configure S3 settings:
+
+            configure(s3=S3Config(region="us-west-2"))
     """
     global _config, _ctx
 
     updates: dict = {}
-
-    # Handle new nested API
     if write is not None:
         updates["write"] = write
     if read is not None:
         updates["read"] = read
     if s3 is not None:
         updates["s3"] = s3
-
-    # Handle deprecated flat API by mapping to nested structure
-    if tile is not None or compression is not None or orientation is not None:
-        write_updates = {}
-        if tile is not None:
-            write_updates["tile"] = tile
-        if compression is not None:
-            write_updates["compression"] = compression
-        if orientation is not None:
-            write_updates["orientation"] = orientation
-        if write_updates:
-            current_write = _config.write.model_copy(update=write_updates)
-            updates["write"] = current_write
-
-    if io is not None:
-        # Map deprecated io to read config
-        if isinstance(io, ReadConfig):
-            updates["read"] = io
-        else:
-            updates["read"] = ReadConfig(
-                memory_budget_mb=io.memory_budget_mb,
-                concurrency=io.concurrency,
-                max_workers=io.max_workers,
-            )
 
     _config = _config.model_copy(update=updates)
     _ctx = None

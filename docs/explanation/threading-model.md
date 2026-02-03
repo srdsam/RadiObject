@@ -59,7 +59,7 @@ RadiObjectConfig (Pydantic)
 _config: RadiObjectConfig = RadiObjectConfig()  # Global config
 _ctx: tiledb.Ctx | None = None                  # Lazily-built context
 
-def ctx() -> tiledb.Ctx:
+def tdb_ctx() -> tiledb.Ctx:
     """Lazy initialization of global context."""
     global _ctx
     if _ctx is None:
@@ -133,7 +133,7 @@ def ctx_for_threads(ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
     TileDB is thread-safe. Sharing a context across threads enables
     metadata caching, reducing I/O for repeated operations.
     """
-    return ctx if ctx else global_ctx()
+    return ctx if ctx else tdb_ctx()
 
 
 def ctx_for_process(base_ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
@@ -144,7 +144,7 @@ def ctx_for_process(base_ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
     """
     if base_ctx is not None:
         return tiledb.Ctx(base_ctx.config())
-    return get_config().to_tiledb_ctx()
+    return radi_cfg().to_tiledb_ctx()
 ```
 
 **Usage in volume_collection.py (ThreadPoolExecutor):**
@@ -188,7 +188,11 @@ class TestWorkerContextIsolation:
 
 These tests verify the semantic distinction between thread and process contexts.
 
-For benchmark results and practical performance tuning guidelines, see [PERFORMANCE.md](PERFORMANCE.md).
+For practical tuning guidance, see [How-to: Tuning Concurrency](../how-to/tuning-concurrency.md).
+
+For benchmark results, see [Performance Analysis](performance-analysis.md).
+
+---
 
 ## References
 

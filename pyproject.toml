@@ -108,3 +108,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["test"]
 python_files = "test_*.py"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

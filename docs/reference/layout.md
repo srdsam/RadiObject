@@ -6,8 +6,6 @@ RadiObject/
 ├── .python-version
 ├── CLAUDE.md
 ├── LICENSE
-├── Lexicon.md
-├── Performance.md
 ├── README.md
 ├── pyproject.toml
 ├── uv.lock
@@ -32,29 +30,35 @@ RadiObject/
 │   ├── tutorials/
 │   │   └── index.md                # Tutorials landing page
 │   ├── how-to/
-│   │   └── index.md                # How-to guides landing page
+│   │   ├── index.md                # How-to guides landing page
+│   │   ├── ingest-data.md          # NIfTI/DICOM ingestion
+│   │   ├── query-filter-data.md    # Data access patterns
+│   │   ├── lazy-queries.md         # ETL pipelines with transforms
+│   │   ├── streaming-writes.md     # Large dataset ingestion
+│   │   ├── append-data.md          # Incremental updates
+│   │   ├── ml-training.md          # MONAI/TorchIO setup
+│   │   ├── tuning-concurrency.md   # Concurrency tuning guide
+│   │   ├── s3-setup.md             # Cloud storage setup
+│   │   ├── datasets.md             # Download test data
+│   │   └── contributing.md         # Development setup
 │   ├── reference/
-│   │   └── index.md                # Reference landing page
+│   │   ├── index.md                # Reference landing page
+│   │   ├── configuration.md        # All configuration classes
+│   │   ├── benchmarks.md           # Performance comparison tables
+│   │   ├── lexicon.md              # Terminology
+│   │   └── layout.md               # Codebase structure (this file)
 │   ├── explanation/
-│   │   └── index.md                # Explanation landing page
+│   │   ├── index.md                # Explanation landing page
+│   │   ├── architecture.md         # TileDB structure and design
+│   │   ├── threading-model.md      # Threading and context management
+│   │   └── performance-analysis.md # Scaling and optimization
 │   ├── notebooks -> ../notebooks   # Symlink to tutorials
-│   ├── api/                        # Generated API docs (mkdocstrings)
-│   │   ├── radi_object.md
-│   │   ├── volume_collection.md
-│   │   ├── volume.md
-│   │   ├── query.md
-│   │   └── ctx.md
-│   ├── BENCHMARKS.md               # Performance comparison tables (Reference)
-│   ├── CONTEXT.md                  # Threading model (Explanation)
-│   ├── CONTRIBUTING.md             # Development setup (How-to)
-│   ├── DATA_ACCESS.md              # Ingestion and querying (How-to)
-│   ├── DATASETS.md                 # Download test data (How-to)
-│   ├── DESIGN.md                   # Architecture rationale (Explanation)
-│   ├── LAYOUT.md                   # Codebase structure (Reference)
-│   ├── LEXICON.md                  # Terminology (Reference)
-│   ├── ML_INTEGRATION.md           # MONAI/TorchIO setup (How-to)
-│   ├── PERFORMANCE.md              # Performance analysis (Explanation)
-│   └── S3_SETUP.md                 # Cloud storage setup (How-to)
+│   └── api/                        # Generated API docs (mkdocstrings)
+│       ├── radi_object.md
+│       ├── volume_collection.md
+│       ├── volume.md
+│       ├── query.md
+│       └── ctx.md
 ├── notebooks/
 │   ├── README.md                   # Tutorial setup guide
 │   ├── config.py                   # Tutorial configuration (URIs)
@@ -62,11 +66,11 @@ RadiObject/
 │   ├── 01_radi_object.ipynb
 │   ├── 02_volume_collection.ipynb
 │   ├── 03_volume.ipynb
-│   ├── 04_storage_configuration.ipynb
+│   ├── 04_configuration.ipynb
 │   ├── 05_ingest_msd.ipynb
 │   └── 06_ml_training.ipynb
 ├── scripts/
-│   └── download_tutorial_data.py   # Downloads BraTS sample data for tutorials
+│   └── download_dataset.py         # Unified dataset download script
 ├── src/
 │   └── radiobject/
 │       ├── __init__.py
@@ -79,6 +83,7 @@ RadiObject/
 │       ├── orientation.py
 │       ├── parallel.py
 │       ├── query.py
+│       ├── stats.py                # TileDB statistics collection
 │       ├── radi_object.py
 │       ├── streaming.py
 │       ├── utils.py
@@ -116,6 +121,8 @@ RadiObject/
     ├── test_radi_object.py
     ├── test_streaming.py
     ├── test_threading_investigation.py
+    ├── test_performance_regression.py  # Performance threshold tests
+    ├── test_stats.py                   # TileDB stats collection tests
     ├── test_utils.py
     ├── test_volume_collection.py
     ├── test_volume.py

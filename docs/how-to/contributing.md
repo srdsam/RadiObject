@@ -4,7 +4,7 @@
 
 ```bash
 # Clone and install
-git clone https://github.com/samueldsouza/radiobject.git
+git clone https://github.com/srdsam/RadiObject.git
 cd radiobject
 
 # Install with dev dependencies
@@ -23,7 +23,7 @@ uv run pytest -v           # Verbose output
 uv run pytest -x           # Stop on first failure
 ```
 
-Tests require S3 access for integration tests. Set up AWS credentials per [S3 Setup](S3_SETUP.md).
+Tests require S3 access for integration tests. Set up AWS credentials per [S3 Setup](s3-setup.md).
 
 ## Running Benchmarks
 

@@ -10,7 +10,7 @@ import pandas as pd
 import tiledb
 
 from radiobject._types import AttrValue
-from radiobject.ctx import ctx as global_ctx
+from radiobject.ctx import tdb_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.volume import Volume
 
@@ -183,7 +183,7 @@ class StreamingWriter:
             self.write_volume(data, obs_id, obs_subject_id, **attrs)
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
+        return self._ctx if self._ctx else tdb_ctx()
 
 
 class RadiObjectWriter:
@@ -340,7 +340,7 @@ class RadiObjectWriter:
         return RadiObject(self.uri, ctx=self._ctx)
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
+        return self._ctx if self._ctx else tdb_ctx()
 
     def _register_collection(self, name: str, uri: str) -> None:
         """Internal: register a completed collection."""

@@ -8,8 +8,7 @@ import numpy as np
 import pandas as pd
 import tiledb
 
-from radiobject.ctx import ctx as global_ctx
-from radiobject.ctx import get_config
+from radiobject.ctx import radi_cfg, tdb_ctx
 
 # Mandatory index columns for all Dataframes
 INDEX_COLUMNS = ("obs_subject_id", "obs_id")
@@ -30,7 +29,7 @@ class Dataframe:
         self._ctx: tiledb.Ctx | None = ctx
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
+        return self._ctx if self._ctx else tdb_ctx()
 
     @cached_property
     def _schema(self) -> tiledb.ArraySchema:
@@ -130,7 +129,7 @@ class Dataframe:
     ) -> Dataframe:
         """Create an empty sparse Dataframe indexed by obs_subject_id and obs_id."""
         cls._validate_schema(schema)
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
 
         dims = [
             tiledb.Dim(name=INDEX_COLUMNS[0], dtype="ascii", ctx=effective_ctx),
@@ -138,8 +137,8 @@ class Dataframe:
         ]
         domain = tiledb.Domain(*dims, ctx=effective_ctx)
 
-        config = get_config()
-        compression_filter = config.compression.as_filter()
+        config = radi_cfg()
+        compression_filter = config.write.compression.as_filter()
         compression = (
             tiledb.FilterList([compression_filter]) if compression_filter else tiledb.FilterList()
         )
@@ -174,7 +173,7 @@ class Dataframe:
         schema = {col: df[col].to_numpy().dtype for col in attr_cols}
         dataframe = cls.create(uri, schema=schema, ctx=ctx)
 
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
             coords = {
                 INDEX_COLUMNS[0]: df[INDEX_COLUMNS[0]].astype(str).to_numpy(),

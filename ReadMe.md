@@ -22,7 +22,13 @@ pip install radiobject
 ## Quick Start
 
 ```python
-from radiobject import RadiObject
+from radiobject import RadiObject, configure, WriteConfig, ReadConfig, TileConfig
+
+# Configure how volumes are written (important for performance!)
+configure(write=WriteConfig(
+    tile=TileConfig(orientation=SliceOrientation.AXIAL), # Can be ISOTROPIC for 3D patch extraction...
+    compression=CompressionConfig(algorithm=Compressor.ZSTD, level=3),
+))
 
 # Create from NIfTI files using images dict (recommended)
 radi = RadiObject.from_niftis(
@@ -50,7 +56,7 @@ Works with local paths or S3 URIs (`s3://bucket/dataset`).
 ## How It Works
 
 NIfTI requires decompressing entire volumes; TileDB reads only the tiles needed.
-This enables **200-660x faster** partial reads. [See benchmarks →](docs/BENCHMARKS.md)
+This enables **200-660x faster** partial reads. [See benchmarks →](docs/reference/benchmarks.md)
 
 ## Sample Data
 
@@ -70,11 +76,12 @@ python scripts/download_dataset.py --list
 ## Documentation
 
 - **[Tutorials](notebooks/README.md)** - Interactive notebooks
-- **[Data Access](docs/DATA_ACCESS.md)** - Ingestion, queries, filtering
-- **[ML Integration](docs/ML_INTEGRATION.md)** - MONAI/TorchIO setup
-- **[Design](docs/DESIGN.md)** - Architecture decisions
-- **[Benchmarks](docs/BENCHMARKS.md)** - Performance analysis
-- **[Datasets](docs/DATASETS.md)** - Available datasets and download instructions
+- **[Ingest Data](docs/how-to/ingest-data.md)** - NIfTI/DICOM ingestion
+- **[Query & Filter](docs/how-to/query-filter-data.md)** - Data access patterns
+- **[ML Integration](docs/how-to/ml-training.md)** - MONAI/TorchIO setup
+- **[Architecture](docs/explanation/architecture.md)** - Design decisions
+- **[Benchmarks](docs/reference/benchmarks.md)** - Performance analysis
+- **[Datasets](docs/how-to/datasets.md)** - Available datasets and download instructions
 
 ## License
 

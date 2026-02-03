@@ -4,6 +4,20 @@ Step-by-step lessons to learn RadiObject from scratch.
 
 Start here if you're new to RadiObject. Each tutorial builds on the previous one.
 
+## Prerequisites
+
+Before starting the tutorials, download the test datasets:
+
+```bash
+# Download BraTS data for tutorials 1-4
+python scripts/download_dataset.py msd-brain-tumour
+
+# Download full MSD Lung for ML tutorials 5-7
+python scripts/download_dataset.py msd-lung
+```
+
+See [Download Datasets](../how-to/datasets.md) for details and alternative download methods.
+
 ## Learning Path
 
 | # | Tutorial | What You'll Learn |

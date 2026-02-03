@@ -51,4 +51,16 @@ pip install radiobject[ml]
 3. **Partial reads for patches**: RadiObject excels at loading small regions efficiently
 4. **Full volumes for heavy augmentation**: Load complete volumes when doing spatial transforms
 
-See [Benchmarks](BENCHMARKS.md) for performance comparisons.
+## Performance Notes
+
+**S3-backed training** adds latency (~100-200ms per volume) compared to local storage. For optimal performance:
+
+- Configure worker concurrency: see [Tuning Concurrency](tuning-concurrency.md#pytorch-dataloader-configuration)
+- Use patch-based training to reduce I/O (64³ patch = 136× less data than full volume)
+- For small datasets (<100 volumes), use `num_workers=0` to avoid IPC overhead
+
+For detailed benchmarks and scaling analysis, see [ML Training Performance](../explanation/performance-analysis.md#ml-training-performance).
+
+## Additional Resources
+
+See [Benchmarks](../reference/benchmarks.md) for performance comparisons.

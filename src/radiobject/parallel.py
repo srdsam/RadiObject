@@ -9,8 +9,7 @@ from typing import TypeVar
 
 import tiledb
 
-from radiobject.ctx import ctx as global_ctx
-from radiobject.ctx import get_config
+from radiobject.ctx import radi_cfg, tdb_ctx
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -33,7 +32,7 @@ def ctx_for_threads(ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
     TileDB is thread-safe. Sharing a context across threads enables
     metadata caching, reducing I/O for repeated operations.
     """
-    return ctx if ctx else global_ctx()
+    return ctx if ctx else tdb_ctx()
 
 
 def ctx_for_process(base_ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
@@ -44,7 +43,7 @@ def ctx_for_process(base_ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
     """
     if base_ctx is not None:
         return tiledb.Ctx(base_ctx.config())
-    return get_config().to_tiledb_ctx()
+    return radi_cfg().to_tiledb_ctx()
 
 
 # Deprecation alias
@@ -63,7 +62,7 @@ def map_on_threads(
     if not items_list:
         return []
 
-    default_workers = get_config().io.max_workers
+    default_workers = radi_cfg().read.max_workers
     workers = max_workers or min(default_workers, len(items_list))
     results: list[R | None] = [None] * len(items_list)
 

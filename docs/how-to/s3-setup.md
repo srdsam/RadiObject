@@ -43,8 +43,8 @@ radi = RadiObject("s3://your-bucket/your-dataset")
 # Write to S3
 RadiObject.from_niftis(
     "s3://your-bucket/new-dataset",
-    images_dir="./local/images",
-    metadata_df=df
+    images={"CT": "./local/images"},
+    obs_meta=df,
 )
 ```
 
@@ -66,4 +66,8 @@ configure(s3=S3Config(region="us-west-2"))
 3. **Full volume reads are slower**: S3 has higher latency than local disk; batch multiple operations
 4. **Consider S3 Transfer Acceleration** for cross-region access
 
-See [Benchmarks](BENCHMARKS.md) for detailed S3 vs local performance comparisons.
+## Related Documentation
+
+- [Benchmarks](../reference/benchmarks.md) - S3 vs local performance comparison tables
+- [Performance Analysis](../explanation/performance-analysis.md) - Detailed latency analysis and optimization strategies
+- [Tuning Concurrency](tuning-concurrency.md) - S3 connection pooling and parallelism settings

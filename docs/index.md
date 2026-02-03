@@ -18,11 +18,12 @@ vol = radi.CT.iloc[0]
 slice_data = vol.axial(z=50)  # Partial read
 ```
 
-See [README](https://github.com/samueldsouza/radiobject) for installation.
+See [README](https://github.com/srdsam/RadiObject) for installation.
 
 ## Documentation
 
-- [Data Access](DATA_ACCESS.md) - Ingestion, querying, and slicing
-- [Design](DESIGN.md) - Architecture and design decisions
-- [ML Integration](ML_INTEGRATION.md) - MONAI/TorchIO integration
-- [Benchmarks](BENCHMARKS.md) - Performance comparisons
+- [Ingest Data](how-to/ingest-data.md) - Ingest NIfTI and DICOM files
+- [Query & Filter](how-to/query-filter-data.md) - Access and filter stored data
+- [Architecture](explanation/architecture.md) - Design and data model
+- [ML Integration](how-to/ml-training.md) - MONAI/TorchIO integration
+- [Benchmarks](reference/benchmarks.md) - Performance comparisons

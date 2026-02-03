@@ -13,7 +13,7 @@ import pandas as pd
 import tiledb
 
 from radiobject._types import TransformFn
-from radiobject.ctx import ctx as global_ctx
+from radiobject.ctx import tdb_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.imaging_metadata import (
     DicomMetadata,
@@ -556,7 +556,7 @@ class VolumeCollection:
         return Index.build(list(obs_data["obs_id"]))
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
+        return self._ctx if self._ctx else tdb_ctx()
 
     def _check_not_view(self, operation: str) -> None:
         """Raise if this is a view (views are immutable)."""
@@ -831,7 +831,7 @@ class VolumeCollection:
 
             metadata_list.append((path, obs_subject_id, metadata, series_type))
 
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
         # Only set uniform shape if all volumes have same dimensions
         collection_shape = first_shape if all_same_shape else None
 
@@ -976,7 +976,7 @@ class VolumeCollection:
 
             metadata_list.append((path, obs_subject_id, metadata))
 
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
         # Only set uniform shape if all volumes have same dimensions
         collection_shape = first_shape if all_same_shape else None
 
@@ -1076,7 +1076,7 @@ class VolumeCollection:
             name: Collection name
             ctx: TileDB context
         """
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
 
         tiledb.Group.create(uri, ctx=effective_ctx)
 
@@ -1119,7 +1119,7 @@ class VolumeCollection:
                     f"Volume '{obs_id}' has shape {vol.shape[:3]}, expected {first_shape}"
                 )
 
-        effective_ctx = ctx if ctx else global_ctx()
+        effective_ctx = ctx if ctx else tdb_ctx()
 
         obs_schema = None
         if obs_data is not None:

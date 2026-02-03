@@ -56,4 +56,4 @@ TileDB parallelizes tile decompression across cores—**2x better CPU utilizatio
 
 ---
 
-For detailed analysis including scaling projections, ML training performance, and optimization recommendations, see [PERFORMANCE.md](PERFORMANCE.md).
+For detailed analysis including scaling projections, ML training performance, and optimization recommendations, see [Performance Analysis](../explanation/performance-analysis.md).

@@ -211,4 +211,4 @@ vol.orientation_info.axcodes  # ('R', 'A', 'S')
 vol.tile_orientation  # SliceOrientation.AXIAL
 ```
 
-Choose tile orientation based on access patterns (see [Benchmarks](BENCHMARKS.md)), not anatomical convention.
+Choose tile orientation based on access patterns (see [Benchmarks](../reference/benchmarks.md)), not anatomical convention.

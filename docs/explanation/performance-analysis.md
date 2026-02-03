@@ -1,5 +1,7 @@
 # RadiObject Performance Analysis
 
+For a quick reference of key benchmark numbers, see [Benchmarks](../reference/benchmarks.md).
+
 ## Test Suite Overview
 
 **Total Tests:** 349 core tests + 101 ML tests = 450 total
@@ -405,15 +407,15 @@ This section documents the performance of the PyTorch training system (`ml/` pac
 
 ### Caching Performance
 
-| Strategy | Repeated Access | Speedup | Memory |
-|----------|-----------------|---------|--------|
-| NoCache | 0.226s | 1× | 0 |
-| InMemoryCache | <0.001s | **>1000×** | ~36 MB/volume |
-| DiskCache | ~0.02s | ~10× | Disk space |
+RadiObject relies on TileDB's internal tile cache for repeated access patterns. Application-level caching was removed to avoid OOM with large volumes.
 
-Cache hit rate for 3 volumes accessed 3× each: **66.7%** (3 misses on first access, 6 hits on repeats)
+| Access Pattern | Cache Hit Rate | Notes |
+|----------------|----------------|-------|
+| Sequential (same context) | 85-95% | Metadata cached after first access |
+| Repeated slices (same volume) | 90-99% | Tile data cached |
+| Isolated contexts per read | 0% | No cross-context cache sharing |
 
-*Note: InMemoryCache speedup dramatically improved after API simplification (metadata caching, lazy loading).*
+For optimal caching, share TileDB contexts across threads. See [Tuning Concurrency](../how-to/tuning-concurrency.md#context-selection-threads-vs-processes).
 
 ### DataLoader Multi-Worker Performance
 
@@ -563,7 +565,7 @@ Unlike many distributed training setups, RadiObject + S3:
 
 1. **Prefetching:** DataLoader `num_workers > 0` enables parallel I/O while GPU computes
 2. **Patch-based training:** 64³ patches (262 KB) instead of full volumes (35.6 MB) = 136× less I/O
-3. **Caching:** InMemoryCache provides 12× speedup for repeated access patterns
+3. **Context sharing:** Share TileDB contexts across threads for metadata caching
 4. **Mixed precision:** Reduces memory, enabling larger batch sizes
 
 ### Patch-Based Training for Scale
@@ -594,8 +596,7 @@ loader = create_training_dataloader(
 loader = create_training_dataloader(
     radi,
     batch_size=4,
-    num_workers=0,           # Single process is faster
-    cache_strategy=CacheStrategy.IN_MEMORY,  # Cache all volumes
+    num_workers=0,  # Single process is faster for small datasets
 )
 ```
 
@@ -666,11 +667,71 @@ For very large datasets (>100,000 subjects), consider:
 
 ---
 
+## Cache and Threading Metrics
+
+Empirical measurements of TileDB cache behavior and threading performance. For configuration guidance, see [Tuning Concurrency](../how-to/tuning-concurrency.md).
+
+### TileDB Cache Hit Rates
+
+| Access Pattern | Cache Hit Rate | Notes |
+|----------------|----------------|-------|
+| Sequential (same context) | 85-95% | Metadata cached after first access |
+| Random (same context) | 60-75% | LRU eviction for large datasets |
+| Repeated slices (same volume) | 90-99% | Tile data cached |
+| Isolated contexts per read | 0% | No cross-context cache sharing |
+
+### Context Memory Overhead
+
+| Configuration | Memory per Context | Notes |
+|---------------|-------------------|-------|
+| Default | ~5-10 MB | Thread stacks + metadata cache |
+| Large memory_budget (2GB) | ~15-25 MB | Larger tile cache |
+| With S3 credentials | +2-5 MB | Connection pool overhead |
+
+### Parallel Write Scaling
+
+| Workers | Local SSD (MB/s) | S3 (MB/s) | Notes |
+|---------|-----------------|-----------|-------|
+| 1 | ~140 | ~50 | Baseline |
+| 2 | ~250 | ~90 | Near-linear |
+| 4 | ~410 | ~150 | Good scaling |
+| 8 | ~650 | ~250 | Diminishing returns |
+| 16 | ~800 | ~300 | I/O limited |
+
+*Measured with 35.6 MB volumes, ZSTD compression*
+
+### GIL Interaction
+
+| Operation Type | GIL Released | Parallel Speedup |
+|----------------|--------------|------------------|
+| TileDB I/O (reads/writes) | Yes | ~3-6x with 4 workers |
+| NumPy array operations | Partially | ~1.5-2x with 4 workers |
+| Pure Python compute | No | ~1x (no benefit) |
+| TileDB decompression | Yes | ~3-4x with 4 workers |
+
+### S3 Connection Pooling
+
+| `max_parallel_ops` | Parallelized Reads % | Throughput |
+|-------------------|---------------------|------------|
+| 4 | 40-60% | Baseline |
+| 8 (default) | 60-75% | +30% |
+| 16 | 75-85% | +50% |
+| 32 | 85-90% | +60% |
+
+### Key Findings
+
+1. Shared contexts achieve >90% cache hit rate for repeated volume access
+2. Isolated contexts (per-process) show 0% cache sharing by design
+3. Memory overhead: ~5-10 MB per context baseline
+4. TileDB I/O releases GIL, enabling effective thread parallelism
+
+---
+
 ## Threading Architecture Analysis
 
 This section documents optimization opportunities for S3 cloud writes.
 
-For the underlying threading model, context management patterns, and TileDB configuration details, see [CONTEXT.md](CONTEXT.md).
+For the underlying threading model, context management patterns, and TileDB configuration details, see [Threading Model](threading-model.md).
 
 ### Write Operation Breakdown
 
@@ -692,12 +753,11 @@ Analysis of `Volume.from_numpy()` write phases:
 For S3 cloud writes, the following configuration is recommended:
 
 ```python
-from radiobject import configure
-from radiobject.ctx import IOConfig, S3Config
+from radiobject import configure, ReadConfig, S3Config
 
 # Optimize for S3 writes
 configure(
-    io=IOConfig(
+    read=ReadConfig(
         max_workers=8,      # More parallel volume writes
         concurrency=2,      # Lower per-volume TileDB threads
     ),
@@ -745,7 +805,7 @@ For PyTorch DataLoader with multi-worker loading:
 
 2. **worker_init.py fixed:** Previously created a `threading.local()` that was immediately garbage collected. Now properly pre-warms the process-level context cache.
 
-3. **Configurable max_workers:** Previously hard-coded to 4. Now configurable via `IOConfig.max_workers`.
+3. **Configurable max_workers:** Previously hard-coded to 4. Now configurable via `ReadConfig.max_workers`.
 
 ---
 
@@ -880,19 +940,23 @@ For large datasets: Workers help when parallel I/O amortizes overhead
 
 #### For Maximum Read Throughput (Local)
 ```python
+from radiobject import configure
+from radiobject.ctx import WriteConfig, ReadConfig, TileConfig, SliceOrientation
+
 configure(
-    tile=TileConfig(strategy="isotropic", extent=64),  # Match patch size
-    io=IOConfig(concurrency=8),  # More TileDB threads
+    write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.ISOTROPIC)),
+    read=ReadConfig(concurrency=8),  # More TileDB threads
 )
 ```
 
 #### For S3 Cloud Access
 ```python
+from radiobject import configure
+from radiobject.ctx import ReadConfig, S3Config
+
 configure(
-    s3=S3Config(
-        max_parallel_ops=16,  # Parallel tile fetches
-    ),
-    io=IOConfig(max_workers=8),  # Parallel volume processing
+    s3=S3Config(max_parallel_ops=16),  # Parallel tile fetches
+    read=ReadConfig(max_workers=8),    # Parallel volume processing
 )
 ```
 
