@@ -18,7 +18,7 @@ import tiledb
 
 from radiobject import configure, ctx, get_config
 from radiobject.ctx import IOConfig, RadiObjectConfig
-from radiobject.parallel import create_worker_ctx, map_on_threads
+from radiobject.parallel import ctx_for_process, ctx_for_threads, map_on_threads
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
@@ -299,10 +299,16 @@ class TestMaxWorkersConfiguration:
 class TestWorkerContextIsolation:
     """Test that worker contexts are properly isolated."""
 
-    def test_create_worker_ctx_returns_new_context(self) -> None:
-        """Verify create_worker_ctx returns distinct contexts."""
-        ctx1 = create_worker_ctx()
-        ctx2 = create_worker_ctx()
+    def test_ctx_for_threads_returns_same_context(self) -> None:
+        """Verify ctx_for_threads returns the same context when provided."""
+        base_ctx = ctx()
+        result = ctx_for_threads(base_ctx)
+        assert result is base_ctx
+
+    def test_ctx_for_process_returns_new_context(self) -> None:
+        """Verify ctx_for_process returns distinct contexts."""
+        ctx1 = ctx_for_process()
+        ctx2 = ctx_for_process()
 
         # Should be different context objects
         assert ctx1 is not ctx2
@@ -311,10 +317,11 @@ class TestWorkerContextIsolation:
         assert isinstance(ctx1, tiledb.Ctx)
         assert isinstance(ctx2, tiledb.Ctx)
 
-    def test_worker_ctx_inherits_base_config(self) -> None:
-        """Verify worker context inherits from base context config."""
+    def test_ctx_for_process_inherits_base_config(self) -> None:
+        """Verify process context inherits from base context config."""
         base_ctx = ctx()
-        worker_ctx = create_worker_ctx(base_ctx)
+        worker_ctx = ctx_for_process(base_ctx)
 
-        # Worker should have same config values
+        # Should be a new context but with same config
+        assert worker_ctx is not base_ctx
         assert isinstance(worker_ctx, tiledb.Ctx)

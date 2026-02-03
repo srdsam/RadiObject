@@ -28,14 +28,33 @@ RadiObject/
 │   ├── run_benchmarks.py           # Papermill runner for benchmarks
 │   └── framework_benchmark.ipynb   # Comprehensive benchmark suite
 ├── docs/
-│   ├── API.md                      # API reference (classes, methods, quick reference)
-│   ├── BENCHMARKS.md               # Performance analysis and comparisons
-│   ├── CONTRIBUTING.md             # Development setup, testing
-│   ├── DATA_ACCESS.md              # Exploration vs pipeline modes, queries
-│   ├── DESIGN.md                   # TileDB structure, orientation handling
-│   ├── ML_INTEGRATION.md           # MONAI and TorchIO usage
-│   ├── S3_SETUP.md                 # Optional cloud storage configuration
-│   └── api/                        # Generated HTML docs (gitignored)
+│   ├── index.md                    # Homepage
+│   ├── tutorials/
+│   │   └── index.md                # Tutorials landing page
+│   ├── how-to/
+│   │   └── index.md                # How-to guides landing page
+│   ├── reference/
+│   │   └── index.md                # Reference landing page
+│   ├── explanation/
+│   │   └── index.md                # Explanation landing page
+│   ├── notebooks -> ../notebooks   # Symlink to tutorials
+│   ├── api/                        # Generated API docs (mkdocstrings)
+│   │   ├── radi_object.md
+│   │   ├── volume_collection.md
+│   │   ├── volume.md
+│   │   ├── query.md
+│   │   └── ctx.md
+│   ├── BENCHMARKS.md               # Performance comparison tables (Reference)
+│   ├── CONTEXT.md                  # Threading model (Explanation)
+│   ├── CONTRIBUTING.md             # Development setup (How-to)
+│   ├── DATA_ACCESS.md              # Ingestion and querying (How-to)
+│   ├── DATASETS.md                 # Download test data (How-to)
+│   ├── DESIGN.md                   # Architecture rationale (Explanation)
+│   ├── LAYOUT.md                   # Codebase structure (Reference)
+│   ├── LEXICON.md                  # Terminology (Reference)
+│   ├── ML_INTEGRATION.md           # MONAI/TorchIO setup (How-to)
+│   ├── PERFORMANCE.md              # Performance analysis (Explanation)
+│   └── S3_SETUP.md                 # Cloud storage setup (How-to)
 ├── notebooks/
 │   ├── README.md                   # Tutorial setup guide
 │   ├── config.py                   # Tutorial configuration (URIs)

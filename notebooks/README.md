@@ -10,7 +10,7 @@ pip install radiobject[tutorials]
 # or: uv sync --extra tutorials
 
 # 2. Download sample data (~1.5GB)
-python scripts/download_tutorial_data.py
+python scripts/download_dataset.py msd-brain-tumour
 
 # 3. Run notebooks
 cd notebooks
@@ -35,15 +35,21 @@ jupyter notebook
 
 **Notebooks 05-06**: MSD Lung data (requires separate download or S3 access)
 
-## Using S3 Instead
+## Using S3
 
-Edit `config.py` to use S3 URIs:
+Configure S3 via environment variables:
 
-```python
-# config.py
-BRATS_URI = "s3://your-bucket/brats-tutorial"
-MSD_LUNG_URI = "s3://your-bucket/msd-lung"
-S3_REGION = "us-east-2"
+```bash
+export RADIOBJECT_S3_BUCKET=your-bucket
+export RADIOBJECT_S3_REGION=us-east-2
 ```
 
-See [S3 Setup Guide](../docs/S3_SETUP.md) for AWS configuration.
+Or use helper functions:
+
+```python
+from radiobject.data import get_brats_uri
+
+BRATS_URI = get_brats_uri()  # Returns S3 URI if credentials available
+```
+
+See [S3 Setup Guide](https://srdsam.github.io/RadiObject/S3_SETUP/) for AWS configuration.

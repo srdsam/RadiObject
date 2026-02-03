@@ -9,6 +9,7 @@ from typing import TypeVar
 
 import tiledb
 
+from radiobject.ctx import ctx as global_ctx
 from radiobject.ctx import get_config
 
 T = TypeVar("T")
@@ -26,11 +27,28 @@ class WriteResult:
     error: Exception | None = None
 
 
-def create_worker_ctx(base_ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
-    """Create a thread-safe TileDB context for worker threads."""
+def ctx_for_threads(ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
+    """Return context for thread pool workers.
+
+    TileDB is thread-safe. Sharing a context across threads enables
+    metadata caching, reducing I/O for repeated operations.
+    """
+    return ctx if ctx else global_ctx()
+
+
+def ctx_for_process(base_ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
+    """Create new context for a forked process.
+
+    Forked processes (e.g., DataLoader workers) have separate memory
+    and cannot share TileDB contexts with the parent process.
+    """
     if base_ctx is not None:
         return tiledb.Ctx(base_ctx.config())
     return get_config().to_tiledb_ctx()
+
+
+# Deprecation alias
+create_worker_ctx = ctx_for_process
 
 
 def map_on_threads(

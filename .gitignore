@@ -27,3 +27,4 @@ data/
 
 # Generated documentation
 site/
+.env

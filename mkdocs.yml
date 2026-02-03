@@ -18,6 +18,7 @@ theme:
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.indexes
     - content.code.copy
 
 markdown_extensions:
@@ -30,6 +31,9 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      include_source: true
+      execute: false
   - mkdocstrings:
       handlers:
         python:
@@ -41,20 +45,41 @@ plugins:
 
 nav:
   - Home: index.md
-  - User Guide:
-      - Design: DESIGN.md
+
+  - Tutorials:
+      - Overview: tutorials/index.md
+      - Getting Started:
+          - "1. Ingest NIfTI Data": notebooks/00_ingest_brats.ipynb
+          - "2. RadiObject API": notebooks/01_radi_object.ipynb
+          - "3. VolumeCollection": notebooks/02_volume_collection.ipynb
+          - "4. Volume Operations": notebooks/03_volume.ipynb
+      - Advanced:
+          - "5. Storage Config": notebooks/04_storage_configuration.ipynb
+          - "6. Multi-Collection": notebooks/05_ingest_msd.ipynb
+          - "7. ML Training": notebooks/06_ml_training.ipynb
+
+  - How-to Guides:
+      - Overview: how-to/index.md
       - Data Access: DATA_ACCESS.md
       - ML Integration: ML_INTEGRATION.md
-      - Benchmarks: BENCHMARKS.md
-  - API Reference:
-      - RadiObject: api/radi_object.md
-      - VolumeCollection: api/volume_collection.md
-      - Volume: api/volume.md
-      - Query: api/query.md
-      - Configuration: api/ctx.md
-  - Development:
-      - Contributing: CONTRIBUTING.md
       - S3 Setup: S3_SETUP.md
+      - Download Datasets: DATASETS.md
+      - Contributing: CONTRIBUTING.md
+
+  - Reference:
+      - Overview: reference/index.md
+      - API:
+          - RadiObject: api/radi_object.md
+          - VolumeCollection: api/volume_collection.md
+          - Volume: api/volume.md
+          - Query: api/query.md
+          - Configuration: api/ctx.md
+      - Benchmarks: BENCHMARKS.md
       - Lexicon: LEXICON.md
       - Layout: LAYOUT.md
-      - Performance: PERFORMANCE.md
+
+  - Explanation:
+      - Overview: explanation/index.md
+      - Architecture: DESIGN.md
+      - Threading Model: CONTEXT.md
+      - Performance Analysis: PERFORMANCE.md

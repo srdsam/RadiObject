@@ -23,7 +23,7 @@ from radiobject.imaging_metadata import (
     infer_series_type,
 )
 from radiobject.indexing import Index
-from radiobject.parallel import WriteResult, create_worker_ctx, map_on_threads
+from radiobject.parallel import WriteResult, ctx_for_threads, map_on_threads
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
@@ -629,7 +629,7 @@ class VolumeCollection:
         # Write volumes
         def write_volume(args: tuple[int, Path, str, NiftiMetadata, str]) -> WriteResult:
             idx, path, obs_subject_id, metadata, series_type = args
-            worker_ctx = create_worker_ctx(self._ctx)
+            worker_ctx = ctx_for_threads(self._ctx)
             volume_uri = f"{self.uri}/volumes/{idx}"
             obs_id = generate_obs_id(obs_subject_id, series_type)
             try:
@@ -716,7 +716,7 @@ class VolumeCollection:
         # Write volumes
         def write_volume(args: tuple[int, Path, str, DicomMetadata]) -> WriteResult:
             idx, path, obs_subject_id, metadata = args
-            worker_ctx = create_worker_ctx(self._ctx)
+            worker_ctx = ctx_for_threads(self._ctx)
             volume_uri = f"{self.uri}/volumes/{idx}"
             obs_id = generate_obs_id(obs_subject_id, metadata.modality)
             try:
@@ -867,7 +867,7 @@ class VolumeCollection:
         # Write volumes in parallel
         def write_volume(args: tuple[int, Path, str, NiftiMetadata, str]) -> WriteResult:
             idx, path, obs_subject_id, metadata, series_type = args
-            worker_ctx = create_worker_ctx(ctx)
+            worker_ctx = ctx_for_threads(ctx)
             volume_uri = f"{uri}/volumes/{idx}"
             obs_id = generate_obs_id(obs_subject_id, series_type)
             try:
@@ -1010,7 +1010,7 @@ class VolumeCollection:
         # Write volumes in parallel
         def write_volume(args: tuple[int, Path, str, DicomMetadata]) -> WriteResult:
             idx, path, obs_subject_id, metadata = args
-            worker_ctx = create_worker_ctx(ctx)
+            worker_ctx = ctx_for_threads(ctx)
             volume_uri = f"{uri}/volumes/{idx}"
             obs_id = generate_obs_id(obs_subject_id, metadata.modality)
             try:
@@ -1146,7 +1146,7 @@ class VolumeCollection:
 
         def write_volume(args: tuple[int, str, Volume]) -> WriteResult:
             idx, obs_id, vol = args
-            worker_ctx = create_worker_ctx(ctx)
+            worker_ctx = ctx_for_threads(ctx)
             volume_uri = f"{uri}/volumes/{idx}"
             try:
                 data = vol.to_numpy()

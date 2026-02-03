@@ -668,29 +668,9 @@ For very large datasets (>100,000 subjects), consider:
 
 ## Threading Architecture Analysis
 
-This section documents the parallelization architecture and optimization opportunities for S3 cloud writes.
+This section documents optimization opportunities for S3 cloud writes.
 
-### Current Threading Model
-
-RadiObject uses a two-level parallelization strategy:
-
-```
-Application Level (Python ThreadPoolExecutor)
-├── Worker 1 ─── TileDB Context ─┬─ sm.io_concurrency_level threads
-│                                └─ sm.compute_concurrency_level threads
-├── Worker 2 ─── TileDB Context ─┬─ sm.io_concurrency_level threads
-│                                └─ sm.compute_concurrency_level threads
-└── Worker N ─── TileDB Context ─┬─ sm.io_concurrency_level threads
-                                 └─ sm.compute_concurrency_level threads
-```
-
-**Configuration Parameters:**
-
-| Setting | Location | Default | Description |
-|---------|----------|---------|-------------|
-| `io.max_workers` | `IOConfig` | 4 | Application-level parallel workers |
-| `io.concurrency` | `IOConfig` | 4 | TileDB internal thread pools |
-| `s3.max_parallel_ops` | `S3Config` | 8 | S3 parallel upload operations |
+For the underlying threading model, context management patterns, and TileDB configuration details, see [CONTEXT.md](CONTEXT.md).
 
 ### Write Operation Breakdown
 

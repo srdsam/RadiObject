@@ -8,7 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from radiobject.parallel import WriteResult, create_worker_ctx, map_on_threads
+from radiobject.parallel import (
+    WriteResult,
+    create_worker_ctx,
+    ctx_for_process,
+    ctx_for_threads,
+    map_on_threads,
+)
 from radiobject.volume import Volume
 from radiobject.volume_collection import VolumeCollection
 
@@ -48,17 +54,44 @@ class TestMapOnThreads:
         assert results == [2, 4, 6, 8, 10]
 
 
-class TestCreateWorkerCtx:
-    """Tests for create_worker_ctx utility."""
+class TestCtxForThreads:
+    """Tests for ctx_for_threads utility."""
 
-    def test_creates_ctx_from_global_config(self):
-        """Creates context from global config when no base_ctx provided."""
-        ctx = create_worker_ctx()
+    def test_returns_global_ctx_when_none(self):
+        """Returns global context when no ctx provided."""
+        ctx = ctx_for_threads()
         assert ctx is not None
 
-    def test_creates_ctx_from_base_ctx(self, custom_tiledb_ctx):
-        """Creates context by copying config from base context."""
-        ctx = create_worker_ctx(custom_tiledb_ctx)
+    def test_returns_same_ctx_when_provided(self, custom_tiledb_ctx):
+        """Returns the same context object when provided."""
+        result = ctx_for_threads(custom_tiledb_ctx)
+        assert result is custom_tiledb_ctx
+
+
+class TestCtxForProcess:
+    """Tests for ctx_for_process utility."""
+
+    def test_creates_ctx_from_global_config(self):
+        """Creates new context from global config when no base_ctx provided."""
+        ctx1 = ctx_for_process()
+        ctx2 = ctx_for_process()
+        assert ctx1 is not None
+        assert ctx2 is not None
+        assert ctx1 is not ctx2
+
+    def test_creates_new_ctx_from_base_ctx(self, custom_tiledb_ctx):
+        """Creates new context by copying config from base context."""
+        ctx = ctx_for_process(custom_tiledb_ctx)
+        assert ctx is not None
+        assert ctx is not custom_tiledb_ctx
+
+
+class TestCreateWorkerCtxAlias:
+    """Tests for deprecated create_worker_ctx alias."""
+
+    def test_alias_works(self):
+        """Deprecated alias still works."""
+        ctx = create_worker_ctx()
         assert ctx is not None
 
 

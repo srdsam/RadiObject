@@ -21,7 +21,7 @@ from radiobject.imaging_metadata import (
     infer_series_type,
 )
 from radiobject.indexing import Index
-from radiobject.parallel import WriteResult, create_worker_ctx
+from radiobject.parallel import WriteResult, ctx_for_threads
 from radiobject.volume import Volume
 from radiobject.volume_collection import (
     VolumeCollection,
@@ -1559,7 +1559,7 @@ def _copy_volume_collection(
 
     def write_volume(args: tuple[int, str, Volume]) -> WriteResult:
         idx, obs_id, vol = args
-        worker_ctx = create_worker_ctx(ctx)
+        worker_ctx = ctx_for_threads(ctx)
         new_vol_uri = f"{dst_uri}/volumes/{idx}"
         try:
             data = vol.to_numpy()
@@ -1624,7 +1624,7 @@ def _copy_filtered_volume_collection(
 
     def write_volume(args: tuple[int, int, str]) -> WriteResult:
         new_idx, orig_idx, obs_id = args
-        worker_ctx = create_worker_ctx(ctx)
+        worker_ctx = ctx_for_threads(ctx)
         new_vol_uri = f"{dst_uri}/volumes/{new_idx}"
         try:
             vol = src.iloc[orig_idx]

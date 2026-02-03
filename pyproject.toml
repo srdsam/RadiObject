@@ -44,6 +44,8 @@ dependencies = [
 download = [
     "requests>=2.31.0",
     "tcia-utils>=0.5.0",
+    "kaggle>=1.6.0",
+    "python-dotenv>=1.0.0",
 ]
 tutorials = [
     "radiobject[download]",
@@ -60,6 +62,7 @@ docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
     "mkdocstrings[python]>=0.24.0",
+    "mkdocs-jupyter>=0.24.0",
 ]
 monai = [
     "torch>=2.0.0",
@@ -79,7 +82,7 @@ ml = [
 ]
 
 [project.urls]
-Repository = "https://github.com/samueldsouza/radiobject"
+Repository = "https://github.com/srdsam/radiobject"
 
 [dependency-groups]
 dev = [
