@@ -1,6 +1,6 @@
 site_name: RadiObject
 site_description: TileDB-backed radiology data management
-repo_url: https://github.com/samueldsouza/radiobject
+repo_url: https://github.com/srdsam/RadiObject
 
 theme:
   name: material
