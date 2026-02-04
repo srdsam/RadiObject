@@ -438,6 +438,8 @@ Where:
 | **all_obs_ids** | RadiObject property returning all obs_ids across all collections (for uniqueness validation) |
 | **get_volume()** | RadiObject method returning a Volume by obs_id from any collection |
 | **rename_collection()** | RadiObject method to rename a collection within the TileDB group |
+| **uri_exists()** | Utility function checking if a RadiObject or VolumeCollection exists at a given URI |
+| **delete_tiledb_uri()** | Utility function to delete a TileDB group/array at a URI (works for S3 and local) |
 
 ### RadiObject Indexing & Filtering Terminology
 

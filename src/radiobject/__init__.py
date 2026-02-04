@@ -19,6 +19,7 @@ from radiobject.ctx import (
 from radiobject.dataframe import Dataframe
 from radiobject.radi_object import RadiObject
 from radiobject.stats import CacheStats, S3Stats, TileDBStats
+from radiobject.utils import delete_tiledb_uri, uri_exists
 from radiobject.volume import Volume
 from radiobject.volume_collection import VolumeCollection
 
@@ -53,4 +54,7 @@ __all__ = [
     "TileDBStats",
     "CacheStats",
     "S3Stats",
+    # Utilities
+    "uri_exists",
+    "delete_tiledb_uri",
 ]
