@@ -11,7 +11,14 @@
 TileDB enables cloud-native storage (S3), efficient partial reads, and
 hierarchical organization of multi-volume datasets.
 
+
+## First Principles
+
+- Contextualised data: *Data is always read/written alongside annotations and context, aligned on shared and labelled indexes. Minimize manual joins.*
+- Interoperability: *Software should complement the ecosystem of tooling, not compete.*
+
 *[Thoughts](https://souzy.up.railway.app/thoughts/radiology-object)*
+
 
 ## Installation
 
