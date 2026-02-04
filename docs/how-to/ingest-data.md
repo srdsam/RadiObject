@@ -98,8 +98,7 @@ Medical images use coordinate systems (RAS, LPS, etc.) to map voxels to physical
 ### Automatic Reorientation
 
 ```python
-from radiobject import configure
-from radiobject.ctx import WriteConfig, OrientationConfig
+from radiobject import configure, WriteConfig, OrientationConfig
 
 configure(write=WriteConfig(
     orientation=OrientationConfig(

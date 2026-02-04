@@ -73,6 +73,7 @@ nav:
       - Infrastructure:
           - S3 Setup: how-to/s3-setup.md
           - Profiling: how-to/profiling.md
+          - Troubleshooting: how-to/troubleshooting.md
           - Download Datasets: how-to/datasets.md
           - Contributing: how-to/contributing.md
 

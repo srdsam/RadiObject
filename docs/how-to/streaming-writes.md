@@ -98,8 +98,7 @@ with RadiObjectWriter("s3://bucket/large-dataset") as writer:
 For S3 performance, configure parallel uploads:
 
 ```python
-from radiobject import configure
-from radiobject.ctx import S3Config
+from radiobject import configure, S3Config
 
 configure(s3=S3Config(
     max_parallel_ops=16,

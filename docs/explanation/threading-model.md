@@ -46,7 +46,7 @@ Key threading-related settings:
 
 ### Global State Management
 
-The internal `tdb_ctx()` function is exposed publicly as `ctx()`:
+The `tdb_ctx()` function is the public entry point for accessing the global TileDB context:
 
 ```python
 _config: RadiObjectConfig = RadiObjectConfig()  # Global config
@@ -58,9 +58,6 @@ def tdb_ctx() -> tiledb.Ctx:
     if _ctx is None:
         _ctx = _config.to_tiledb_ctx()
     return _ctx
-
-# Public API
-ctx = tdb_ctx  # Exposed as radiobject.ctx()
 ```
 
 ### Context Injection Pattern
@@ -73,7 +70,7 @@ class Volume:
         self._ctx = ctx  # None = use global
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else global_ctx()
+        return self._ctx if self._ctx else tdb_ctx()
 ```
 
 **Pros:**

@@ -91,8 +91,7 @@ radi.append(obs_meta=new_obs_meta, volumes=new_volumes)
 For best S3 performance, configure parallel operations:
 
 ```python
-from radiobject import configure
-from radiobject.ctx import S3Config
+from radiobject import configure, S3Config
 
 configure(s3=S3Config(max_parallel_ops=16))
 ```

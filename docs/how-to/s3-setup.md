@@ -53,8 +53,7 @@ RadiObject.from_niftis(
 Configure S3 region and other settings:
 
 ```python
-from radiobject import configure
-from radiobject.ctx import S3Config
+from radiobject import configure, S3Config
 
 configure(s3=S3Config(region="us-west-2"))
 ```

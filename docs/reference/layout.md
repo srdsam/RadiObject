@@ -11,6 +11,7 @@ RadiObject/
 ├── uv.lock
 ├── assets/
 │   └── benchmark/
+│       ├── benchmark_hero.png          # Overview benchmark comparison chart
 │       ├── benchmark_results.json      # Exported benchmark results with disk space
 │       ├── disk_space_comparison.png   # Storage format size comparison
 │       ├── format_overhead.png         # NIfTI vs NumPy vs TileDB load times
@@ -39,6 +40,7 @@ RadiObject/
 │   │   ├── ml-training.md          # MONAI/TorchIO setup
 │   │   ├── tuning-concurrency.md   # Concurrency tuning guide
 │   │   ├── s3-setup.md             # Cloud storage setup
+│   │   ├── troubleshooting.md      # Common issues and solutions
 │   │   ├── datasets.md             # Download test data
 │   │   └── contributing.md         # Development setup
 │   ├── reference/
@@ -60,7 +62,8 @@ RadiObject/
 │       ├── dataframe.md
 │       ├── query.md
 │       ├── ctx.md
-│       └── stats.md
+│       ├── stats.md
+│       └── ml.md
 ├── notebooks/
 │   ├── README.md                   # Tutorial setup guide
 │   ├── config.py                   # Tutorial configuration (URIs)

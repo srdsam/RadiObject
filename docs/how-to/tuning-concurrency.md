@@ -9,8 +9,7 @@ For the underlying threading architecture and context management, see [Threading
 ### Local SSD Storage
 
 ```python
-from radiobject import configure
-from radiobject.ctx import ReadConfig
+from radiobject import configure, ReadConfig
 
 # Default - balanced for most local workloads
 configure(
@@ -27,8 +26,7 @@ configure(
 For AWS credential setup and general S3 guidance, see [S3 Setup](s3-setup.md).
 
 ```python
-from radiobject import configure
-from radiobject.ctx import ReadConfig, S3Config
+from radiobject import configure, ReadConfig, S3Config
 
 # High-bandwidth instance (p4d, p5)
 configure(

@@ -81,10 +81,10 @@ print(f"I/O time: {stats.io_time:.3f}s")
 ### Measuring Cache Hit Rates
 
 ```python
-from radiobject import ctx
+from radiobject import tdb_ctx
 
 # Share context across operations for caching
-shared_ctx = ctx()
+shared_ctx = tdb_ctx()
 
 with TileDBStats() as stats:
     for uri in volume_uris:

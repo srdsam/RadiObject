@@ -181,8 +181,7 @@ print(info.confidence)   # 'header', 'inferred', or 'unknown'
 By default, RadiObject preserves original orientation. To standardize during ingestion:
 
 ```python
-from radiobject import configure, WriteConfig
-from radiobject.ctx import OrientationConfig
+from radiobject import configure, WriteConfig, OrientationConfig
 
 # Reorient all ingested data to RAS
 configure(write=WriteConfig(

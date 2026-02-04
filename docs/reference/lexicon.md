@@ -609,8 +609,8 @@ Where:
 | **OrientationConfig** | Anatomical orientation settings (canonical_target, reorient_on_load). Part of WriteConfig |
 | **S3Config** | Cloud storage settings (region, endpoint, credentials). Applies to both read and write |
 | **configure()** | Global function to update configuration. Takes optional `write`, `read`, and `s3` config objects |
-| **get_config()** | Returns current global RadiObjectConfig instance |
-| **ctx()** | Returns lazily-built TileDB context from current configuration |
+| **radi_cfg()** | Returns current global RadiObjectConfig instance |
+| **tdb_ctx()** | Returns lazily-built TileDB context from current configuration |
 
 ---
 

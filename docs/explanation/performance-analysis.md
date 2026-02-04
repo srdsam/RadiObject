@@ -65,6 +65,8 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 
 **Key insight:** RadiObject with isotropic tiling is 3× faster than nibabel gzip, 6× faster than TorchIO, and 10× faster than MONAI for full volume loads.
 
+![Full Volume Load](../assets/benchmark/full_volume_load.png)
+
 ### 2D Slice Extraction (Single Axial Slice)
 
 | Framework | Storage | Tiling | Time (ms) | Speedup vs MONAI |
@@ -76,6 +78,8 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 | MONAI | Local | - | 2,502 | 1× |
 
 **Key insight:** Axial tiling provides **656× speedup** for 2D slice extraction compared to MONAI (which must load the full volume). This is the primary use case for axial tiling.
+
+![Slice Extraction](../assets/benchmark/slice_extraction.png)
 
 ### 3D ROI Extraction (64³ Patch)
 
@@ -89,6 +93,8 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 
 **Key insight:** Isotropic tiling provides **558× speedup** for 3D patch extraction compared to MONAI. This is the primary use case for isotropic tiling.
 
+![ROI Extraction](../assets/benchmark/roi_extraction.png)
+
 ### S3 vs Local Latency
 
 | Operation | Local (ms) | S3 (ms) | Slowdown |
@@ -98,6 +104,9 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 | Metadata lookup | 0.02 | 0.02 | 1× (after cold start) |
 
 **Key insight:** S3 adds ~150-200ms latency per slice operation. For batch processing, amortize this with parallel workers. For S3 setup and credential configuration, see [S3 Setup](../how-to/s3-setup.md).
+
+![S3 vs Local - Full Volume](../assets/benchmark/s3_vs_local_full.png)
+![S3 vs Local - Slice](../assets/benchmark/s3_vs_local_slice.png)
 
 ### Storage Format Comparison
 
@@ -110,6 +119,9 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 | NIfTI gzip | 2.1 GB | 3.1× | 457 |
 
 **Key insight:** TileDB achieves comparable compression to NIfTI gzip while enabling random access.
+
+![Disk Space Comparison](../assets/benchmark/disk_space_comparison.png)
+![Format Overhead](../assets/benchmark/format_overhead.png)
 
 ## Performance Characteristics
 
@@ -445,6 +457,8 @@ For optimal caching, share TileDB contexts across threads. See [Tuning Concurren
 **Observation:** For small datasets (3 volumes), single-process loading outperforms multi-worker due to IPC serialization overhead. Multi-worker benefits emerge with larger datasets where parallel I/O amortizes the overhead.
 
 *Note: Single-process (workers=0) performance improved ~40% after lazy loading optimization.*
+
+![DataLoader Throughput](../assets/benchmark/dataloader_throughput.png)
 
 ### Training Integration
 
@@ -959,12 +973,13 @@ For large datasets: Workers help when parallel I/O amortizes overhead
 
 **Key observation:** Memory usage is dominated by TileDB's internal buffers (304 MB default), not the volume data. This is configurable via `sm.mem.total_budget` in TileDB config.
 
+![Memory by Backend](../assets/benchmark/memory_by_backend.png)
+
 ### Optimization Recommendations
 
 #### For Maximum Read Throughput (Local)
 ```python
-from radiobject import configure
-from radiobject.ctx import WriteConfig, ReadConfig, TileConfig, SliceOrientation
+from radiobject import configure, WriteConfig, ReadConfig, TileConfig, SliceOrientation
 
 configure(
     write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.ISOTROPIC)),
@@ -974,8 +989,7 @@ configure(
 
 #### For S3 Cloud Access
 ```python
-from radiobject import configure
-from radiobject.ctx import ReadConfig, S3Config
+from radiobject import configure, ReadConfig, S3Config
 
 configure(
     s3=S3Config(max_parallel_ops=16),  # Parallel tile fetches

@@ -109,11 +109,10 @@ Controls anatomical orientation handling during ingestion.
 Use `configure()` to update global settings:
 
 ```python
-from radiobject import ctx, configure
-from radiobject.ctx import WriteConfig, ReadConfig, TileConfig, SliceOrientation, CompressionConfig
+from radiobject import configure, tdb_ctx, WriteConfig, ReadConfig, TileConfig, SliceOrientation, CompressionConfig
 
 # Use defaults
-array = tiledb.open(uri, ctx=ctx())
+array = tiledb.open(uri, ctx=tdb_ctx())
 
 # Configure write-time settings (affect new arrays only)
 configure(write=WriteConfig(
@@ -125,18 +124,18 @@ configure(write=WriteConfig(
 configure(read=ReadConfig(memory_budget_mb=2048, concurrency=8))
 ```
 
-## ctx() Function
+## tdb_ctx() Function
 
-The global `ctx()` function returns a TileDB context built from `configure()` settings:
+The global `tdb_ctx()` function returns a TileDB context built from `configure()` settings:
 
 ```python
-from radiobject import ctx
+from radiobject import tdb_ctx
 
 # Get configured TileDB context
-tdb_ctx = ctx()
+ctx = tdb_ctx()
 
 # Use in Volume/VolumeCollection operations
-vol = Volume(uri, ctx=tdb_ctx)
+vol = Volume(uri, ctx=ctx)
 ```
 
 See [Threading Model](../explanation/threading-model.md) for how contexts are managed across threads and processes.
