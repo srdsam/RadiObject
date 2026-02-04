@@ -18,17 +18,14 @@ def affine_to_json(affine: np.ndarray) -> str:
 
 
 def uri_exists(uri: str) -> bool:
-    """Check if a RadiObject or VolumeCollection exists at the given URI."""
+    """Check if a TileDB object (group or array) exists at the given URI."""
     import tiledb
 
     from radiobject.ctx import tdb_ctx
 
-    try:
-        with tiledb.Group(uri, "r", ctx=tdb_ctx()) as grp:
-            _ = grp.meta
-        return True
-    except Exception:
-        return False
+    ctx = tdb_ctx()
+    obj_type = tiledb.object_type(uri, ctx=ctx)
+    return obj_type is not None
 
 
 def delete_tiledb_uri(uri: str) -> None:

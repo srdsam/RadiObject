@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from radiobject import Volume, delete_tiledb_uri, uri_exists
 from radiobject.utils import affine_to_json, affine_to_list
 
 
@@ -63,3 +65,36 @@ class TestAffineConversion:
         reconstructed = np.array(parsed)
 
         np.testing.assert_array_almost_equal(affine, reconstructed)
+
+
+class TestUriExists:
+    """Tests for uri_exists utility."""
+
+    def test_returns_true_for_existing_uri(self, temp_dir: Path):
+        """Returns True when a TileDB volume exists at the URI."""
+        uri = str(temp_dir / "test_vol")
+        data = np.random.randn(16, 16, 8).astype(np.float32)
+        Volume.from_numpy(uri, data)
+        assert uri_exists(uri) is True
+
+    def test_returns_false_for_missing_uri(self, temp_dir: Path):
+        """Returns False when no TileDB object exists at the URI."""
+        assert uri_exists(str(temp_dir / "nonexistent")) is False
+
+
+class TestDeleteTiledbUri:
+    """Tests for delete_tiledb_uri utility."""
+
+    def test_deletes_existing_uri(self, temp_dir: Path):
+        """Deletes a TileDB volume at the URI."""
+        uri = str(temp_dir / "delete_test")
+        data = np.random.randn(16, 16, 8).astype(np.float32)
+        Volume.from_numpy(uri, data)
+        assert uri_exists(uri) is True
+
+        delete_tiledb_uri(uri)
+        assert uri_exists(uri) is False
+
+    def test_noop_for_missing_uri(self, temp_dir: Path):
+        """No error when deleting a nonexistent URI."""
+        delete_tiledb_uri(str(temp_dir / "nonexistent"))
