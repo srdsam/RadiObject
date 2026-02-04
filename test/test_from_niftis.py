@@ -467,6 +467,85 @@ def multi_modality_dirs(temp_dir: Path) -> dict[str, Path]:
     return {"images": images_dir, "labels": labels_dir}
 
 
+class TestFromNiftis4D:
+    """Tests for 4D NIfTI volume ingestion."""
+
+    def test_ingest_4d_nifti_preserves_shape(self, temp_dir: Path):
+        """4D NIfTI ingested via from_niftis() preserves full shape."""
+        shape_4d = (64, 64, 32, 200)
+        affine = np.eye(4)
+        data = np.random.rand(*shape_4d).astype(np.float32)
+        img = nib.Nifti1Image(data, affine)
+        img.header.set_sform(affine, code=1)
+        path = temp_dir / "sub-01_bold.nii.gz"
+        nib.save(img, path)
+
+        uri = str(temp_dir / "vc_4d")
+        vc = VolumeCollection.from_niftis(uri=uri, niftis=[(path, "sub-01")])
+
+        assert len(vc) == 1
+        assert vc.shape == (64, 64, 32)  # Collection shape is spatial only
+        vol = vc.iloc[0]
+        assert vol.shape == (64, 64, 32, 200)  # Volume shape is full 4D
+
+        obs = vc.obs.read()
+        assert "(64, 64, 32, 200)" in str(obs.iloc[0]["dimensions"])
+
+    def test_mixed_3d_4d_same_spatial_shape(self, temp_dir: Path):
+        """3D and 4D volumes with same spatial grid coexist in one collection."""
+        affine = np.eye(4)
+
+        # 3D volume
+        data_3d = np.random.rand(64, 64, 32).astype(np.float32)
+        img_3d = nib.Nifti1Image(data_3d, affine)
+        img_3d.header.set_sform(affine, code=1)
+        path_3d = temp_dir / "sub-01_bold.nii.gz"
+        nib.save(img_3d, path_3d)
+
+        # 4D volume with same spatial grid
+        data_4d = np.random.rand(64, 64, 32, 100).astype(np.float32)
+        img_4d = nib.Nifti1Image(data_4d, affine)
+        img_4d.header.set_sform(affine, code=1)
+        path_4d = temp_dir / "sub-02_bold.nii.gz"
+        nib.save(img_4d, path_4d)
+
+        uri = str(temp_dir / "vc_mixed_3d4d")
+        vc = VolumeCollection.from_niftis(
+            uri=uri,
+            niftis=[(path_3d, "sub-01"), (path_4d, "sub-02")],
+            validate_dimensions=True,
+        )
+
+        assert len(vc) == 2
+        assert vc.shape == (64, 64, 32)
+
+    def test_4d_dimension_validation_uses_spatial(self, temp_dir: Path):
+        """Two 4D volumes with same spatial dims but different time dims pass validation."""
+        affine = np.eye(4)
+
+        data_a = np.random.rand(64, 64, 32, 100).astype(np.float32)
+        img_a = nib.Nifti1Image(data_a, affine)
+        img_a.header.set_sform(affine, code=1)
+        path_a = temp_dir / "sub-01_bold.nii.gz"
+        nib.save(img_a, path_a)
+
+        data_b = np.random.rand(64, 64, 32, 200).astype(np.float32)
+        img_b = nib.Nifti1Image(data_b, affine)
+        img_b.header.set_sform(affine, code=1)
+        path_b = temp_dir / "sub-02_bold.nii.gz"
+        nib.save(img_b, path_b)
+
+        uri = str(temp_dir / "vc_4d_diff_time")
+        vc = VolumeCollection.from_niftis(
+            uri=uri,
+            niftis=[(path_a, "sub-01"), (path_b, "sub-02")],
+            validate_dimensions=True,
+        )
+
+        assert len(vc) == 2
+        assert vc.shape == (64, 64, 32)
+
+
 class TestImagesDictAPI:
     """Tests for the new images dict parameter in RadiObject.from_niftis()."""
 

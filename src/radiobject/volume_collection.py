@@ -671,10 +671,10 @@ class VolumeCollection:
             metadata = extract_nifti_metadata(path)
             series_type = infer_series_type(path)
 
-            # Only validate dimensions if collection has uniform shape requirement
-            if self.is_uniform and metadata.dimensions != self.shape:
+            # Only validate spatial dimensions if collection has uniform shape requirement
+            if self.is_uniform and metadata.spatial_dimensions != self.shape:
                 raise ValueError(
-                    f"Dimension mismatch: {path.name} has shape {metadata.dimensions}, "
+                    f"Dimension mismatch: {path.name} has spatial shape {metadata.spatial_dimensions}, "
                     f"expected {self.shape}"
                 )
 
@@ -866,9 +866,9 @@ class VolumeCollection:
             if invalid:
                 raise ValueError(f"Invalid obs_subject_ids: {sorted(invalid)[:5]}")
 
-        # Extract metadata and validate dimensions
+        # Extract metadata and validate spatial dimensions
         metadata_list: list[tuple[Path, str, NiftiMetadata, str]] = []
-        first_shape: tuple[int, int, int] | None = None
+        first_spatial_shape: tuple[int, int, int] | None = None
 
         for nifti_path, obs_subject_id in niftis:
             path = Path(nifti_path)
@@ -878,23 +878,23 @@ class VolumeCollection:
             metadata = extract_nifti_metadata(path)
             series_type = infer_series_type(path)
 
-            shape = metadata.dimensions
-            if first_shape is None:
-                first_shape = shape
+            spatial_shape = metadata.spatial_dimensions
+            if first_spatial_shape is None:
+                first_spatial_shape = spatial_shape
                 all_same_shape = True
-            elif shape != first_shape:
+            elif spatial_shape != first_spatial_shape:
                 if validate_dimensions:
                     raise ValueError(
-                        f"Dimension mismatch: {path.name} has shape {shape}, "
-                        f"expected {first_shape}"
+                        f"Dimension mismatch: {path.name} has spatial shape {spatial_shape}, "
+                        f"expected {first_spatial_shape}"
                     )
                 all_same_shape = False
 
             metadata_list.append((path, obs_subject_id, metadata, series_type))
 
         effective_ctx = ctx if ctx else tdb_ctx()
-        # Only set uniform shape if all volumes have same dimensions
-        collection_shape = first_shape if all_same_shape else None
+        # Only set uniform shape if all volumes have same spatial dimensions
+        collection_shape = first_spatial_shape if all_same_shape else None
 
         # Build obs schema from NiftiMetadata fields (tuples serialized as strings)
         obs_schema: dict[str, np.dtype] = {

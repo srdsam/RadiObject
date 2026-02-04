@@ -542,3 +542,157 @@ class TestMetadataFloatPrecision:
             assert (
                 abs(orig - exp) < 1e-6
             ), f"Voxel spacing axis {i}: {orig} -> {exp} (diff={abs(orig - exp):.2e})"
+
+
+# ----- Helpers for NIfTI Round-Trip Tests -----
+
+
+def create_synthetic_nifti_4d(temp_dir: Path) -> Path:
+    """Create a synthetic 4D NIfTI file."""
+    rng = np.random.default_rng(42)
+    data = rng.random((16, 16, 8, 3), dtype=np.float32)
+    affine = np.diag([1.5, 1.5, 2.0, 1.0])
+    img = nib.Nifti1Image(data, affine)
+    img.header.set_sform(affine, code=1)
+    nifti_path = temp_dir / "synthetic_4d.nii.gz"
+    nib.save(img, nifti_path)
+    return nifti_path
+
+
+def create_synthetic_nifti_with_header(temp_dir: Path) -> Path:
+    """Create a synthetic NIfTI with explicit header fields for round-trip testing."""
+    rng = np.random.default_rng(42)
+    data = rng.random((20, 20, 10), dtype=np.float32)
+    affine = np.diag([0.5, 0.5, 1.2, 1.0])
+    img = nib.Nifti1Image(data, affine)
+    header = img.header
+    header.set_sform(affine, code=2)
+    header.set_qform(affine, code=1)
+    header["scl_slope"] = 2.5
+    header["scl_inter"] = -100.0
+    header.set_xyzt_units(xyz="mm", t="sec")
+    nifti_path = temp_dir / "synthetic_header.nii.gz"
+    nib.save(img, nifti_path)
+    return nifti_path
+
+
+class TestNiftiRoundtrip:
+    """End-to-end NIfTI -> TileDB -> NIfTI fidelity tests."""
+
+    def test_voxel_data_roundtrip_3d(self, temp_dir: Path):
+        """3D voxel data should survive NIfTI -> TileDB -> NIfTI exactly."""
+        nifti_path = create_synthetic_nifti_ras(temp_dir)
+        original_img = nib.load(nifti_path)
+        original_data = np.asarray(original_img.dataobj)
+
+        uri = str(temp_dir / "roundtrip_3d")
+        vol = Volume.from_nifti(uri, nifti_path, reorient=False)
+
+        export_path = temp_dir / "roundtrip_3d_export.nii.gz"
+        vol.to_nifti(export_path)
+
+        exported_img = nib.load(export_path)
+        exported_data = np.asarray(exported_img.dataobj)
+
+        np.testing.assert_array_equal(original_data, exported_data)
+
+    def test_voxel_data_roundtrip_4d(self, temp_dir: Path):
+        """4D voxel data should survive NIfTI -> TileDB -> NIfTI exactly."""
+        nifti_path = create_synthetic_nifti_4d(temp_dir)
+        original_img = nib.load(nifti_path)
+        original_data = np.asarray(original_img.dataobj)
+
+        uri = str(temp_dir / "roundtrip_4d")
+        vol = Volume.from_nifti(uri, nifti_path, reorient=False)
+
+        export_path = temp_dir / "roundtrip_4d_export.nii.gz"
+        vol.to_nifti(export_path)
+
+        exported_img = nib.load(export_path)
+        exported_data = np.asarray(exported_img.dataobj)
+
+        np.testing.assert_array_equal(original_data, exported_data)
+
+    def test_header_fields_roundtrip(self, temp_dir: Path):
+        """NIfTI header fields should survive TileDB storage and re-export."""
+        nifti_path = create_synthetic_nifti_with_header(temp_dir)
+        original_img = nib.load(nifti_path)
+        original_header = original_img.header
+
+        uri = str(temp_dir / "roundtrip_header")
+        vol = Volume.from_nifti(uri, nifti_path, reorient=False)
+
+        export_path = temp_dir / "roundtrip_header_export.nii.gz"
+        vol.to_nifti(export_path)
+
+        exported_img = nib.load(export_path)
+        exported_header = exported_img.header
+
+        assert int(exported_header["sform_code"]) == int(original_header["sform_code"])
+        assert int(exported_header["qform_code"]) == int(original_header["qform_code"])
+        assert int(exported_header["xyzt_units"]) == int(original_header["xyzt_units"])
+
+        # Verify scl_slope/scl_inter are stored correctly in TileDB metadata.
+        # nibabel may return NaN for float data on re-read, so we verify the
+        # stored values match the original (after NaN normalization).
+        stored_slope = float(vol._metadata.get("nifti_scl_slope", 1.0))
+        stored_inter = float(vol._metadata.get("nifti_scl_inter", 0.0))
+        orig_slope = float(original_header["scl_slope"])
+        orig_inter = float(original_header["scl_inter"])
+        expected_slope = 1.0 if np.isnan(orig_slope) else orig_slope
+        expected_inter = 0.0 if np.isnan(orig_inter) else orig_inter
+        assert abs(stored_slope - expected_slope) < 1e-6
+        assert abs(stored_inter - expected_inter) < 1e-6
+
+    def test_reoriented_data_spatial_consistency(self, temp_dir: Path):
+        """LPS -> reorient -> export should produce RAS with correct world-space mapping."""
+        nifti_path = create_synthetic_nifti_lps(temp_dir)
+        original_img = nib.load(nifti_path)
+        original_affine = original_img.affine
+
+        uri = str(temp_dir / "roundtrip_reoriented")
+        vol = Volume.from_nifti(uri, nifti_path, reorient=True)
+
+        export_path = temp_dir / "roundtrip_reoriented_export.nii.gz"
+        vol.to_nifti(export_path)
+
+        exported_img = nib.load(export_path)
+        exported_axcodes = nib.aff2axcodes(exported_img.affine)
+        assert tuple(exported_axcodes) == ("R", "A", "S")
+
+        # Verify world-space consistency: same physical point via both affines
+        # Original voxel (0, 0, 0) -> world coordinate
+        original_world = voxel_to_world(original_affine, (0, 0, 0))
+
+        # In RAS (flipped from LPS), (0,0,0) in original maps to (nx-1, ny-1, 0) in reoriented
+        exported_affine = exported_img.affine
+        nx, ny = original_img.shape[0], original_img.shape[1]
+        exported_world = voxel_to_world(exported_affine, (nx - 1, ny - 1, 0))
+
+        np.testing.assert_allclose(original_world, exported_world, atol=1e-5)
+
+    def test_real_data_roundtrip(self, sample_nifti_image: Path, temp_dir: Path):
+        """Real MSD BraTS data should survive NIfTI -> TileDB -> NIfTI."""
+        original_img = nib.load(sample_nifti_image)
+        original_data = np.asarray(original_img.dataobj, dtype=np.float32)
+        original_affine = original_img.affine.copy()
+
+        # Extract first channel if 4D
+        if original_data.ndim == 4:
+            original_data = original_data[..., 0]
+
+        uri = str(temp_dir / "roundtrip_real")
+        vol = Volume.from_nifti(uri, sample_nifti_image, reorient=False)
+
+        export_path = temp_dir / "roundtrip_real_export.nii.gz"
+        vol.to_nifti(export_path)
+
+        exported_img = nib.load(export_path)
+        exported_data = np.asarray(exported_img.dataobj, dtype=np.float32)
+
+        # For 4D original exported as full volume, compare shapes then data
+        if exported_data.ndim == 4 and original_data.ndim == 3:
+            exported_data = exported_data[..., 0]
+
+        np.testing.assert_allclose(original_data, exported_data, rtol=1e-6)
+        np.testing.assert_allclose(original_affine, exported_img.affine, atol=1e-5)

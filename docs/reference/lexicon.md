@@ -531,13 +531,13 @@ Where:
 | **validate_alignment** | Optional from_niftis param to verify all collections have matching subject IDs (useful for image/segmentation pairs) |
 | **from_dicoms** | Factory method for bulk DICOM ingestion with automatic metadata extraction and modality-based grouping |
 | **collection_name** | Legacy from_niftis param to place all volumes in a single named collection. If None, auto-groups by inferred modality |
-| **NiftiMetadata** | Pydantic model capturing NIfTI header fields (dimensions, voxel spacing, orientation, scaling) for obs storage |
+| **NiftiMetadata** | Pydantic model capturing NIfTI header fields (dimensions including temporal for 4D, voxel spacing, orientation, scaling) for obs storage. Provides `spatial_dimensions` property for 3D-only shape and `is_4d` flag |
 | **DicomMetadata** | Pydantic model capturing DICOM header fields (pixel spacing, modality, acquisition parameters) for obs storage |
 | **infer_series_type** | Function that determines series type (T1w, FLAIR, etc.) from BIDS filename patterns and header description |
 | **series_type** | BIDS-aligned identifier for imaging sequence type (T1w, T2w, FLAIR, bold, dwi, CT, etc.) |
 | **voxel_spacing** | Physical voxel dimensions in mm (from NIfTI pixdim or DICOM PixelSpacing/SliceThickness) |
 | **scl_slope/scl_inter** | NIfTI intensity scaling parameters: real_value = stored_value * scl_slope + scl_inter |
-| **auto_grouping** | Automatic organization of input files into VolumeCollections based on (shape, series_type) tuple |
+| **auto_grouping** | Automatic organization of input files into VolumeCollections based on (spatial_shape, series_type) tuple. Spatial shape uses only X/Y/Z dimensions, so 4D volumes with different time dimensions but the same spatial grid are grouped together |
 | **FK_constraint** | Foreign key validation ensuring obs_subject_ids in VolumeCollection.obs reference valid subjects in RadiObject.obs_meta |
 
 ### RadiObject Transformation Terminology

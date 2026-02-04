@@ -35,7 +35,7 @@ RadiObject (TileDB Group)
     │   │   │  ATTRIBUTES (Data):                                            │
     │   │   │    series_type      <- "T1w", "FLAIR", etc.                    │
     │   │   │    voxel_spacing    <- "(1.0, 1.0, 1.0)" per-volume spacing    │
-    │   │   │    dimensions       <- "(240, 240, 155)" per-volume shape      │
+    │   │   │    dimensions       <- "(240, 240, 155)" or "(64, 64, 32, 200)" per-volume shape │
     │   │   │    axcodes, affine_json, datatype, bitpix, ...                 │
     │   │   └────────────────────────────────────────────────────────────────┘
     │   │
@@ -147,7 +147,7 @@ Critically, **dimensions are irregular across a dataset**:
 
 This irregularity makes batch analysis and ML challenging, as most frameworks expect uniform tensor shapes.
 
-`VolumeCollection` addresses this by grouping volumes with consistent X/Y/Z dimensions, while `RadiObject` organizes heterogeneous collections (e.g., T1w at 1mm³, fMRI at 3mm³) under a unified structure.
+`VolumeCollection` addresses this by grouping volumes with consistent spatial (X/Y/Z) dimensions—4D volumes with different time dimensions but the same spatial grid share a collection. `RadiObject` organizes heterogeneous collections (e.g., T1w at 1mm³, fMRI at 3mm³) under a unified structure.
 
 ## Composition
 

@@ -115,6 +115,30 @@ radi = RadiObject.from_niftis(uri, images={"CT": "./data"})
 
 See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-orientation) for terminology.
 
+## 4D / Functional Data (fMRI, DTI)
+
+RadiObject natively supports 4D NIfTI volumes (3 spatial + 1 temporal/channel dimension).
+No special configuration is needed—4D files are ingested the same way as 3D:
+
+```python
+radi = RadiObject.from_niftis(
+    uri="./fmri-study",
+    images={"bold": "./func/*_bold.nii.gz"},
+)
+
+vol = radi.bold.iloc[0]
+print(vol.shape)   # (64, 64, 32, 200)  — 200 timepoints
+print(vol.ndim)    # 4
+```
+
+**How dimensions work with 4D data:**
+
+- **Collection shape** (`radi.bold.shape`) reports spatial dimensions only: `(64, 64, 32)`
+- **Volume shape** (`vol.shape`) reports the full shape including time: `(64, 64, 32, 200)`
+- **Metadata** (`obs.dimensions`) captures the full 4D shape as a string
+- **Shape validation** compares spatial dims only—volumes with different timepoint counts
+  but the same spatial grid pass `validate_dimensions=True`
+
 ## Managing Existing Data
 
 ### Check If Data Exists

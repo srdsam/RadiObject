@@ -19,6 +19,10 @@ hierarchical organization of multi-volume datasets.
 
 *[Thoughts](https://souzy.up.railway.app/thoughts/radiology-object)*
 
+## Gaps
+
+- The storage format for this library is TileDB. No comparison with Zarr, NumPy, 
+- No profiling of .cuda() transfer, no end-to-end training throughput, no tests to evaluate if you're I/O-bound or compute-bound.
 
 ## Installation
 

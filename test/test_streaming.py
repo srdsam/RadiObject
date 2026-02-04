@@ -336,6 +336,29 @@ class TestRadiObjectWriterCollectionNames:
             assert "FLAIR" in writer.collection_names
 
 
+class TestStreamingWriter4D:
+    """Tests for 4D volume streaming."""
+
+    def test_streaming_writer_4d_volume(self, temp_dir: Path):
+        """4D volume written through StreamingWriter with 3D spatial shape round-trips correctly."""
+        uri = str(temp_dir / "streaming_4d")
+        spatial_shape = (64, 64, 32)
+        shape_4d = (64, 64, 32, 10)
+
+        data = np.random.randn(*shape_4d).astype(np.float32)
+
+        with StreamingWriter(uri, shape=spatial_shape) as writer:
+            writer.write_volume(data, obs_id="vol_001", obs_subject_id="sub-001")
+
+        vc = VolumeCollection(uri)
+        assert len(vc) == 1
+        assert vc.shape == spatial_shape
+
+        vol = vc.iloc[0]
+        assert vol.shape == shape_4d
+        np.testing.assert_array_almost_equal(vol.to_numpy(), data)
+
+
 class TestStreamingIntegration:
     """Integration tests for streaming writers with real data."""
 

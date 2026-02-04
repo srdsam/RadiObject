@@ -88,6 +88,8 @@ Controls how data is chunked on disk.
 | `CORONAL` | `[X, 1, Z]` | Coronal slice viewers |
 | `ISOTROPIC` | `[64, 64, 64]` | 3D patches, ML training |
 
+For 4D volumes, tile extents automatically include a temporal extent of `1` (i.e., `[X, Y, 1, 1]` for AXIAL). This ensures efficient per-timepoint access.
+
 ### CompressionConfig
 
 | Setting | Default | Description |

@@ -793,7 +793,7 @@ class RadiObject:
                 raise FileNotFoundError(f"NIfTI file not found: {path}")
             metadata = extract_nifti_metadata(path)
             series_type = infer_series_type(path)
-            file_info.append((path, obs_subject_id, metadata.dimensions, series_type))
+            file_info.append((path, obs_subject_id, metadata.spatial_dimensions, series_type))
 
         groups: dict[tuple[tuple[int, int, int], str], list[tuple[Path, str]]] = defaultdict(list)
         for path, subject_id, shape, series_type in file_info:

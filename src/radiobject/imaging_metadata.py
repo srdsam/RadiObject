@@ -139,8 +139,8 @@ class NiftiMetadata(BaseModel):
     # Voxel spacing (from pixdim[1:4]) as (x, y, z) tuple
     voxel_spacing: tuple[float, float, float]
 
-    # Original dimensions as (x, y, z) tuple
-    dimensions: tuple[int, int, int]
+    # Original dimensions as (x, y, z) or (x, y, z, t) tuple
+    dimensions: tuple[int, ...]
 
     # Data type
     datatype: int
@@ -167,6 +167,16 @@ class NiftiMetadata(BaseModel):
     source_path: str
 
     model_config = {"frozen": True}
+
+    @property
+    def spatial_dimensions(self) -> tuple[int, int, int]:
+        """Spatial dims (X, Y, Z) regardless of 3D/4D."""
+        return (self.dimensions[0], self.dimensions[1], self.dimensions[2])
+
+    @property
+    def is_4d(self) -> bool:
+        """Whether this volume has a temporal dimension."""
+        return len(self.dimensions) == 4
 
     def to_obs_dict(self, obs_id: str, obs_subject_id: str, series_type: str) -> dict:
         """Convert to dictionary for obs DataFrame row."""
@@ -229,9 +239,11 @@ def extract_nifti_metadata(nifti_path: str | Path) -> NiftiMetadata:
 
     # Extract dimensions
     dim = header.get("dim")
+    n_dims = int(dim[0]) if len(dim) > 0 else 0
     dim_x = int(dim[1]) if len(dim) > 1 else 0
     dim_y = int(dim[2]) if len(dim) > 2 else 0
     dim_z = int(dim[3]) if len(dim) > 3 else 0
+    dim_t = int(dim[4]) if n_dims >= 4 and len(dim) > 4 and int(dim[4]) > 1 else None
 
     # Extract voxel spacing
     pixdim = header.get("pixdim")
@@ -277,7 +289,7 @@ def extract_nifti_metadata(nifti_path: str | Path) -> NiftiMetadata:
 
     return NiftiMetadata(
         voxel_spacing=(voxel_spacing_x, voxel_spacing_y, voxel_spacing_z),
-        dimensions=(dim_x, dim_y, dim_z),
+        dimensions=(dim_x, dim_y, dim_z, dim_t) if dim_t is not None else (dim_x, dim_y, dim_z),
         datatype=datatype,
         bitpix=bitpix,
         scl_slope=scl_slope,

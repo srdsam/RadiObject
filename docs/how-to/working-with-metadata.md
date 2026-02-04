@@ -63,6 +63,11 @@ print(vol.shape)              # (240, 240, 155)
 print(vol.obs_id)             # "BraTS001_T1w"
 print(vol.tile_orientation)   # SliceOrientation.AXIAL
 print(vol.orientation_info)   # OrientationInfo(axcodes=('R', 'A', 'S'), ...)
+
+# For 4D volumes (fMRI, DTI):
+vol_4d = radi.bold.iloc[0]
+print(vol_4d.shape)           # (64, 64, 32, 200)
+print(vol_4d.ndim)            # 4
 ```
 
 For volume-level attributes like `voxel_spacing`, query the collection's obs metadata (see above).

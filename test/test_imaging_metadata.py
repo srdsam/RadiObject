@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import nibabel as nib
+import numpy as np
 import pytest
 
 from radiobject.imaging_metadata import (
@@ -15,6 +17,7 @@ from radiobject.imaging_metadata import (
     NiftiMetadata,
     _get_spatial_units,
     extract_dicom_metadata,
+    extract_nifti_metadata,
 )
 
 
@@ -173,3 +176,106 @@ class TestExtractDicomMetadata:
         assert len(meta.dimensions) == 3
         assert meta.dimensions[2] > 1  # Multiple slices
         assert len(meta.axcodes) == 3
+
+
+class TestNiftiMetadata4D:
+    """Tests for 4D NIfTI metadata handling."""
+
+    def test_extract_nifti_metadata_4d(self, temp_dir: Path):
+        """4D NIfTI metadata captures time dimension."""
+        shape_4d = (64, 64, 32, 200)
+        affine = np.eye(4)
+        data = np.zeros(shape_4d, dtype=np.float32)
+        img = nib.Nifti1Image(data, affine)
+        img.header.set_sform(affine, code=1)
+        path = temp_dir / "sub-01_bold.nii.gz"
+        nib.save(img, path)
+
+        meta = extract_nifti_metadata(path)
+
+        assert meta.dimensions == (64, 64, 32, 200)
+        assert len(meta.dimensions) == 4
+
+    def test_extract_nifti_metadata_3d_no_time(self, temp_dir: Path):
+        """3D NIfTI stays 3D (no spurious time dimension)."""
+        shape_3d = (64, 64, 32)
+        affine = np.eye(4)
+        data = np.zeros(shape_3d, dtype=np.float32)
+        img = nib.Nifti1Image(data, affine)
+        img.header.set_sform(affine, code=1)
+        path = temp_dir / "sub-01_T1w.nii.gz"
+        nib.save(img, path)
+
+        meta = extract_nifti_metadata(path)
+
+        assert meta.dimensions == (64, 64, 32)
+        assert len(meta.dimensions) == 3
+
+    def test_spatial_dimensions_property(self):
+        """spatial_dimensions returns first 3 dims for both 3D and 4D."""
+        base = dict(
+            voxel_spacing=(1.0, 1.0, 1.0),
+            datatype=16,
+            bitpix=32,
+            scl_slope=1.0,
+            scl_inter=0.0,
+            xyzt_units=2,
+            spatial_units="mm",
+            qform_code=1,
+            sform_code=1,
+            axcodes="RAS",
+            affine_json="[]",
+            orientation_source="nifti_sform",
+            source_path="/test.nii",
+        )
+        meta_3d = NiftiMetadata(dimensions=(64, 64, 32), **base)
+        meta_4d = NiftiMetadata(dimensions=(64, 64, 32, 200), **base)
+
+        assert meta_3d.spatial_dimensions == (64, 64, 32)
+        assert meta_4d.spatial_dimensions == (64, 64, 32)
+
+    def test_is_4d_property(self):
+        """is_4d correctly distinguishes 3D from 4D."""
+        base = dict(
+            voxel_spacing=(1.0, 1.0, 1.0),
+            datatype=16,
+            bitpix=32,
+            scl_slope=1.0,
+            scl_inter=0.0,
+            xyzt_units=2,
+            spatial_units="mm",
+            qform_code=1,
+            sform_code=1,
+            axcodes="RAS",
+            affine_json="[]",
+            orientation_source="nifti_sform",
+            source_path="/test.nii",
+        )
+        meta_3d = NiftiMetadata(dimensions=(64, 64, 32), **base)
+        meta_4d = NiftiMetadata(dimensions=(64, 64, 32, 200), **base)
+
+        assert meta_3d.is_4d is False
+        assert meta_4d.is_4d is True
+
+    def test_to_obs_dict_4d_dimensions(self):
+        """4D dimensions serialize correctly in to_obs_dict."""
+        meta = NiftiMetadata(
+            voxel_spacing=(1.0, 1.0, 2.0),
+            dimensions=(64, 64, 32, 200),
+            datatype=16,
+            bitpix=32,
+            scl_slope=1.0,
+            scl_inter=0.0,
+            xyzt_units=2,
+            spatial_units="mm",
+            qform_code=1,
+            sform_code=1,
+            axcodes="RAS",
+            affine_json="[]",
+            orientation_source="nifti_sform",
+            source_path="/test.nii",
+        )
+
+        obs_dict = meta.to_obs_dict("vol_001", "sub-01", "bold")
+
+        assert obs_dict["dimensions"] == "(64, 64, 32, 200)"
