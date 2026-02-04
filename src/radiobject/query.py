@@ -175,7 +175,7 @@ class Query:
         else:
             raise TypeError("iloc key must be int, slice, list[int], or bool array")
 
-        ids = [self._source._index.get_key(i) for i in indices]
+        ids = self._source._index.take(indices).to_list()
         return self.filter_subjects(ids)
 
     def loc(self, key: str | Sequence[str]) -> Query:
@@ -589,7 +589,7 @@ class CollectionQuery:
         else:
             raise TypeError("iloc key must be int, slice, list[int], or bool array")
 
-        obs_ids = frozenset(self._source._index.get_key(i) for i in indices)
+        obs_ids = self._source._index.take(indices).to_set()
         new_ids = obs_ids
         if self._volume_ids is not None:
             new_ids = self._volume_ids & obs_ids

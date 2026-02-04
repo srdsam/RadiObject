@@ -1,6 +1,6 @@
-# Lazy Queries
+# Lazy Pipelines
 
-The `lazy()` method returns a query builder for ETL pipelines with transforms. Unlike direct filtering, lazy queries accumulate operations without touching data until explicit materialization.
+The `lazy()` method returns a query builder for ETL pipelines with transforms. Unlike direct filtering, lazy queries accumulate operations without touching data until explicit materialization. For the full API, see [Query API](../api/query.md).
 
 ## Basic Usage
 
@@ -102,7 +102,8 @@ for batch in radi.lazy().filter("split == 'train'").iter_batches(batch_size=32):
 The `VolumeBatch` dataclass contains:
 
 - `volumes`: Dict mapping collection names to stacked numpy arrays `(N, X, Y, Z)`
-- `subject_ids`: List of subject IDs in the batch
+- `subject_ids`: Tuple of subject IDs in the batch
+- `obs_ids`: Dict mapping collection names to tuples of volume IDs
 
 ### count()
 
@@ -111,16 +112,7 @@ Count results without loading volume data:
 ```python
 result = query.count()
 print(f"Subjects: {result.n_subjects}")
-print(f"T1w volumes: {result.collections['T1w']}")
-```
-
-### to_numpy_stack()
-
-Load all matching volumes as a stacked array:
-
-```python
-# Load all T1w volumes as (N, X, Y, Z) array
-data = radi.lazy().filter("split == 'train'").select_collections(["T1w"]).to_numpy_stack()
+print(f"T1w volumes: {result.n_volumes['T1w']}")
 ```
 
 ## VolumeCollection Queries
@@ -136,6 +128,9 @@ query = collection.lazy().filter("voxel_spacing == '(1.0, 1.0, 1.0)'")
 # Iterate results
 for vol in query.iter_volumes():
     process(vol)
+
+# Stack all matching volumes as (N, X, Y, Z) array
+data = collection.lazy().to_numpy_stack()
 ```
 
 ## When to Use Lazy Mode
@@ -155,8 +150,12 @@ For most use cases, direct filtering is sufficient. Use `lazy()` only when you n
 - Memory-controlled streaming via `iter_batches()`
 - Complex pipelines with deferred execution
 
+## Next Step
+
+**Ready for ML training?** Set up MONAI or TorchIO DataLoaders with [ML Integration](ml-training.md).
+
 ## Related Documentation
 
-- [Query & Filter](query-filter-data.md) - Direct filtering for exploration
+- [Indexing & Filtering](query-filter-data.md) - Direct filtering for exploration
+- [Volume Operations](volume-operations.md) - Working with individual volumes
 - [Streaming Writes](streaming-writes.md) - Large dataset writes
-- [ML Integration](ml-training.md) - PyTorch DataLoader setup

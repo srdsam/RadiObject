@@ -60,13 +60,15 @@ nav:
 
   - How-to Guides:
       - Overview: how-to/index.md
-      - Data Management:
+      - Ingestion & Storage:
           - Ingest Data: how-to/ingest-data.md
-          - Query & Filter: how-to/query-filter-data.md
-          - Lazy Queries: how-to/lazy-queries.md
-          - Working with Metadata: how-to/working-with-metadata.md
           - Streaming Writes: how-to/streaming-writes.md
           - Append Data: how-to/append-data.md
+      - Querying & Access:
+          - Indexing & Filtering: how-to/query-filter-data.md
+          - Working with Metadata: how-to/working-with-metadata.md
+          - Lazy Pipelines: how-to/lazy-queries.md
+          - Volume Operations: how-to/volume-operations.md
       - ML Training:
           - ML Integration: how-to/ml-training.md
           - Tuning Concurrency: how-to/tuning-concurrency.md

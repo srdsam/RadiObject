@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Iterator
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence, overload
@@ -283,13 +284,9 @@ class VolumeCollection:
     @property
     def obs_subject_ids(self) -> list[str]:
         """Get obs_subject_id values for this collection (respects view filter)."""
-        obs_df = self.obs.read()
-        if self._volume_ids is not None:
-            obs_df = obs_df[obs_df["obs_id"].isin(self._volume_ids)]
-        # Maintain order consistent with obs_ids
-        effective_ids = self._effective_obs_ids
+        obs_df = self.to_obs()
         id_to_subject = dict(zip(obs_df["obs_id"], obs_df["obs_subject_id"]))
-        return [id_to_subject[obs_id] for obs_id in effective_ids]
+        return [id_to_subject[obs_id] for obs_id in self._effective_obs_ids]
 
     @property
     def index(self) -> Index:
@@ -305,6 +302,40 @@ class VolumeCollection:
     def loc(self) -> _LocIndexer:
         """Label-based indexing for selecting volumes by obs_id."""
         return _LocIndexer(self)
+
+    @cached_property
+    def subjects(self) -> Index:
+        """Subject-level index (obs_subject_id) for this collection."""
+        unique = list(dict.fromkeys(self.obs_subject_ids))
+        return Index.build(unique, name="obs_subject_id")
+
+    def sel(self, *, subject: str | list[str]) -> Volume | VolumeCollection:
+        """Select volumes by obs_subject_id.
+
+        Args:
+            subject: Single subject ID (returns Volume if exactly one match)
+                or list of subject IDs (returns VolumeCollection view).
+        """
+        obs_df = self.to_obs()
+        subjects = [subject] if isinstance(subject, str) else subject
+        matching = obs_df[obs_df["obs_subject_id"].isin(subjects)]["obs_id"].tolist()
+
+        if not matching:
+            raise KeyError(f"obs_subject_id '{subject}' not found in collection")
+        if isinstance(subject, str) and len(matching) == 1:
+            return self.loc[matching[0]]
+        return self._create_view(volume_ids=frozenset(matching))
+
+    def groupby_subject(self) -> Iterator[tuple[str, VolumeCollection]]:
+        """Group volumes by obs_subject_id. Yields (subject_id, view) pairs."""
+        obs_df = self.to_obs()
+        groups: dict[str, list[str]] = defaultdict(list)
+        for _, row in obs_df.iterrows():
+            groups[row["obs_subject_id"]].append(row["obs_id"])
+
+        for subject_id in self.subjects:
+            if subject_id in groups:
+                yield subject_id, self._create_view(volume_ids=frozenset(groups[subject_id]))
 
     def get_obs_row_by_obs_id(self, obs_id: str) -> pd.DataFrame:
         """Get observation row by obs_id string identifier."""
@@ -566,11 +597,9 @@ class VolumeCollection:
     @property
     def _effective_obs_ids(self) -> list[str]:
         """Get the list of obs_ids for this collection (filtered if view)."""
-        root = self._root
-        all_ids = list(root._index.keys)
         if self._volume_ids is not None:
-            return [obs_id for obs_id in all_ids if obs_id in self._volume_ids]
-        return all_ids
+            return self._root._index.intersection(self._volume_ids).to_list()
+        return self._root._index.to_list()
 
     @cached_property
     def _metadata(self) -> dict:
@@ -583,9 +612,9 @@ class VolumeCollection:
         """Cached bidirectional index for obs_id lookups."""
         n = self._metadata["n_volumes"]
         if n == 0:
-            return Index.build([])
+            return Index.build([], name="obs_id")
         obs_data = self.obs.read()
-        return Index.build(list(obs_data["obs_id"]))
+        return Index.build(list(obs_data["obs_id"]), name="obs_id")
 
     def _effective_ctx(self) -> tiledb.Ctx:
         return self._ctx if self._ctx else tdb_ctx()

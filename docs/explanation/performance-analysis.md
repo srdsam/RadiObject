@@ -535,13 +535,12 @@ This enables:
 The `create_distributed_dataloader` factory handles DDP partitioning:
 
 ```python
-from ml.distributed import create_distributed_dataloader, set_epoch
+from radiobject.ml.distributed import create_distributed_dataloader, set_epoch
 
 loader = create_distributed_dataloader(
-    radi_object,
+    collections=[radi_object.T1w, radi_object.FLAIR],
     rank=rank,           # This node's rank
     world_size=world_size,  # Total nodes
-    modalities=["T1w", "FLAIR"],
     batch_size=4,        # Per-GPU batch size
     num_workers=4,
 )
@@ -613,8 +612,7 @@ For large datasets, patch-based training dramatically reduces I/O:
 
 ```python
 loader = create_training_dataloader(
-    radi,
-    modalities=["T1w"],
+    collections=radi.T1w,
     patch_size=(64, 64, 64),  # 136× less I/O than full volume
     batch_size=32,
     num_workers=4,
@@ -627,7 +625,7 @@ loader = create_training_dataloader(
 
 ```python
 loader = create_training_dataloader(
-    radi,
+    collections=radi.T1w,
     batch_size=4,
     num_workers=0,  # Single process is faster for small datasets
 )
@@ -637,7 +635,7 @@ loader = create_training_dataloader(
 
 ```python
 loader = create_training_dataloader(
-    radi,
+    collections=radi.T1w,
     patch_size=(96, 96, 96),  # Patch-based to reduce I/O
     batch_size=16,
     num_workers=4,            # Parallel loading helps
@@ -649,10 +647,10 @@ loader = create_training_dataloader(
 #### Large Dataset (>10,000 subjects, Multi-Node)
 
 ```python
-from ml.distributed import create_distributed_dataloader
+from radiobject.ml.distributed import create_distributed_dataloader
 
 loader = create_distributed_dataloader(
-    radi,
+    collections=radi.T1w,
     rank=rank,
     world_size=world_size,
     patch_size=(64, 64, 64),  # Smaller patches for more parallelism
@@ -953,6 +951,8 @@ For large datasets: Workers help when parallel I/O amortizes overhead
 ```
 
 ### Tiling Strategy Selection Guide
+
+For available tiling options and configuration, see [Configuration: TileConfig](../reference/configuration.md#tileconfig).
 
 | Use Case | Recommended Tiling | Why |
 |----------|-------------------|-----|

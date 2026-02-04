@@ -33,8 +33,10 @@ RadiObject/
 │   ├── how-to/
 │   │   ├── index.md                # How-to guides landing page
 │   │   ├── ingest-data.md          # NIfTI/DICOM ingestion
-│   │   ├── query-filter-data.md    # Data access patterns
-│   │   ├── lazy-queries.md         # ETL pipelines with transforms
+│   │   ├── query-filter-data.md    # Indexing & filtering
+│   │   ├── lazy-queries.md         # Lazy pipelines (ETL with transforms)
+│   │   ├── working-with-metadata.md # Subject and volume metadata
+│   │   ├── volume-operations.md    # Partial reads, stats, NIfTI export
 │   │   ├── streaming-writes.md     # Large dataset ingestion
 │   │   ├── append-data.md          # Incremental updates
 │   │   ├── ml-training.md          # MONAI/TorchIO setup
@@ -42,6 +44,7 @@ RadiObject/
 │   │   ├── s3-setup.md             # Cloud storage setup
 │   │   ├── troubleshooting.md      # Common issues and solutions
 │   │   ├── datasets.md             # Download test data
+│   │   ├── profiling.md            # Performance monitoring
 │   │   └── contributing.md         # Development setup
 │   ├── reference/
 │   │   ├── index.md                # Reference landing page
@@ -105,10 +108,16 @@ RadiObject/
 │           │   └── torchio.py
 │           ├── datasets/
 │           │   ├── __init__.py
-│           │   └── volume_dataset.py
+│           │   ├── volume_dataset.py
+│           │   ├── collection_dataset.py
+│           │   ├── segmentation_dataset.py
+│           │   ├── multimodal.py
+│           │   └── patch_dataset.py
 │           └── utils/
 │               ├── __init__.py
-│               └── worker_init.py
+│               ├── worker_init.py
+│               ├── labels.py
+│               └── validation.py
 └── test/
     ├── __init__.py
     ├── conftest.py
@@ -137,7 +146,7 @@ RadiObject/
         ├── test_dataset.py
         ├── test_distributed.py
         ├── test_performance.py
-        ├── test_reader.py
+        ├── test_segmentation_dataset.py
         ├── test_threading_ml.py
         ├── test_training.py
         └── test_compat.py

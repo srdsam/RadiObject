@@ -10,7 +10,7 @@ RadiObject inherits AWS credentials from boto3's credential chain:
 ```bash
 export AWS_ACCESS_KEY_ID=AKIA...
 export AWS_SECRET_ACCESS_KEY=...
-export AWS_DEFAULT_REGION=us-east-2
+export AWS_DEFAULT_REGION=us-east-1
 ```
 
 **AWS CLI** (recommended for local development):
@@ -50,7 +50,7 @@ RadiObject.from_niftis(
 
 ## Configuration
 
-Configure S3 region and other settings:
+Configure S3 region and other settings. For the full list of S3Config options, see [Configuration: S3Config](../reference/configuration.md#s3config).
 
 ```python
 from radiobject import configure, S3Config

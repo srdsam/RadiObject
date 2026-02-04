@@ -32,7 +32,7 @@ Use TileDB query conditions to filter subjects efficiently:
 
 ```python
 # Filter during read (more efficient than pandas filtering)
-obs = radi.obs_meta.read(query_condition="age > 40 and diagnosis == 'tumor'")
+obs = radi.obs_meta.read(value_filter="age > 40 and diagnosis == 'tumor'")
 
 # Or use RadiObject filter (returns view)
 subset = radi.filter("split == 'train'")
@@ -52,18 +52,20 @@ print(vol_obs.head())
 # Common columns: obs_id, obs_subject_id, voxel_spacing, shape, orientation
 ```
 
-### Per-Volume Attributes
+### Per-Volume Properties
 
-Individual volumes expose metadata as properties:
+Individual volumes expose properties directly:
 
 ```python
 vol = radi.T1w.iloc[0]
 
-# Access volume properties
-print(vol.shape)          # (240, 240, 155)
-print(vol.voxel_spacing)  # (1.0, 1.0, 1.0)
-print(vol.obs_id)         # "BraTS001_T1w"
+print(vol.shape)              # (240, 240, 155)
+print(vol.obs_id)             # "BraTS001_T1w"
+print(vol.tile_orientation)   # SliceOrientation.AXIAL
+print(vol.orientation_info)   # OrientationInfo(axcodes=('R', 'A', 'S'), ...)
 ```
+
+For volume-level attributes like `voxel_spacing`, query the collection's obs metadata (see above).
 
 ## Joining Metadata
 
@@ -119,8 +121,11 @@ for sid in radi.obs_subject_ids:
         print(f"{sid} missing FLAIR")
 ```
 
+## Next Step
+
+**Know which subjects you want?** Filter and access them with [Indexing & Filtering](query-filter-data.md), then read individual volumes with [Volume Operations](volume-operations.md).
+
 ## Related Documentation
 
-- [Query & Filter](query-filter-data.md) - Filter subjects using metadata
 - [Ingest Data](ingest-data.md) - How metadata is populated during ingestion
 - [Dataframe API](../api/dataframe.md) - TileDB DataFrame reference

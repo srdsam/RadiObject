@@ -17,6 +17,7 @@ from radiobject.ctx import (
     tdb_ctx,
 )
 from radiobject.dataframe import Dataframe
+from radiobject.indexing import Index, align
 from radiobject.radi_object import RadiObject
 from radiobject.stats import CacheStats, S3Stats, TileDBStats
 from radiobject.utils import delete_tiledb_uri, uri_exists
@@ -30,6 +31,8 @@ __all__ = [
     "Volume",
     "VolumeCollection",
     "Dataframe",
+    "Index",
+    "align",
     # Configuration functions
     "configure",
     "radi_cfg",

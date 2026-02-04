@@ -205,7 +205,7 @@ class RadiObject:
     @property
     def obs_subject_ids(self) -> list[str]:
         """All obs_subject_id values in index order."""
-        return list(self._index.keys)
+        return self._index.to_list()
 
     @property
     def index(self) -> Index:
@@ -241,6 +241,10 @@ class RadiObject:
     def loc(self) -> _SubjectLocIndexer:
         """Label-based indexing for selecting subjects by obs_subject_id."""
         return _SubjectLocIndexer(self)
+
+    def sel(self, *, subject: str | list[str]) -> RadiObject:
+        """Select subjects by obs_subject_id. Named-parameter alias for .loc[]."""
+        return self.loc[subject]
 
     def collection(self, name: str) -> VolumeCollection:
         """Get a VolumeCollection by name."""
@@ -598,19 +602,14 @@ class RadiObject:
     def _index(self) -> Index:
         """Cached bidirectional index for obs_subject_id lookups."""
         if self.is_view:
-            # Build index from filtered subject_ids
             if self._subject_ids is not None:
-                # Preserve order from root
-                root_ids = self._root.obs_subject_ids
-                filtered = [sid for sid in root_ids if sid in self._subject_ids]
-                return Index.build(filtered)
+                return self._root._index.intersection(self._subject_ids)
             return self._root._index
         n = self._metadata.get("subject_count", 0)
         if n == 0:
-            return Index.build([])
-        # Only load the index column for efficiency
+            return Index.build([], name="obs_subject_id")
         data = self.obs_meta.read(columns=["obs_subject_id"])
-        return Index.build(list(data["obs_subject_id"]))
+        return Index.build(list(data["obs_subject_id"]), name="obs_subject_id")
 
     def _effective_ctx(self) -> tiledb.Ctx:
         if self._source is not None:
@@ -663,14 +662,13 @@ class RadiObject:
 
     def _filter_by_indices(self, indices: list[int]) -> RadiObject:
         """Create a view filtered to specific subject indices."""
-        subject_ids = frozenset(self._index.get_key(i) for i in indices)
+        subject_ids = self._index.take(indices).to_set()
         return self._create_view(subject_ids=subject_ids)
 
     def _filter_by_subject_ids(self, obs_subject_ids: list[str]) -> RadiObject:
         """Create a view filtered to specific obs_subject_ids."""
-        current_ids = set(self._index.keys)
         for sid in obs_subject_ids:
-            if sid not in current_ids:
+            if sid not in self._index:
                 raise KeyError(f"obs_subject_id '{sid}' not found")
         return self._create_view(subject_ids=frozenset(obs_subject_ids))
 

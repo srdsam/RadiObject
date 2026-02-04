@@ -446,10 +446,14 @@ Where:
 | Term | Definition |
 |------|------------|
 | **index** | Public property exposing the bidirectional Index for ID/position lookups (e.g., `radi.index.get_index("sub-01")`, `radi.index.get_key(0)`, `radi.index.keys`) |
-| **Index** | Immutable dataclass providing bidirectional mapping between string IDs and integer positions. Methods: `get_index(key)`, `get_key(idx)`, `keys` property |
+| **Index** | Immutable named dataclass providing bidirectional mapping between string IDs and integer positions. Supports set algebra (`&`, `\|`, `-`, `^`), positional selection (`take`, `mask`), alignment checking (`is_aligned`), and conversion (`to_set`, `to_list`). Display: `Index('obs_subject_id', 63 keys)` |
+| **align()** | Standalone function computing the intersection of multiple Index objects, preserving order from the first. Usage: `common = align(idx_a, idx_b, idx_c)` |
 | **iloc** | Integer-location based indexer for selecting subjects (RadiObject) or volumes (VolumeCollection) by position |
 | **loc** | Label-based indexer for selecting by obs_subject_id (RadiObject) or obs_id (VolumeCollection) |
 | **__iter__ (VolumeCollection)** | Iterator yielding Volume objects in index order. Enables `for vol in collection:` syntax |
+| **sel()** | Named-parameter selection by obs_subject_id. On RadiObject: `radi.sel(subject="sub-01")` returns view. On VolumeCollection: `coll.sel(subject="sub-01")` returns Volume (single match) or VolumeCollection view (multiple). Alias for `.loc[]` resolved via obs_subject_id |
+| **subjects** | VolumeCollection cached property returning an `Index(name="obs_subject_id")` of deduplicated subject IDs in insertion order. Enables set operations: `radi.T1w.subjects & radi.seg.subjects` |
+| **groupby_subject()** | VolumeCollection iterator yielding `(subject_id, VolumeCollection)` pairs grouped by obs_subject_id in subject order |
 | **boolean mask indexing** | Filtering using a numpy boolean array (e.g., `radi.iloc[mask]` where mask is `np.ndarray[bool]`) |
 | **filter()** | Filter subjects using TileDB QueryCondition expression on obs_meta (e.g., `radi.filter("age > 40")`) |
 | **__getitem__** | Bracket indexing for RadiObject subjects by obs_subject_id. Alias for .loc[] (e.g., `radi["BraTS001"]`) |
@@ -560,14 +564,13 @@ Where:
 | **count_nonzero_voxels** | Helper function counting non-zero voxels in label mask |
 | **unique_label_count** | Helper function counting unique non-zero labels in mask |
 | **ProcessedVolume** | Dataclass containing processed volume data with derived labels and shape metadata |
-| **image_dir** | from_niftis param specifying directory containing image NIfTIs |
-| **label_dir** | from_niftis param specifying optional directory containing label NIfTIs |
+| **images** | `from_niftis` param: dict mapping collection names to NIfTI sources (glob, directory, or list of tuples) |
 
 ### RadiObject ML Training Terminology
 
 | Term | Definition |
 |------|------------|
-| **RadiObjectDataset** | PyTorch Dataset wrapping RadiObject for training, supports full_volume, patch, and slice_2d loading modes. Validates subject alignment when multiple modalities are specified |
+| **VolumeCollectionDataset** | PyTorch Dataset wrapping VolumeCollection(s) for training, supports full_volume, patch, and slice_2d loading modes. Validates subject alignment for multi-modal training |
 | **VolumeReader** | Thread-safe wrapper for reading volumes from VolumeCollection with per-worker TileDB contexts |
 | **LoadingMode** | Enum specifying data loading strategy: FULL_VOLUME, PATCH, or SLICE_2D |
 | **DatasetConfig** | Pydantic model configuring dataset behavior (loading_mode, patch_size, modalities) |
@@ -577,10 +580,10 @@ Where:
 | **patches_per_volume** | Number of random patches extracted per volume per epoch (default: 1) |
 | **persistent_workers** | DataLoader setting to keep worker processes alive between epochs for faster iteration |
 | **pin_memory** | DataLoader setting to copy tensors into CUDA pinned memory for faster GPU transfer |
-| **RadiObjectSubjectsDataset** | TorchIO-compatible Dataset yielding tio.Subject objects for TorchIO Queue integration and patch-based training |
+| **VolumeCollectionSubjectsDataset** | TorchIO-compatible Dataset yielding tio.Subject objects for TorchIO Queue integration and patch-based training |
 | **Compose** | Transform composition utility. Uses MONAI Compose if available, falls back to TorchIO Compose, then minimal fallback |
-| **MONAI dict transforms** | MONAI transforms that operate on dict[str, Any] (e.g., NormalizeIntensityd, RandFlipd). Work directly with RadiObjectDataset output |
-| **TorchIO Subject transforms** | TorchIO transforms that operate on tio.Subject objects. Require RadiObjectSubjectsDataset for integration |
+| **MONAI dict transforms** | MONAI transforms that operate on dict[str, Any] (e.g., NormalizeIntensityd, RandFlipd). Work directly with VolumeCollectionDataset output |
+| **TorchIO Subject transforms** | TorchIO transforms that operate on tio.Subject objects. Require VolumeCollectionSubjectsDataset for integration |
 
 ### RadiObject Orientation Terminology
 

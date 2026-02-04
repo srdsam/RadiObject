@@ -439,6 +439,63 @@ class TestRadiObjectRoundtrip:
             assert set(vc_subject_ids) == set(subject_ids)
 
 
+class TestRadiObjectIndexName:
+    """Tests for Index name propagation."""
+
+    def test_index_has_obs_subject_id_name(self, populated_radi_object_module: RadiObject):
+        """RadiObject index has name='obs_subject_id'."""
+        assert populated_radi_object_module.index.name == "obs_subject_id"
+
+    def test_index_repr(self, populated_radi_object_module: RadiObject):
+        """Index repr shows name and count."""
+        assert "obs_subject_id" in repr(populated_radi_object_module.index)
+        assert "3 keys" in repr(populated_radi_object_module.index)
+
+
+class TestRadiObjectSel:
+    """Tests for .sel(subject=...) method."""
+
+    def test_sel_single_subject(self, populated_radi_object_module: RadiObject):
+        """sel(subject=str) returns single-subject RadiObject view."""
+        subject_id = populated_radi_object_module.obs_subject_ids[1]
+        view = populated_radi_object_module.sel(subject=subject_id)
+        assert isinstance(view, RadiObject)
+        assert view.is_view
+        assert len(view) == 1
+        assert view.obs_subject_ids == [subject_id]
+
+    def test_sel_list_subjects(self, populated_radi_object_module: RadiObject):
+        """sel(subject=list) returns multi-subject RadiObject view."""
+        subject_ids = populated_radi_object_module.obs_subject_ids
+        view = populated_radi_object_module.sel(subject=[subject_ids[0], subject_ids[2]])
+        assert len(view) == 2
+        assert view.obs_subject_ids == [subject_ids[0], subject_ids[2]]
+
+    def test_sel_nonexistent_raises(self, populated_radi_object_module: RadiObject):
+        """sel(subject='NONEXISTENT') raises KeyError."""
+        with pytest.raises(KeyError):
+            populated_radi_object_module.sel(subject="NONEXISTENT")
+
+
+class TestRadiObjectCrossCollectionAlignment:
+    """Tests for cross-collection Index set operations."""
+
+    def test_collection_subjects_aligned(self, populated_radi_object_module: RadiObject):
+        """All collections' subjects should be aligned."""
+        names = populated_radi_object_module.collection_names
+        first = populated_radi_object_module.collection(names[0]).subjects
+        for name in names[1:]:
+            other = populated_radi_object_module.collection(name).subjects
+            assert first.is_aligned(other)
+
+    def test_cross_collection_intersection(self, populated_radi_object_module: RadiObject):
+        """Cross-collection subject intersection works."""
+        flair_subjects = populated_radi_object_module.collection("flair").subjects
+        t1w_subjects = populated_radi_object_module.collection("T1w").subjects
+        common = flair_subjects & t1w_subjects
+        assert len(common) == 3
+
+
 # ============================================================================
 # S3 Integration Tests (Essential subset - logic tested locally)
 # ============================================================================

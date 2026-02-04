@@ -14,7 +14,7 @@ For practical tuning recipes, see [Tuning Concurrency](../how-to/tuning-concurre
 
 ---
 
-RadiObject uses a global configuration pattern to manage TileDB settings. Configuration is organized into **write-time** settings (immutable after array creation) and **read-time** settings (affect all reads).
+RadiObject uses a global configuration pattern to manage [TileDB](https://docs.tiledb.com/main/how-to/configuration) settings. Configuration is organized into **write-time** settings (immutable after array creation) and **read-time** settings (affect all reads).
 
 ## Configuration Classes
 
@@ -62,11 +62,11 @@ Settings for reading TileDB arrays. Affects all reads.
 
 ### S3Config
 
-Cloud storage settings for S3 backends.
+Cloud storage settings for S3 backends. For practical setup steps (credentials, profiles, regions), see [S3 Setup](../how-to/s3-setup.md).
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `region` | `us-east-2` | AWS region |
+| `region` | `us-east-1` | AWS region |
 | `endpoint` | `None` | Custom endpoint URL (for MinIO, etc.) |
 | `max_parallel_ops` | 8 | Max concurrent S3 operations (`vfs.s3.max_parallel_ops`) |
 | `multipart_part_size_mb` | 50 | Multipart upload chunk size |
@@ -103,6 +103,8 @@ Controls anatomical orientation handling during ingestion.
 |---------|---------|-------------|
 | `canonical_target` | `"RAS"` | Target coordinate system |
 | `reorient_on_load` | `False` | Reorient volumes during ingestion |
+| `auto_detect` | `True` | Automatically detect orientation from file headers |
+| `store_original_affine` | `True` | Store original affine in metadata when reorienting |
 
 ## configure() API
 

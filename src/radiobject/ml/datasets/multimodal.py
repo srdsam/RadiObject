@@ -8,6 +8,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from radiobject.ml.utils.validation import validate_collection_alignment
+
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
     from radiobject.volume_collection import VolumeCollection
@@ -47,27 +49,7 @@ class MultiModalDataset(Dataset):
 
     def _validate_alignment(self) -> None:
         """Validate that all modalities have matching subjects."""
-        first_mod = self._modalities[0]
-        first_coll = self._collections[first_mod]
-
-        first_subjects = set(first_coll.obs_subject_ids)
-
-        for mod in self._modalities[1:]:
-            coll = self._collections[mod]
-            if len(coll) != self._n_volumes:
-                raise ValueError(
-                    f"Modality '{mod}' has {len(coll)} volumes, expected {self._n_volumes}"
-                )
-
-            mod_subjects = set(coll.obs_subject_ids)
-
-            if mod_subjects != first_subjects:
-                missing = first_subjects - mod_subjects
-                extra = mod_subjects - first_subjects
-                raise ValueError(
-                    f"Subject mismatch for modality '{mod}': "
-                    f"missing={list(missing)[:3]}, extra={list(extra)[:3]}"
-                )
+        validate_collection_alignment(self._collections)
 
     def _load_labels(
         self,

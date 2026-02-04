@@ -18,4 +18,5 @@ After reading the explanations, apply what you've learned:
 
 - [Tuning Concurrency](../how-to/tuning-concurrency.md) - Practical threading configuration
 - [ML Integration](../how-to/ml-training.md) - DataLoader worker setup
+- [Indexing & Filtering](../how-to/query-filter-data.md) - Data access patterns
 - [Configuration Reference](../reference/configuration.md) - All settings in one place

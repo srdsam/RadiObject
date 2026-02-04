@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from radiobject.indexing import Index
 from radiobject.volume import Volume
 from radiobject.volume_collection import VolumeCollection
 
@@ -328,3 +329,97 @@ class TestVolumeCollectionRoundtrip:
             assert vol.obs_id == obs_id
             row = populated_collection_module.get_obs_row_by_obs_id(obs_id)
             assert row["obs_id"].iloc[0] == obs_id
+
+
+class TestVolumeCollectionIndexName:
+    """Tests for Index name propagation."""
+
+    def test_index_has_obs_id_name(self, populated_collection_module: VolumeCollection):
+        """Collection index has name='obs_id'."""
+        assert populated_collection_module.index.name == "obs_id"
+
+    def test_index_repr(self, populated_collection_module: VolumeCollection):
+        """Index repr shows name and count."""
+        assert "obs_id" in repr(populated_collection_module.index)
+        assert "3 keys" in repr(populated_collection_module.index)
+
+
+class TestVolumeCollectionSubjects:
+    """Tests for .subjects property."""
+
+    def test_subjects_returns_index(self, populated_collection_module: VolumeCollection):
+        """subjects returns an Index with name='obs_subject_id'."""
+        subjects = populated_collection_module.subjects
+        assert isinstance(subjects, Index)
+        assert subjects.name == "obs_subject_id"
+
+    def test_subjects_correct_ids(self, populated_collection_module: VolumeCollection):
+        """subjects contains the correct obs_subject_ids."""
+        subjects = populated_collection_module.subjects
+        assert len(subjects) == 3
+        assert set(subjects.to_list()) == set(populated_collection_module.obs_subject_ids)
+
+    def test_subjects_order_matches_obs_subject_ids(
+        self, populated_collection_module: VolumeCollection
+    ):
+        """subjects preserves the order from obs_subject_ids (deduplicated)."""
+        subjects = populated_collection_module.subjects
+        obs_sids = populated_collection_module.obs_subject_ids
+        seen: set[str] = set()
+        unique: list[str] = []
+        for sid in obs_sids:
+            if sid not in seen:
+                seen.add(sid)
+                unique.append(sid)
+        assert subjects.to_list() == unique
+
+
+class TestVolumeCollectionSel:
+    """Tests for .sel(subject=...) method."""
+
+    def test_sel_single_subject_returns_volume(self, populated_collection_module: VolumeCollection):
+        """sel(subject=str) returns a Volume when exactly one match."""
+        subject_id = populated_collection_module.obs_subject_ids[0]
+        result = populated_collection_module.sel(subject=subject_id)
+        assert isinstance(result, Volume)
+
+    def test_sel_list_subjects_returns_view(self, populated_collection_module: VolumeCollection):
+        """sel(subject=list) returns a VolumeCollection view."""
+        subject_ids = list(set(populated_collection_module.obs_subject_ids[:2]))
+        result = populated_collection_module.sel(subject=subject_ids)
+        assert isinstance(result, VolumeCollection)
+        assert result.is_view
+
+    def test_sel_nonexistent_subject_raises(self, populated_collection_module: VolumeCollection):
+        """sel(subject='NONEXISTENT') raises KeyError."""
+        with pytest.raises(KeyError, match="not found"):
+            populated_collection_module.sel(subject="NONEXISTENT")
+
+    def test_sel_empty_list_raises(self, populated_collection_module: VolumeCollection):
+        """sel(subject=[]) with no matches raises KeyError."""
+        with pytest.raises(KeyError):
+            populated_collection_module.sel(subject=["NONEXISTENT_A", "NONEXISTENT_B"])
+
+
+class TestVolumeCollectionGroupbySubject:
+    """Tests for .groupby_subject() method."""
+
+    def test_groupby_subject_yields_tuples(self, populated_collection_module: VolumeCollection):
+        """groupby_subject yields (subject_id, VolumeCollection) pairs."""
+        groups = list(populated_collection_module.groupby_subject())
+        assert len(groups) == 3
+        for subject_id, view in groups:
+            assert isinstance(subject_id, str)
+            assert isinstance(view, VolumeCollection)
+            assert view.is_view
+
+    def test_groupby_subject_covers_all_volumes(
+        self, populated_collection_module: VolumeCollection
+    ):
+        """All volumes appear in exactly one group."""
+        all_obs_ids: set[str] = set()
+        for _, view in populated_collection_module.groupby_subject():
+            view_ids = set(view.obs_ids)
+            assert not all_obs_ids & view_ids
+            all_obs_ids |= view_ids
+        assert all_obs_ids == set(populated_collection_module.obs_ids)

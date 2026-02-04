@@ -1,38 +1,36 @@
 # How-to Guides
 
-Task-oriented guides for specific goals.
+Task-oriented guides organized by workflow stage. Follow the journey from ingestion through training, or jump to the guide you need.
 
-## Data Management
+## Ingest → Explore → Transform → Train
 
-| Task | Guide |
-|------|-------|
-| Ingest NIfTI/DICOM files | [Ingest Data](ingest-data.md) |
-| Filter and query subjects | [Query & Filter](query-filter-data.md) |
-| Build lazy ETL pipelines | [Lazy Queries](lazy-queries.md) |
+### 1. Get Data In
+
+| I want to... | Guide |
+|--------------|-------|
+| Ingest NIfTI/DICOM files or manage existing data | [Ingest Data](ingest-data.md) |
+| Write large datasets incrementally | [Streaming Writes](streaming-writes.md) / [Append Data](append-data.md) |
+
+**Next:** Once data is ingested, explore it with [Indexing & Filtering](query-filter-data.md).
+
+### 2. Explore & Access
+
+| I want to... | Guide |
+|--------------|-------|
+| Filter subjects, index by position or ID | [Indexing & Filtering](query-filter-data.md) |
 | Browse subject/volume metadata | [Working with Metadata](working-with-metadata.md) |
-| Write large datasets | [Streaming Writes](streaming-writes.md) |
-| Add subjects to existing data | [Append Data](append-data.md) |
+| Read slices, get statistics, or export to NIfTI | [Volume Operations](volume-operations.md) |
 
-## ML Training
+**Next:** For ETL or ML data prep, continue to [Lazy Pipelines](lazy-queries.md).
 
-| Task | Guide |
-|------|-------|
-| Use with MONAI/TorchIO | [ML Integration](ml-training.md) |
-| Tune worker concurrency | [Tuning Concurrency](tuning-concurrency.md) |
+### 3. Transform & Train
 
-## Infrastructure
+| I want to... | Guide |
+|--------------|-------|
+| Build ETL pipelines with transforms or streaming | [Lazy Pipelines](lazy-queries.md) |
+| Train with MONAI or TorchIO | [ML Integration](ml-training.md) |
+| Tune DataLoader and thread settings | [Tuning Concurrency](tuning-concurrency.md) |
 
-| Task | Guide |
-|------|-------|
-| Configure S3 storage | [S3 Setup](s3-setup.md) |
-| Profile performance | [Profiling](profiling.md) |
-| Download test datasets | [Datasets](datasets.md) |
-| Contribute to RadiObject | [Contributing](contributing.md) |
+### 4. Infrastructure
 
-## Guides by Experience Level
-
-**Getting started?** Begin with [Ingest Data](ingest-data.md) and [Query & Filter](query-filter-data.md).
-
-**Ready for ML?** See [ML Integration](ml-training.md) and [Tuning Concurrency](tuning-concurrency.md).
-
-**Scaling up?** Check [Streaming Writes](streaming-writes.md) and [S3 Setup](s3-setup.md).
+[S3 Setup](s3-setup.md) | [Profiling](profiling.md) | [Troubleshooting](troubleshooting.md) | [Datasets](datasets.md) | [Contributing](contributing.md)

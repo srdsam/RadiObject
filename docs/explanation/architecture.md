@@ -1,10 +1,10 @@
 # RadiObject Design
 
-Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes. For the directory structure mapping to this architecture, see [Layout](../reference/layout.md).
+Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes. The hierarchy maps to [TileDB](https://docs.tiledb.com/main/) primitives (Groups and Arrays). For the directory structure mapping to this architecture, see [Layout](../reference/layout.md).
 
 ## TileDB Structure
 
-The hierarchy maps to TileDB primitives (Groups and Arrays) with explicit dimensions and attributes:
+The entity hierarchy with explicit dimensions and attributes:
 
 ```
 RadiObject (TileDB Group)
@@ -105,6 +105,30 @@ RadiObject (TileDB Group)
 | **obs** | Sparse Array | `obs_subject_id`, `obs_id` | series_type, voxel_spacing, **dimensions**, etc. |
 | **Volume** | Dense Array | `x`, `y`, `z` [, `t`] | `voxels` (intensity values) |
 
+## Index
+
+`Index` is an immutable, named dataclass that provides bidirectional mapping between string IDs and integer positions. It is the public-facing object for working with ordered ID sequences in RadiObject.
+
+- **RadiObject.index**: `Index(name="obs_subject_id")` — subject-level ordering
+- **VolumeCollection.index**: `Index(name="obs_id")` — volume-level ordering
+- **VolumeCollection.subjects**: `Index(name="obs_subject_id")` — deduplicated subject IDs
+
+Index supports set algebra (`&`, `|`, `-`, `^`) with order preservation from the left operand, positional selection (`take`, `mask`), alignment checking (`is_aligned`), and subset/superset comparison (`<=`, `>=`). These operations enable concise cross-collection alignment validation and data splitting:
+
+```python
+# Verify modalities share the same subjects
+radi.T1w.subjects.is_aligned(radi.seg.subjects)  # True
+
+# Intersection preserving first-index order
+common = radi.T1w.subjects & radi.seg.subjects
+
+# Train/val split completeness check
+train.index | val.index  # all subjects
+train.index & val.index  # empty = no overlap
+```
+
+The standalone `align(*indexes)` function computes the intersection of multiple indexes, preserving order from the first.
+
 **Note on shapes:**
 
 - **Uniform collections**: `x_dim, y_dim, z_dim` stored in group metadata; `is_uniform=True`
@@ -133,85 +157,13 @@ The TileDB entities are a public property of each given entity. This allows dire
 
 Medical images encode spatial orientation via an **affine matrix** that maps voxel indices to physical (world) coordinates. RadiObject preserves this information and optionally standardizes orientation during ingestion.
 
-### Orientation Codes
+Orientation is described by three-letter codes (RAS, LPS, LAS) indicating which anatomical direction each axis points. See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-orientation) for terminology.
 
-Orientation is described by three letters indicating the direction each axis points:
-
-| Letter | Direction | Axis Points Toward |
-|--------|-----------|-------------------|
-| R / L | Right / Left | Patient's right or left |
-| A / P | Anterior / Posterior | Patient's front or back |
-| S / I | Superior / Inferior | Patient's head or feet |
-
-Common conventions:
-
-- **RAS** (neuroimaging standard): X→Right, Y→Anterior, Z→Superior
-- **LPS** (DICOM standard): X→Left, Y→Posterior, Z→Superior
-- **LAS**: X→Left, Y→Anterior, Z→Superior
-
-```
-           Superior (S)
-                ↑
-                |
-    Left (L) ←──┼──→ Right (R)
-                |
-                ↓
-           Inferior (I)
-
-         Anterior (A) = front
-         Posterior (P) = back
-```
-
-### Orientation Handling
-
-RadiObject detects orientation from file headers and stores it as metadata:
-
-```python
-vol = Volume.from_nifti(uri, "scan.nii.gz")
-
-# Access orientation info
-info = vol.orientation_info
-print(info.axcodes)      # ('R', 'A', 'S')
-print(info.source)       # 'nifti_sform' or 'dicom_iop'
-print(info.confidence)   # 'header', 'inferred', or 'unknown'
-```
-
-### Reorientation Options
-
-By default, RadiObject preserves original orientation. To standardize during ingestion:
-
-```python
-from radiobject import configure, WriteConfig, OrientationConfig
-
-# Reorient all ingested data to RAS
-configure(write=WriteConfig(
-    orientation=OrientationConfig(
-        reorient_on_load=True,
-        canonical_target="RAS"  # or "LAS", "LPS"
-    )
-))
-
-# Or per-volume
-vol = Volume.from_nifti(uri, "scan.nii.gz", reorient=True)
-```
-
-When reorienting, the original affine is preserved in metadata for provenance.
-
-### Tile Orientation vs Anatomical Orientation
-
-These are distinct concepts:
+**Tile orientation vs anatomical orientation** — these are distinct concepts:
 
 - **Anatomical orientation** (`orientation_info`): Physical coordinate system (RAS/LPS)
 - **Tile orientation** (`tile_orientation`): Storage chunking strategy for I/O performance
 
-```python
-vol = Volume.from_nifti(uri, "scan.nii.gz")
-
-# Anatomical: how axes map to patient anatomy
-vol.orientation_info.axcodes  # ('R', 'A', 'S')
-
-# Tile: how data is chunked on disk
-vol.tile_orientation  # SliceOrientation.AXIAL
-```
-
 Choose tile orientation based on access patterns (see [Benchmarks](../reference/benchmarks.md)), not anatomical convention.
+
+For reorientation configuration during ingestion, see [Ingest Data: Handling Orientation](../how-to/ingest-data.md#handling-orientation). For tile configuration options, see [Configuration: TileConfig](../reference/configuration.md#tileconfig).

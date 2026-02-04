@@ -83,17 +83,15 @@ def process_worker(uri):
     return vol.to_numpy()
 ```
 
-## PyTorch DataLoader Configuration
+## [PyTorch DataLoader](https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader) Configuration
 
 ### Small Datasets (<100 volumes)
 
 ```python
-from torch.utils.data import DataLoader
 from radiobject.ml import create_training_dataloader
 
 loader = create_training_dataloader(
-    radi,
-    modalities=["T1w"],
+    collections=radi.T1w,
     batch_size=4,
     num_workers=0,  # Main process - avoids IPC overhead
 )
@@ -107,8 +105,7 @@ loader = create_training_dataloader(
 
 ```python
 loader = create_training_dataloader(
-    radi,
-    modalities=["T1w", "FLAIR"],
+    collections=[radi.T1w, radi.FLAIR],  # Multi-modal: stacked as channels
     batch_size=16,
     num_workers=4,       # Parallel loading
     pin_memory=True,     # Faster GPU transfer
@@ -122,10 +119,9 @@ loader = create_training_dataloader(
 from radiobject.ml.distributed import create_distributed_dataloader
 
 loader = create_distributed_dataloader(
-    radi,
+    collections=radi.T1w,
     rank=rank,
     world_size=world_size,
-    modalities=["T1w"],
     batch_size=8,        # Per-GPU batch size
     num_workers=4,
 )
@@ -200,7 +196,7 @@ def bad_load(uri):
     return vol.to_numpy()
 
 # Right - shares context explicitly
-shared_ctx = ctx()
+shared_ctx = tdb_ctx()
 def good_load(uri):
     vol = Volume(uri, ctx=ctx_for_threads(shared_ctx))
     return vol.to_numpy()
@@ -244,6 +240,7 @@ with Pool(processes=4) as pool:
 
 ## Related Documentation
 
-- [Threading Model](../explanation/threading-model.md)
-- [Performance Analysis](../explanation/performance-analysis.md)
-- [ML Integration](ml-training.md)
+- [Configuration](../reference/configuration.md) - All configuration options and defaults
+- [Threading Model](../explanation/threading-model.md) - Context management architecture
+- [Performance Analysis](../explanation/performance-analysis.md) - Benchmark data and scaling
+- [ML Integration](ml-training.md) - DataLoader factory functions

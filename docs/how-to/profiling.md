@@ -13,14 +13,20 @@ with TileDBStats() as stats:
     vol = radi.T1w.iloc[0]
     data = vol.to_numpy()
 
-print(stats)  # Shows timing breakdown
+# Inspect cache and S3 statistics
+cache = stats.cache_stats()
+print(f"Cache hit rate: {cache.hit_rate:.1%}")
+
+# See all available counters for debugging
+counters = stats.all_counters()
+print(counters)
 ```
 
-The stats object provides detailed breakdowns including:
+The stats object provides structured access to:
 
-- Total read/write time
-- Tile fetch counts
-- Decompression time
+- Cache statistics (`cache_stats()`)
+- S3 statistics (`s3_stats()`)
+- Raw TileDB counters (`all_counters()`)
 
 ## CacheStats
 
@@ -73,9 +79,11 @@ print(f"Parallelization rate: {s3.parallelization_rate:.1%}")
 with TileDBStats() as stats:
     data = vol.to_numpy()
 
-# Check if decompression is the bottleneck
-print(f"Decompression time: {stats.decompression_time:.3f}s")
-print(f"I/O time: {stats.io_time:.3f}s")
+# Inspect raw TileDB counters for timing details
+counters = stats.all_counters()
+for key, value in sorted(counters.items()):
+    if value > 0:
+        print(f"{key}: {value}")
 ```
 
 ### Measuring Cache Hit Rates
@@ -120,11 +128,11 @@ Use this decision tree to identify and fix performance problems:
 
 ```
 Slow reads?
-├── Check cache hit rate
-│   ├── <60%? → Share TileDB contexts (see Scenario 3 below)
-│   └── >60%? → Check I/O vs decompression time
-│       ├── I/O dominant? → Increase max_parallel_ops (S3) or check disk
-│       └── Decompression dominant? → Lower compression level or use faster codec
+├── Check cache hit rate (stats.cache_stats().hit_rate)
+│   ├── <60%? → Share TileDB contexts across operations
+│   └── >60%? → Check all_counters() for read latency breakdown
+│       ├── Network/disk dominant? → Increase max_parallel_ops (S3) or check disk
+│       └── Consider lower compression level or faster codec (LZ4)
 │
 Slow S3 access?
 ├── Cold start >5s? → Expected for first connection
@@ -142,5 +150,6 @@ Memory issues (OOM)?
 
 ## Related Documentation
 
+- [Statistics API](../api/stats.md) - Full API reference for `TileDBStats`, `CacheStats`, `S3Stats`
 - [Performance Analysis](../explanation/performance-analysis.md) - Detailed benchmark data
 - [Tuning Concurrency](tuning-concurrency.md) - Optimize threading settings

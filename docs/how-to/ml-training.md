@@ -1,23 +1,23 @@
 # ML Integration
 
-RadiObject focuses on efficient data loading from TileDB/S3 with partial reads. Use MONAI or TorchIO for transforms and augmentation. For preprocessing concepts (normalization, augmentation), see the [Lexicon](../reference/lexicon.md#data-processing-concepts).
+RadiObject focuses on efficient data loading from TileDB/S3 with partial reads. Use [MONAI](https://docs.monai.io/en/stable/transforms.html) or [TorchIO](https://torchio.readthedocs.io/) for transforms and augmentation. For preprocessing concepts (normalization, augmentation), see the [Lexicon](../reference/lexicon.md#data-processing-concepts).
 
 ## Choosing a DataLoader
 
 | Approach | Best For | Framework |
 |----------|----------|-----------|
 | `create_training_dataloader()` | Standard training with dict transforms | MONAI |
-| `RadiObjectSubjectsDataset` | Patch-based training with queues | TorchIO |
+| `VolumeCollectionSubjectsDataset` | Patch-based training with queues | TorchIO |
 
 **Decision guide:**
 
 1. **Using MONAI dict transforms?** → Use `create_training_dataloader()`
-2. **Using TorchIO patch-based sampling?** → Use `RadiObjectSubjectsDataset` with `tio.Queue`
-3. **Custom dataset logic needed?** → Subclass `RadiObjectDataset`
+2. **Using TorchIO patch-based sampling?** → Use `VolumeCollectionSubjectsDataset` with `tio.Queue`
+3. **Custom dataset logic needed?** → Subclass `VolumeCollectionDataset`
 
 ## With MONAI Transforms
 
-RadiObjectDataset outputs `{"image": tensor, ...}` - compatible with MONAI dict transforms:
+`VolumeCollectionDataset` outputs `{"image": tensor, ...}` — compatible with MONAI dict transforms:
 
 ```python
 from monai.transforms import Compose, NormalizeIntensityd, RandFlipd
@@ -28,18 +28,18 @@ transform = Compose([
     RandFlipd(keys="image", prob=0.5, spatial_axis=[0, 1, 2]),
 ])
 
-loader = create_training_dataloader(radi, modalities=["CT"], transform=transform)
+loader = create_training_dataloader(collections=radi.CT, transform=transform)
 ```
 
 ## With TorchIO Transforms
 
-Use `RadiObjectSubjectsDataset` for TorchIO's Queue-based training:
+Use `VolumeCollectionSubjectsDataset` for TorchIO's Queue-based training:
 
 ```python
-from radiobject.ml import RadiObjectSubjectsDataset
+from radiobject.ml import VolumeCollectionSubjectsDataset
 import torchio as tio
 
-dataset = RadiObjectSubjectsDataset(radi, modalities=["T1w"])
+dataset = VolumeCollectionSubjectsDataset(collections=radi.T1w)
 transform = tio.Compose([tio.ZNormalization(), tio.RandomFlip()])
 queue = tio.Queue(dataset, max_length=100, samples_per_volume=10)
 ```
@@ -132,14 +132,15 @@ For complete API reference, see [ML Module API](../api/ml.md).
 
 ## Performance Notes
 
-**S3-backed training** adds latency (~100-200ms per volume) compared to local storage. For optimal performance:
+**S3-backed training** adds latency (~100-200ms per volume) compared to local storage. Use patch-based training to reduce I/O (64³ patch = 136x less data than full volume), and for small datasets (<100 volumes), use `num_workers=0` to avoid IPC overhead.
 
-- Configure worker concurrency: see [Tuning Concurrency](tuning-concurrency.md#pytorch-dataloader-configuration)
-- Use patch-based training to reduce I/O (64³ patch = 136× less data than full volume)
-- For small datasets (<100 volumes), use `num_workers=0` to avoid IPC overhead
+For worker/thread configuration recipes, see [Tuning Concurrency](tuning-concurrency.md). For detailed benchmarks and scaling analysis, see [Performance Analysis: ML Training](../explanation/performance-analysis.md#ml-training-performance).
 
-For detailed benchmarks and scaling analysis, see [ML Training Performance](../explanation/performance-analysis.md#ml-training-performance).
+## Next Step
 
-## Additional Resources
+**Training running but slow?** Tune worker counts and threading with [Tuning Concurrency](tuning-concurrency.md). For diagnosing bottlenecks, see [Profiling](profiling.md).
 
-See [Benchmarks](../reference/benchmarks.md) for performance comparisons.
+## Related Documentation
+
+- [Benchmarks](../reference/benchmarks.md) - Performance comparisons
+- [Volume Operations](volume-operations.md) - Partial reads for patch-based training

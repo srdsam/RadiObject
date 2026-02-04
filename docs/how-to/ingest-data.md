@@ -53,18 +53,6 @@ radi = RadiObject.from_niftis(
 | `reorient` | Reorient volumes to canonical orientation during ingestion |
 | `progress` | Show progress bar |
 
-## Legacy APIs
-
-These APIs are still supported for backwards compatibility:
-
-```python
-# Directory-based (single collection)
-radi = RadiObject.from_niftis(uri, image_dir="./data", collection_name="CT")
-
-# Tuple list with auto-grouping by modality
-radi = RadiObject.from_niftis(uri, niftis=[(path, subject_id), ...])
-```
-
 ## DICOM Ingestion
 
 For DICOM data, use `from_dicoms` which automatically extracts metadata and groups by modality:
@@ -72,10 +60,15 @@ For DICOM data, use `from_dicoms` which automatically extracts metadata and grou
 ```python
 radi = RadiObject.from_dicoms(
     uri="./dicom-dataset",
-    dicom_dir="./dicom_source",
+    dicom_dirs=[
+        ("./dicom/sub01/CT_HEAD", "sub-01"),
+        ("./dicom/sub02/CT_HEAD", "sub-02"),
+    ],
     progress=True,
 )
 ```
+
+Each tuple maps a DICOM directory to a subject ID. Collections are auto-grouped by modality and dimensions.
 
 ## Writing to S3
 
@@ -122,6 +115,56 @@ radi = RadiObject.from_niftis(uri, images={"CT": "./data"})
 
 See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-orientation) for terminology.
 
+## Managing Existing Data
+
+### Check If Data Exists
+
+Before ingesting, verify whether a TileDB object already exists at the target URI:
+
+```python
+from radiobject import uri_exists
+
+if uri_exists("s3://bucket/my-dataset"):
+    print("Dataset already exists")
+```
+
+### Delete and Reingest
+
+Remove an existing TileDB object to replace it:
+
+```python
+from radiobject import delete_tiledb_uri
+
+delete_tiledb_uri("s3://bucket/my-dataset")
+radi = RadiObject.from_niftis("s3://bucket/my-dataset", images={"CT": "./data"})
+```
+
+### Create from Existing VolumeCollections
+
+Assemble a RadiObject from pre-existing VolumeCollections — useful after materializing transformed collections:
+
+```python
+from radiobject import RadiObject
+
+# Collections already at expected sub-paths (no copy)
+ct = radi.CT.lazy().map(transform).materialize(uri=f"{URI}/collections/CT")
+seg = radi.seg.lazy().map(transform).materialize(uri=f"{URI}/collections/seg")
+
+new_radi = RadiObject.from_collections(
+    uri=URI,
+    collections={"CT": ct, "seg": seg},
+)
+
+# Collections from elsewhere (will be copied to target)
+new_radi = RadiObject.from_collections(
+    uri="./new-dataset",
+    collections={"T1w": existing_collection},
+    obs_meta=metadata_df,  # Optional; derived from collections if omitted
+)
+```
+
+For full API details, see [RadiObject API](../api/radi_object.md).
+
 ## Large Dataset Ingestion
 
 For datasets too large to fit in memory, use streaming writes:
@@ -129,7 +172,10 @@ For datasets too large to fit in memory, use streaming writes:
 - [Streaming Writes](streaming-writes.md) - Incremental writes with `StreamingWriter`
 - [Append Data](append-data.md) - Add subjects to existing RadiObjects
 
+## Next Step
+
+**Data ingested?** Explore it with [Indexing & Filtering](query-filter-data.md) — filter subjects, inspect collections, and access individual volumes.
+
 ## Related Documentation
 
-- [Query & Filter](query-filter-data.md) - Access ingested data
 - [Configuration](../reference/configuration.md) - Tile orientation, compression settings

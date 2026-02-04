@@ -2,61 +2,49 @@
 
 Add new subjects and volumes to existing RadiObjects without rebuilding from scratch.
 
-## Basic Append
+## RadiObject Append
 
-The `append()` method atomically adds new subjects:
+The `append()` method atomically adds new subjects from NIfTI files:
 
 ```python
 from radiobject import RadiObject
 import pandas as pd
 
-# Open existing RadiObject
 radi = RadiObject("./my-dataset")
 
-# Prepare new subject metadata
+# Prepare metadata for new subjects
 new_obs_meta = pd.DataFrame({
     "obs_subject_id": ["sub-100", "sub-101"],
     "age": [38, 45],
     "diagnosis": ["healthy", "tumor"],
 })
 
-# Prepare new volumes (dict mapping collection names to volume data)
-new_volumes = {
-    "T1w": {
-        "sub-100": load_volume("sub-100_T1w.nii.gz"),
-        "sub-101": load_volume("sub-101_T1w.nii.gz"),
-    },
-    "FLAIR": {
-        "sub-100": load_volume("sub-100_FLAIR.nii.gz"),
-        "sub-101": load_volume("sub-101_FLAIR.nii.gz"),
-    },
-}
-
-# Atomic append
-radi.append(obs_meta=new_obs_meta, volumes=new_volumes)
+# Append NIfTI files — tuples of (path, obs_subject_id)
+radi.append(
+    niftis=[
+        ("sub-100_T1w.nii.gz", "sub-100"),
+        ("sub-101_T1w.nii.gz", "sub-101"),
+    ],
+    obs_meta=new_obs_meta,
+    progress=True,
+)
 ```
 
-## Atomic Writes
+### Atomic Writes
 
-Appends are atomic: both `obs_meta` and volumes are written together to maintain referential integrity. If either write fails, the operation is rolled back.
+Appends are atomic: both `obs_meta` and volumes are written together to maintain referential integrity.
 
-## Cache Invalidation
+### Cache Invalidation
 
-After an append, cached properties are automatically invalidated:
+After an append, cached properties (`_index`, `_metadata`, `collection_names`) are automatically invalidated:
 
 ```python
 print(len(radi))  # Before: 50 subjects
 
-radi.append(obs_meta=new_obs_meta, volumes=new_volumes)
+radi.append(niftis=new_niftis, obs_meta=new_obs_meta)
 
 print(len(radi))  # After: 52 subjects (cache refreshed)
 ```
-
-Invalidated caches include:
-
-- `_index` - Subject index mapping
-- `_metadata` - Group metadata
-- `collection_names` - Available collections
 
 ## VolumeCollection Append
 
@@ -65,18 +53,14 @@ Append volumes directly to a VolumeCollection:
 ```python
 collection = radi.T1w
 
-# Append single volume
+# Append new NIfTI files
 collection.append(
-    data=volume_array,
-    obs_id="sub-102_T1w",
-    obs_subject_id="sub-102",
+    niftis=[
+        ("sub-102_T1w.nii.gz", "sub-102"),
+        ("sub-103_T1w.nii.gz", "sub-103"),
+    ],
+    progress=True,
 )
-
-# Append multiple volumes
-collection.append_batch([
-    {"data": arr1, "obs_id": "sub-103_T1w", "obs_subject_id": "sub-103"},
-    {"data": arr2, "obs_id": "sub-104_T1w", "obs_subject_id": "sub-104"},
-])
 ```
 
 ## Append to S3
@@ -85,7 +69,7 @@ Appending works with S3-backed RadiObjects:
 
 ```python
 radi = RadiObject("s3://bucket/my-dataset")
-radi.append(obs_meta=new_obs_meta, volumes=new_volumes)
+radi.append(niftis=new_niftis, obs_meta=new_obs_meta)
 ```
 
 For best S3 performance, configure parallel operations:
@@ -102,19 +86,18 @@ configure(s3=S3Config(max_parallel_ops=16))
 |----------|-----|
 | Adding a few subjects to existing data | `append()` |
 | Building new RadiObject from large source | [Streaming Writes](streaming-writes.md) |
-| Incremental pipeline output | `append()` in a loop |
 | Initial bulk ingestion | `from_niftis()` or `RadiObjectWriter` |
 
 ## Constraints
 
-1. **Existing collections only**: Append adds to existing collections. To add new collections, use `add_collection()` instead.
+1. **Existing collections only**: Append adds to existing collections. To add new collections, use `add_collection()`.
 
 2. **Subject ID uniqueness**: Appended `obs_subject_id` values must not already exist in the RadiObject.
 
-3. **Volume ID uniqueness**: Appended `obs_id` values must be unique across all collections.
+3. **obs_meta required**: New subjects require corresponding metadata in the `obs_meta` DataFrame.
 
 ## Related Documentation
 
 - [Streaming Writes](streaming-writes.md) - Build large RadiObjects incrementally
 - [Ingest Data](ingest-data.md) - Initial data ingestion
-- [Query & Filter](query-filter-data.md) - Access appended data
+- [Indexing & Filtering](query-filter-data.md) - Access appended data

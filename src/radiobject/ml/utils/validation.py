@@ -28,19 +28,17 @@ def validate_collection_alignment(collections: dict[str, VolumeCollection]) -> N
     first_name = names[0]
     first_coll = collections[first_name]
     n_volumes = len(first_coll)
-
-    first_subjects = set(first_coll.obs_subject_ids)
+    first_idx = first_coll.subjects
 
     for name in names[1:]:
         coll = collections[name]
         if len(coll) != n_volumes:
             raise ValueError(f"Collection '{name}' has {len(coll)} volumes, expected {n_volumes}")
 
-        mod_subjects = set(coll.obs_subject_ids)
-
-        if mod_subjects != first_subjects:
-            missing = first_subjects - mod_subjects
-            extra = mod_subjects - first_subjects
+        mod_idx = coll.subjects
+        if not first_idx.is_aligned(mod_idx):
+            missing = first_idx - mod_idx
+            extra = mod_idx - first_idx
             raise ValueError(
                 f"Subject mismatch for collection '{name}': "
                 f"missing={list(missing)[:3]}, extra={list(extra)[:3]}"

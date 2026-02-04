@@ -11,7 +11,7 @@ from radiobject import VolumeCollection
 from radiobject.streaming import StreamingWriter
 
 # Create collection incrementally
-with StreamingWriter("./large-collection", collection_name="CT") as writer:
+with StreamingWriter("./large-collection", name="CT") as writer:
     for path, subject_id in discover_niftis("./source"):
         data = load_nifti(path)
         writer.write_volume(
@@ -45,11 +45,13 @@ Write multiple volumes at once for better performance:
 
 ```python
 volumes = [
-    {"data": arr1, "obs_id": "vol1", "obs_subject_id": "sub1"},
-    {"data": arr2, "obs_id": "vol2", "obs_subject_id": "sub2"},
+    (arr1, "vol1", "sub1", {"voxel_spacing": (1.0, 1.0, 1.0)}),
+    (arr2, "vol2", "sub2", {"voxel_spacing": (1.0, 1.0, 1.0)}),
 ]
 writer.write_batch(volumes)
 ```
+
+Each tuple is `(data, obs_id, obs_subject_id, attrs_dict)`.
 
 ## RadiObjectWriter for Full RadiObjects
 
@@ -112,7 +114,7 @@ Streaming writers process one volume at a time, keeping memory usage constant:
 
 ```python
 # Memory-efficient processing of 10,000 volumes
-with StreamingWriter(uri, collection_name="CT") as writer:
+with StreamingWriter(uri, name="CT") as writer:
     for i, (path, subject_id) in enumerate(nifti_paths):
         data = nibabel.load(path).get_fdata()  # Load one volume
         writer.write_volume(data, obs_id=f"{subject_id}_CT", obs_subject_id=subject_id)
@@ -133,6 +135,7 @@ with StreamingWriter(uri, collection_name="CT") as writer:
 
 ## Related Documentation
 
+- [VolumeCollection API](../api/volume_collection.md) - Full `StreamingWriter` reference
 - [Append Data](append-data.md) - Add subjects to existing RadiObjects
 - [Ingest Data](ingest-data.md) - Standard ingestion APIs
 - [Tuning Concurrency](tuning-concurrency.md) - S3 write optimization

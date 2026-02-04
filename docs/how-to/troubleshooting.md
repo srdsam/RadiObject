@@ -33,8 +33,7 @@ If using long-running sessions, credentials may expire. Re-run the export comman
 
 ```python
 loader = create_training_dataloader(
-    radi,
-    modalities=["T1w"],
+    collections=radi.T1w,
     num_workers=0,  # Required on macOS with S3
 )
 ```
@@ -107,7 +106,7 @@ See [Threading Model](../explanation/threading-model.md) for details on context 
 
 3. **Reduce DataLoader workers:**
    ```python
-   loader = create_training_dataloader(radi, num_workers=2)
+   loader = create_training_dataloader(collections=radi.T1w, num_workers=2)
    ```
 
 4. **Use patch-based training** to avoid loading full volumes:
