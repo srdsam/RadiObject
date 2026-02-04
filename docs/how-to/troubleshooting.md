@@ -2,27 +2,6 @@
 
 Common issues and solutions when working with RadiObject.
 
-## S3 Credential Issues
-
-**Symptom:** Tests skip with "S3 bucket not accessible" or operations fail with `AccessDenied`.
-
-**Fix:** Export AWS credentials before running:
-
-```bash
-eval $(aws configure export-credentials --profile your-profile --format env)
-```
-
-Verify access:
-
-```python
-from radiobject import RadiObject
-
-radi = RadiObject("s3://your-bucket/dataset")
-print(radi.describe())
-```
-
-If using long-running sessions, credentials may expire. Re-run the export command.
-
 ## macOS DataLoader Workers with S3
 
 **Symptom:** Hang or crash when using `num_workers > 0` in PyTorch DataLoader with S3-backed data.
@@ -43,29 +22,6 @@ Alternatively, set the multiprocessing start method to `spawn`:
 ```python
 import torch.multiprocessing as mp
 mp.set_start_method("spawn", force=True)
-```
-
-## DICOM Ingestion Issues
-
-**Symptom:** `from_dicoms()` fails or produces unexpected results.
-
-Common causes:
-
-| Issue | Solution |
-|-------|----------|
-| Missing DICOM samples | Run `python scripts/download_dataset.py nsclc-radiomics` |
-| Mixed series in one directory | RadiObject groups by SeriesInstanceUID automatically |
-| Incomplete series | Check for missing slices; RadiObject logs warnings |
-| Non-standard DICOM tags | Verify files with `pydicom.dcmread()` first |
-
-## NIfTI Manifest Not Found
-
-**Symptom:** Tests skip with "NIfTI manifest not found".
-
-**Fix:** Download the required dataset:
-
-```bash
-python scripts/download_dataset.py msd-brain-tumour
 ```
 
 ## TileDB Context Errors
