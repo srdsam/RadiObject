@@ -1,6 +1,20 @@
 # Ingest Data
 
-RadiObject ingests NIfTI and DICOM files into TileDB arrays for efficient storage and retrieval.
+RadiObject ingests NIfTI and DICOM files into TileDB arrays for efficient storage and retrieval. For terminology (NIfTI, DICOM, voxel spacing), see the [Lexicon](../reference/lexicon.md).
+
+## Choosing an Ingestion Method
+
+| Method | Best For | Memory Requirement |
+|--------|----------|-------------------|
+| `RadiObject.from_niftis()` | Small-medium datasets (<1000 subjects) | Fits in memory |
+| `StreamingWriter` | Large single-collection datasets | Constant memory |
+| `RadiObjectWriter` | Complex multi-collection builds | Controlled batches |
+
+**Decision guide:**
+
+1. **Can all data fit in memory?** → Use `RadiObject.from_niftis()`
+2. **Single collection, too large for memory?** → Use `StreamingWriter`
+3. **Multiple collections with custom logic?** → Use `RadiObjectWriter`
 
 ## NIfTI Ingestion
 
@@ -76,6 +90,38 @@ RadiObject.from_niftis(
 ```
 
 See [S3 Setup](s3-setup.md) for AWS credential configuration.
+
+## Handling Orientation
+
+Medical images use coordinate systems (RAS, LPS, etc.) to map voxels to physical space. RadiObject can reorient volumes during ingestion.
+
+### Automatic Reorientation
+
+```python
+from radiobject import configure
+from radiobject.ctx import WriteConfig, OrientationConfig
+
+configure(write=WriteConfig(
+    orientation=OrientationConfig(
+        canonical_target="RAS",
+        reorient_on_load=True
+    )
+))
+
+# All subsequent ingestions will reorient to RAS
+radi = RadiObject.from_niftis(uri, images={"CT": "./data"})
+```
+
+### When to Reorient
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Multi-site studies with inconsistent scanner orientations | **Do reorient** |
+| Preserving original acquisition geometry matters | **Don't reorient** |
+| ML training (standardized input expected) | **Do reorient** |
+| Clinical review (radiologist expects native orientation) | **Don't reorient** |
+
+See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-orientation) for terminology.
 
 ## Large Dataset Ingestion
 

@@ -46,10 +46,6 @@ def ctx_for_process(base_ctx: tiledb.Ctx | None = None) -> tiledb.Ctx:
     return radi_cfg().to_tiledb_ctx()
 
 
-# Deprecation alias
-create_worker_ctx = ctx_for_process
-
-
 def map_on_threads(
     fn: Callable[[T], R],
     items: Iterable[T],

@@ -64,6 +64,7 @@ nav:
           - Ingest Data: how-to/ingest-data.md
           - Query & Filter: how-to/query-filter-data.md
           - Lazy Queries: how-to/lazy-queries.md
+          - Working with Metadata: how-to/working-with-metadata.md
           - Streaming Writes: how-to/streaming-writes.md
           - Append Data: how-to/append-data.md
       - ML Training:
@@ -71,6 +72,7 @@ nav:
           - Tuning Concurrency: how-to/tuning-concurrency.md
       - Infrastructure:
           - S3 Setup: how-to/s3-setup.md
+          - Profiling: how-to/profiling.md
           - Download Datasets: how-to/datasets.md
           - Contributing: how-to/contributing.md
 
@@ -81,8 +83,11 @@ nav:
           - RadiObject: api/radi_object.md
           - VolumeCollection: api/volume_collection.md
           - Volume: api/volume.md
+          - Dataframe: api/dataframe.md
           - Query: api/query.md
           - Context: api/ctx.md
+          - Statistics: api/stats.md
+          - ML: api/ml.md
       - Benchmarks: reference/benchmarks.md
       - Lexicon: reference/lexicon.md
       - Layout: reference/layout.md

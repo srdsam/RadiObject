@@ -57,8 +57,10 @@ RadiObject/
 │       ├── radi_object.md
 │       ├── volume_collection.md
 │       ├── volume.md
+│       ├── dataframe.md
 │       ├── query.md
-│       └── ctx.md
+│       ├── ctx.md
+│       └── stats.md
 ├── notebooks/
 │   ├── README.md                   # Tutorial setup guide
 │   ├── config.py                   # Tutorial configuration (URIs)

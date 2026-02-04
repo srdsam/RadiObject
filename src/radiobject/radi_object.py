@@ -900,10 +900,7 @@ class RadiObject:
     def from_niftis(
         cls,
         uri: str,
-        niftis: Sequence[tuple[str | Path, str]] | None = None,
-        image_dir: str | Path | None = None,
-        collection_name: str | None = None,
-        images: dict[str, str | Path | Sequence[tuple[str | Path, str]]] | None = None,
+        images: dict[str, str | Path | Sequence[tuple[str | Path, str]]],
         validate_alignment: bool = False,
         obs_meta: pd.DataFrame | None = None,
         reorient: bool | None = None,
@@ -915,25 +912,10 @@ class RadiObject:
         Ingestion stores volumes in their original dimensions without any
         preprocessing. Use `.lazy().map()` for post-hoc transformations.
 
-        Three input modes:
-
-        1. `images`: Dict mapping collection names to paths/globs/lists (recommended)
-        2. `niftis`: List of (path, subject_id) tuples (legacy)
-        3. `image_dir`: Directory-based discovery (legacy)
-
-        Collection organization:
-
-        - With images dict: each key becomes a collection
-        - With collection_name: all volumes go to that single collection
-        - Otherwise: auto-group by inferred modality (T1w, FLAIR, CT, etc.)
-
         Args:
             uri: Target URI for RadiObject.
             images: Dict mapping collection names to NIfTI sources. Sources can be
                 a glob pattern, directory path, or pre-resolved list of (path, subject_id).
-            niftis: List of (nifti_path, obs_subject_id) tuples (legacy).
-            image_dir: Directory containing image NIfTIs (legacy).
-            collection_name: Explicit name for collection (legacy).
             validate_alignment: If True, verify all collections have same subject IDs.
             obs_meta: Subject-level metadata. Must contain obs_subject_id column.
             reorient: Reorient to canonical orientation (None uses config default).
@@ -957,64 +939,11 @@ class RadiObject:
                     uri="./dataset",
                     images={"CT": "./imagesTr", "seg": "./labelsTr"},
                 )
-
-            Legacy: explicit collection name:
-
-                radi = RadiObject.from_niftis(
-                    uri="s3://bucket/raw",
-                    image_dir="./imagesTr",
-                    collection_name="lung_ct",
-                )
-
-            Legacy: auto-group by modality:
-
-                radi = RadiObject.from_niftis(
-                    uri="s3://bucket/raw",
-                    niftis=[
-                        ("sub01_T1w.nii.gz", "sub-01"),
-                        ("sub01_FLAIR.nii.gz", "sub-01"),
-                    ],
-                )
-                # Result: radi.T1w, radi.FLAIR collections
         """
         from radiobject.ingest import resolve_nifti_source
 
-        # --- NORMALIZE ALL INPUTS TO images DICT ---
-
-        if images is not None:
-            if niftis is not None or image_dir is not None or collection_name is not None:
-                raise ValueError("Cannot use 'images' with legacy parameters")
-            if not images:
-                raise ValueError("images dict cannot be empty")
-
-        elif image_dir is not None:
-            if niftis is not None:
-                raise ValueError("Cannot specify both 'niftis' and 'image_dir'")
-            from radiobject.ingest import discover_nifti_pairs
-
-            sources = discover_nifti_pairs(image_dir)
-            niftis = [(s.image_path, s.subject_id) for s in sources]
-
-            if collection_name:
-                images = {collection_name: niftis}
-            else:
-                modality_groups: dict[str, list[tuple[str | Path, str]]] = defaultdict(list)
-                for path, sid in niftis:
-                    series_type = infer_series_type(Path(path))
-                    modality_groups[series_type].append((path, sid))
-                images = dict(modality_groups)
-
-        elif niftis is not None:
-            if collection_name:
-                images = {collection_name: niftis}
-            else:
-                modality_groups: dict[str, list[tuple[str | Path, str]]] = defaultdict(list)
-                for path, sid in niftis:
-                    series_type = infer_series_type(Path(path))
-                    modality_groups[series_type].append((path, sid))
-                images = dict(modality_groups)
-        else:
-            raise ValueError("Must specify 'images', 'niftis', or 'image_dir'")
+        if not images:
+            raise ValueError("images dict cannot be empty")
 
         # --- SINGLE CODE PATH: Resolve images dict ---
 

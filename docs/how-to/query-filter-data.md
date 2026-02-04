@@ -2,6 +2,17 @@
 
 RadiObject provides pandas-like indexing and filtering for accessing stored data.
 
+## Choosing Your Approach
+
+| I want to... | Use | Guide |
+|--------------|-----|-------|
+| Explore data interactively | Direct filtering (`iloc`, `loc`, `filter()`) | This page |
+| Apply transforms (normalize, resample) | Lazy queries with `map()` | [Lazy Queries](lazy-queries.md) |
+| Stream large datasets without loading all | `iter_volumes()` / `iter_batches()` | [Lazy Queries - Materialization](lazy-queries.md#materialization-methods) |
+| Write filtered results to new storage | `materialize()` | [Lazy Queries](lazy-queries.md#materialize) |
+
+> **Rule of thumb**: Use direct filtering for exploration and debugging. Use lazy queries when you need transforms or memory-controlled streaming.
+
 ## Direct Indexing
 
 Direct indexing with `iloc`, `loc`, `head()`, `tail()`, `sample()`, and `filter()` returns lightweight views for immediate access:

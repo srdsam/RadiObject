@@ -10,7 +10,6 @@ import pytest
 
 from radiobject.parallel import (
     WriteResult,
-    create_worker_ctx,
     ctx_for_process,
     ctx_for_threads,
     map_on_threads,
@@ -84,15 +83,6 @@ class TestCtxForProcess:
         ctx = ctx_for_process(custom_tiledb_ctx)
         assert ctx is not None
         assert ctx is not custom_tiledb_ctx
-
-
-class TestCreateWorkerCtxAlias:
-    """Tests for deprecated create_worker_ctx alias."""
-
-    def test_alias_works(self):
-        """Deprecated alias still works."""
-        ctx = create_worker_ctx()
-        assert ctx is not None
 
 
 class TestWriteResult:

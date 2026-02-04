@@ -53,6 +53,7 @@ print(len(radi))  # After: 52 subjects (cache refreshed)
 ```
 
 Invalidated caches include:
+
 - `_index` - Subject index mapping
 - `_metadata` - Group metadata
 - `collection_names` - Available collections

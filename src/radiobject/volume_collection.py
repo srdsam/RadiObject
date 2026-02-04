@@ -59,6 +59,30 @@ def _write_volumes_parallel(
     return results
 
 
+def _generate_adjacent_uri(
+    source_uri: str,
+    name: str | None = None,
+    transform_fn: TransformFn | None = None,
+) -> str:
+    """Generate a URI adjacent to the source for materialization.
+
+    Naming priority: explicit name > transform __name__ > '_materialized' suffix.
+    """
+    parent = source_uri.rsplit("/", 1)[0]
+
+    if name:
+        return f"{parent}/{name}"
+
+    source_name = source_uri.rsplit("/", 1)[1]
+
+    if transform_fn is not None:
+        fn_name = getattr(transform_fn, "__name__", None)
+        if fn_name and fn_name != "<lambda>":
+            return f"{parent}/{source_name}_{fn_name}"
+
+    return f"{parent}/{source_name}_materialized"
+
+
 class _ILocIndexer:
     """Integer-location based indexer for VolumeCollection (like pandas .iloc)."""
 
@@ -322,7 +346,7 @@ class VolumeCollection:
 
     def materialize(
         self,
-        uri: str,
+        uri: str | None = None,
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
     ) -> VolumeCollection:
@@ -330,8 +354,16 @@ class VolumeCollection:
 
         Creates a new VolumeCollection at the target URI containing all volumes
         in this view. For views, only the filtered volumes are written.
+
+        Args:
+            uri: Target URI. If None, generates adjacent to source collection.
+            name: Collection name. Also used to derive URI when uri is None.
+            ctx: TileDB context.
         """
         from radiobject.streaming import StreamingWriter
+
+        if uri is None:
+            uri = _generate_adjacent_uri(self._root.uri, name=name)
 
         obs_ids = self._effective_obs_ids
         if not obs_ids:

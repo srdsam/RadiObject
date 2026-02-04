@@ -2,6 +2,20 @@
 
 For a quick reference of key benchmark numbers, see [Benchmarks](../reference/benchmarks.md).
 
+## Contents
+
+- [Test Suite Overview](#test-suite-overview)
+- [Framework Benchmark Results](#framework-benchmark-results)
+- [Performance Characteristics](#performance-characteristics)
+- [Scaling Analysis: 10,000+ Subjects](#scaling-analysis-10000-subjects)
+- [ML Training Performance](#ml-training-performance)
+- [Distributed Training Scalability (S3)](#distributed-training-scalability-s3)
+- [Cache and Threading Metrics](#cache-and-threading-metrics)
+- [Threading Architecture Analysis](#threading-architecture-analysis)
+- [Qualitative Performance Analysis](#qualitative-performance-analysis)
+
+---
+
 ## Test Suite Overview
 
 **Total Tests:** 349 core tests + 101 ML tests = 450 total
@@ -83,7 +97,7 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 | Axial slice | 3.4 | 206 | 60× |
 | Metadata lookup | 0.02 | 0.02 | 1× (after cold start) |
 
-**Key insight:** S3 adds ~150-200ms latency per slice operation. For batch processing, amortize this with parallel workers.
+**Key insight:** S3 adds ~150-200ms latency per slice operation. For batch processing, amortize this with parallel workers. For S3 setup and credential configuration, see [S3 Setup](../how-to/s3-setup.md).
 
 ### Storage Format Comparison
 
@@ -250,6 +264,7 @@ This is fundamental to any cloud storage system, not specific to RadiObject.
 | 100,000 | 20 | ~16 MB | <100ms |
 
 The obs_meta table scales well because TileDB DataFrames support:
+
 - Column projection (only load columns you need)
 - Row filtering (query subsets)
 - Indexed lookups on obs_subject_id
@@ -370,11 +385,13 @@ RadiObject is designed for scale through:
 5. **TileDB foundation:** Cloud-native, chunked, compressed storage
 
 For large-scale processing:
+
 - **Use parallel workers** when processing many volumes (8× speedup with 8 workers)
 - **Filter via metadata first** to minimize the number of volumes you read
 - **Cache locally** if you need repeated access to the same data
 
 A 10,000-subject multimodal radiology dataset (~1.4 TB) is well within the design envelope:
+
 - Single-subject queries: same latency as 3-subject dataset
 - Batch processing: scales linearly with worker count
 - Full dataset iteration: ~6 minutes with 8 parallel workers (vs ~50 min sequential)
@@ -489,11 +506,12 @@ _PROCESS_CTX_CACHE: dict[int, tiledb.Ctx] = {}
 def _get_ctx(self) -> tiledb.Ctx:
     pid = os.getpid()
     if pid not in _PROCESS_CTX_CACHE:
-        _PROCESS_CTX_CACHE[pid] = create_worker_ctx()
+        _PROCESS_CTX_CACHE[pid] = ctx_for_process()
     return _PROCESS_CTX_CACHE[pid]
 ```
 
 This enables:
+
 - Multi-worker DataLoaders within each node
 - Independent S3 connections per worker
 - No shared state between processes
@@ -523,6 +541,7 @@ for epoch in range(epochs):
 #### 3. No Shared Filesystem Required
 
 Unlike many distributed training setups, RadiObject + S3:
+
 - Does not require NFS, Lustre, or shared mounts
 - Each node independently accesses S3
 - TileDB handles concurrent reads natively
@@ -656,11 +675,13 @@ The RadiObject ML training system is designed for distributed training at scale:
 5. **Rely on TileDB tile cache:** No application-level InMemoryCache (removed to avoid OOM)
 
 **Practical scaling limits:**
+
 - Single node: ~10,000 subjects (I/O bound past this)
 - Multi-node (8×): ~100,000 subjects per epoch in reasonable time (~7 hours)
 - Patch-based training: 136× reduction in I/O enables much larger datasets
 
 For very large datasets (>100,000 subjects), consider:
+
 - Smaller patch sizes (64³ vs 128³)
 - High-bandwidth instances (p4d, p5)
 - Pre-processing to local NVMe for hot data
@@ -744,6 +765,7 @@ Analysis of `Volume.from_numpy()` write phases:
 | Metadata write | ~5% | obs_id, orientation, etc. |
 
 **Key insight:** Data write dominates. For S3, this is limited by:
+
 1. Network bandwidth (primary bottleneck)
 2. Number of parallel S3 operations
 3. Multipart upload part size
@@ -795,6 +817,7 @@ For PyTorch DataLoader with multi-worker loading:
 | >1000 volumes | 4-8 | I/O bound, more workers help |
 
 **Key findings:**
+
 - For small datasets, single-process (num_workers=0) is faster due to IPC serialization overhead
 - Each worker spawns a separate process with its own TileDB context (process-safe)
 - VolumeReader uses a process-level context cache keyed by `(pid, config_hash)`

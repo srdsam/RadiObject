@@ -24,6 +24,8 @@ configure(
 
 ### S3 Cloud Storage
 
+For AWS credential setup and general S3 guidance, see [S3 Setup](s3-setup.md).
+
 ```python
 from radiobject import configure
 from radiobject.ctx import ReadConfig, S3Config
@@ -133,7 +135,7 @@ loader = create_distributed_dataloader(
 
 ## Measuring Cache Performance
 
-Use `TileDBStats` to understand your workload's cache behavior:
+Use `TileDBStats` to understand your workload's cache behavior. For comprehensive profiling guidance including interpretation and common scenarios, see [Profiling](profiling.md).
 
 ```python
 from radiobject import TileDBStats

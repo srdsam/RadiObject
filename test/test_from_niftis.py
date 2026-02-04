@@ -49,6 +49,20 @@ def synthetic_nifti_files(temp_dir: Path) -> list[tuple[Path, str]]:
 
 
 @pytest.fixture
+def synthetic_nifti_images(
+    synthetic_nifti_files: list[tuple[Path, str]],
+) -> dict[str, list[tuple[Path, str]]]:
+    """Convert synthetic_nifti_files to images dict format grouped by series type."""
+    images: dict[str, list[tuple[Path, str]]] = {"T1w": [], "FLAIR": []}
+    for path, subject_id in synthetic_nifti_files:
+        if "T1w" in path.name:
+            images["T1w"].append((path, subject_id))
+        elif "FLAIR" in path.name:
+            images["FLAIR"].append((path, subject_id))
+    return images
+
+
+@pytest.fixture
 def mismatched_dim_niftis(temp_dir: Path) -> list[tuple[Path, str]]:
     """Create NIfTI files with mismatched dimensions."""
     niftis = []
@@ -220,14 +234,14 @@ class TestVolumeCollectionFromNiftis:
 
 
 class TestRadiObjectFromNiftis:
-    """Tests for RadiObject.from_niftis factory method with auto-grouping."""
+    """Tests for RadiObject.from_niftis factory method with images dict."""
 
-    def test_auto_groups_by_series_type(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+    def test_creates_collections_from_images_dict(
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
-        uri = str(temp_dir / "radi_auto_group")
+        uri = str(temp_dir / "radi_images_dict")
 
-        radi = RadiObject.from_niftis(uri=uri, niftis=synthetic_nifti_files)
+        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
 
         # Should have created T1w and FLAIR collections
         assert "T1w" in radi.collection_names
@@ -235,29 +249,29 @@ class TestRadiObjectFromNiftis:
         assert radi.n_collections == 2
 
     def test_each_collection_has_correct_volumes(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_volumes")
 
-        radi = RadiObject.from_niftis(uri=uri, niftis=synthetic_nifti_files)
+        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
 
         # Each collection should have 3 volumes (one per subject)
         assert len(radi.T1w) == 3
         assert len(radi.FLAIR) == 3
 
     def test_auto_generates_obs_meta(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_auto_meta")
 
-        radi = RadiObject.from_niftis(uri=uri, niftis=synthetic_nifti_files)
+        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
 
         obs_meta = radi.obs_meta.read()
         assert len(obs_meta) == 3  # 3 subjects
         assert set(obs_meta["obs_subject_id"]) == {"sub-01", "sub-02", "sub-03"}
 
     def test_user_provided_obs_meta(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_user_meta")
         obs_meta = pd.DataFrame(
@@ -270,7 +284,7 @@ class TestRadiObjectFromNiftis:
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
             obs_meta=obs_meta,
         )
 
@@ -279,7 +293,7 @@ class TestRadiObjectFromNiftis:
         assert "sex" in result_meta.columns
 
     def test_fk_constraint_valid(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_fk_valid")
         obs_meta = pd.DataFrame(
@@ -291,7 +305,7 @@ class TestRadiObjectFromNiftis:
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
             obs_meta=obs_meta,
         )
 
@@ -299,10 +313,10 @@ class TestRadiObjectFromNiftis:
         radi.validate()
 
     def test_fk_constraint_invalid_raises(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_fk_invalid")
-        # obs_meta only has sub-01, but niftis include sub-02 and sub-03
+        # obs_meta only has sub-01, but images include sub-02 and sub-03
         obs_meta = pd.DataFrame(
             {
                 "obs_subject_id": ["sub-01"],
@@ -313,12 +327,12 @@ class TestRadiObjectFromNiftis:
         with pytest.raises(ValueError, match="obs_subject_ids.*not found in obs_meta"):
             RadiObject.from_niftis(
                 uri=uri,
-                niftis=synthetic_nifti_files,
+                images=synthetic_nifti_images,
                 obs_meta=obs_meta,
             )
 
     def test_obs_meta_missing_column_raises(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_missing_col")
         # obs_meta without obs_subject_id column
@@ -331,22 +345,22 @@ class TestRadiObjectFromNiftis:
         with pytest.raises(ValueError, match="obs_subject_id"):
             RadiObject.from_niftis(
                 uri=uri,
-                niftis=synthetic_nifti_files,
+                images=synthetic_nifti_images,
                 obs_meta=obs_meta,
             )
 
-    def test_empty_niftis_raises(self, temp_dir: Path) -> None:
+    def test_empty_images_raises(self, temp_dir: Path) -> None:
         uri = str(temp_dir / "radi_empty")
 
-        with pytest.raises(ValueError, match="No NIfTI files found"):
-            RadiObject.from_niftis(uri=uri, niftis=[])
+        with pytest.raises(ValueError, match="images dict cannot be empty"):
+            RadiObject.from_niftis(uri=uri, images={})
 
     def test_metadata_captured_in_collection_obs(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_obs_meta")
 
-        radi = RadiObject.from_niftis(uri=uri, niftis=synthetic_nifti_files)
+        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
 
         t1w_obs = radi.T1w.obs.read()
         assert "voxel_spacing" in t1w_obs.columns
@@ -361,11 +375,11 @@ class TestRadiObjectValidation:
     """Tests for RadiObject.validate() FK constraint checking."""
 
     def test_validate_passes_on_valid_radi(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_validate")
 
-        radi = RadiObject.from_niftis(uri=uri, niftis=synthetic_nifti_files)
+        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
 
         # Should not raise
         radi.validate()
@@ -522,45 +536,6 @@ class TestImagesDictAPI:
         assert "patient-001" in radi.obs_subject_ids
         assert "patient-002" in radi.obs_subject_ids
 
-    def test_images_mutual_exclusivity_with_niftis(
-        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
-    ) -> None:
-        """Error when images combined with niftis."""
-        uri = str(temp_dir / "radi_mutual_niftis")
-
-        with pytest.raises(ValueError, match="Cannot use 'images' with legacy"):
-            RadiObject.from_niftis(
-                uri=uri,
-                images={"CT": multi_modality_dirs["images"]},
-                niftis=[("fake.nii.gz", "sub-01")],
-            )
-
-    def test_images_mutual_exclusivity_with_image_dir(
-        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
-    ) -> None:
-        """Error when images combined with image_dir."""
-        uri = str(temp_dir / "radi_mutual_dir")
-
-        with pytest.raises(ValueError, match="Cannot use 'images' with legacy"):
-            RadiObject.from_niftis(
-                uri=uri,
-                images={"CT": multi_modality_dirs["images"]},
-                image_dir=multi_modality_dirs["images"],
-            )
-
-    def test_images_mutual_exclusivity_with_collection_name(
-        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
-    ) -> None:
-        """Error when images combined with collection_name."""
-        uri = str(temp_dir / "radi_mutual_name")
-
-        with pytest.raises(ValueError, match="Cannot use 'images' with legacy"):
-            RadiObject.from_niftis(
-                uri=uri,
-                images={"CT": multi_modality_dirs["images"]},
-                collection_name="override",
-            )
-
     def test_images_empty_dict_raises(self, temp_dir: Path) -> None:
         """Error when images dict is empty."""
         uri = str(temp_dir / "radi_empty_images")
@@ -607,48 +582,3 @@ class TestImagesDictAPI:
                 },
                 validate_alignment=True,
             )
-
-
-class TestLegacyBackwardCompatibility:
-    """Ensure legacy APIs still work after adding images dict."""
-
-    def test_legacy_image_dir_still_works(
-        self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
-    ) -> None:
-        """Legacy image_dir parameter still creates RadiObject."""
-        uri = str(temp_dir / "radi_legacy_dir")
-
-        radi = RadiObject.from_niftis(
-            uri=uri,
-            image_dir=multi_modality_dirs["images"],
-            collection_name="lung_ct",
-        )
-
-        assert "lung_ct" in radi.collection_names
-        assert len(radi.lung_ct) == 3
-
-    def test_legacy_niftis_still_works(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
-    ) -> None:
-        """Legacy niftis parameter still creates RadiObject with auto-grouping."""
-        uri = str(temp_dir / "radi_legacy_niftis")
-
-        radi = RadiObject.from_niftis(uri=uri, niftis=synthetic_nifti_files)
-
-        assert "T1w" in radi.collection_names
-        assert "FLAIR" in radi.collection_names
-
-    def test_legacy_collection_name_grouping(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
-    ) -> None:
-        """Legacy collection_name forces all volumes to single collection."""
-        uri = str(temp_dir / "radi_legacy_coll")
-
-        radi = RadiObject.from_niftis(
-            uri=uri,
-            niftis=synthetic_nifti_files,
-            collection_name="all_scans",
-        )
-
-        assert radi.collection_names == ("all_scans",)
-        assert len(radi.all_scans) == 6  # 3 subjects * 2 modalities

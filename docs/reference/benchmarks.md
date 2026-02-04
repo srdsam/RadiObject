@@ -1,5 +1,7 @@
 # Benchmarking
 
+> Quick reference for benchmark results. For methodology, detailed analysis, and scaling behavior, see [Performance Analysis](../explanation/performance-analysis.md).
+
 **TL;DR**: RadiObject enables **200-660x faster** partial reads and native S3 access.
 
 ## Key Results
@@ -56,4 +58,16 @@ TileDB parallelizes tile decompression across cores—**2x better CPU utilizatio
 
 ---
 
-For detailed analysis including scaling projections, ML training performance, and optimization recommendations, see [Performance Analysis](../explanation/performance-analysis.md).
+## Detailed Analysis
+
+For methodology, detailed analysis, and scaling behavior:
+
+| Topic | Link |
+|-------|------|
+| Scaling to 10,000+ subjects | [Performance Analysis: Scaling](../explanation/performance-analysis.md#scaling-analysis-10000-subjects) |
+| ML training benchmarks | [Performance Analysis: ML Training](../explanation/performance-analysis.md#ml-training-performance) |
+| Distributed training (S3) | [Performance Analysis: Distributed](../explanation/performance-analysis.md#distributed-training-scalability-s3) |
+| Cache and threading metrics | [Performance Analysis: Cache/Threading](../explanation/performance-analysis.md#cache-and-threading-metrics) |
+| Why operations have their performance | [Performance Analysis: Qualitative](../explanation/performance-analysis.md#qualitative-performance-analysis) |
+
+For profiling your own workloads, see [Profiling](../how-to/profiling.md).

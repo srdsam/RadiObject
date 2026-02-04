@@ -71,10 +71,9 @@ class Volume:
 
     @property
     def tile_orientation(self) -> SliceOrientation | None:
-        """Tile slicing strategy used at array creation (None if missing/legacy)."""
+        """Tile slicing strategy used at array creation (None if missing)."""
         try:
-            # Support both new and legacy metadata keys
-            val = self._metadata.get("tile_orientation") or self._metadata.get("slice_orientation")
+            val = self._metadata.get("tile_orientation")
             return SliceOrientation(val) if val else None
         except (KeyError, ValueError):
             return None

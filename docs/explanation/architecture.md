@@ -1,6 +1,6 @@
 # RadiObject Design
 
-Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes.
+Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes. For the directory structure mapping to this architecture, see [Layout](../reference/layout.md).
 
 ## TileDB Structure
 
@@ -106,6 +106,7 @@ RadiObject (TileDB Group)
 | **Volume** | Dense Array | `x`, `y`, `z` [, `t`] | `voxels` (intensity values) |
 
 **Note on shapes:**
+
 - **Uniform collections**: `x_dim, y_dim, z_dim` stored in group metadata; `is_uniform=True`
 - **Heterogeneous collections**: No shape in group metadata; each volume's shape stored in `obs.dimensions`
 - **4D volumes**: Temporal dimension (`t`) is per-volume; not tracked at collection level
@@ -115,6 +116,7 @@ RadiObject (TileDB Group)
 Radiology datasets follow the DICOM hierarchy: patients undergo studies containing multiple series (acquisitions), each composed of instances (slices/frames). Volume dimensionality varies by acquisition type—structural scans are 3D while functional and diffusion data are 4D.
 
 Critically, **dimensions are irregular across a dataset**:
+
 - Different scanners produce different matrix sizes
 - Protocols vary by site and evolve over time
 - Preprocessing (resampling, registration) changes dimensions
@@ -142,6 +144,7 @@ Orientation is described by three letters indicating the direction each axis poi
 | S / I | Superior / Inferior | Patient's head or feet |
 
 Common conventions:
+
 - **RAS** (neuroimaging standard): X→Right, Y→Anterior, Z→Superior
 - **LPS** (DICOM standard): X→Left, Y→Posterior, Z→Superior
 - **LAS**: X→Left, Y→Anterior, Z→Superior
@@ -198,6 +201,7 @@ When reorienting, the original affine is preserved in metadata for provenance.
 ### Tile Orientation vs Anatomical Orientation
 
 These are distinct concepts:
+
 - **Anatomical orientation** (`orientation_info`): Physical coordinate system (RAS/LPS)
 - **Tile orientation** (`tile_orientation`): Storage chunking strategy for I/O performance
 

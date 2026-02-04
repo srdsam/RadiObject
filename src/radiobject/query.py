@@ -668,7 +668,7 @@ class CollectionQuery:
 
     def materialize(
         self,
-        uri: str,
+        uri: str | None = None,
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
     ) -> VolumeCollection:
@@ -677,8 +677,19 @@ class CollectionQuery:
         If a transform was set via map(), it is applied to each volume
         during materialization. If the transform changes volume shapes,
         the output collection becomes heterogeneous (shape=None).
+
+        Args:
+            uri: Target URI. If None, generates adjacent to source collection.
+            name: Collection name. Also used to derive URI when uri is None.
+            ctx: TileDB context.
         """
         from radiobject.streaming import StreamingWriter
+        from radiobject.volume_collection import _generate_adjacent_uri
+
+        if uri is None:
+            uri = _generate_adjacent_uri(
+                self._source.uri, name=name, transform_fn=self._transform_fn
+            )
 
         volume_mask = self._resolve_volume_mask()
         if not volume_mask:

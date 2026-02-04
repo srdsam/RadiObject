@@ -1,5 +1,19 @@
 # Configuration Reference
 
+## Quick Links by Task
+
+| I want to configure... | See |
+|------------------------|-----|
+| Tile chunking (AXIAL vs ISOTROPIC) | [TileConfig](#tileconfig) |
+| Memory and thread concurrency | [ReadConfig](#readconfig) |
+| S3 cloud storage | [S3Config](#s3config) |
+| Anatomical orientation | [OrientationConfig](#orientationconfig) |
+| Compression algorithm | [CompressionConfig](#compressionconfig) |
+
+For practical tuning recipes, see [Tuning Concurrency](../how-to/tuning-concurrency.md).
+
+---
+
 RadiObject uses a global configuration pattern to manage TileDB settings. Configuration is organized into **write-time** settings (immutable after array creation) and **read-time** settings (affect all reads).
 
 ## Configuration Classes
@@ -141,18 +155,6 @@ See [Threading Model](../explanation/threading-model.md) for how contexts are ma
 | S3 parallel ops | `s3.max_parallel_ops` | 8 | Concurrent S3 operations |
 
 Tile size is auto-computed from array shape based on orientation. For example, `AXIAL` uses full X-Y slices with Z=1, `ISOTROPIC` uses 64³ chunks.
-
-## Legacy Flat API
-
-The flat API is deprecated but still supported. It maps to `write.*`:
-
-```python
-# Deprecated - still works
-configure(tile=TileConfig(orientation=SliceOrientation.AXIAL))
-
-# Prefer nested API
-configure(write=WriteConfig(tile=TileConfig(orientation=SliceOrientation.AXIAL)))
-```
 
 ## Related Documentation
 

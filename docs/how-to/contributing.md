@@ -1,5 +1,7 @@
 # Contributing
 
+See [Layout](../reference/layout.md) for codebase structure and file locations.
+
 ## Development Setup
 
 ```bash
@@ -24,6 +26,16 @@ uv run pytest -x           # Stop on first failure
 ```
 
 Tests require S3 access for integration tests. Set up AWS credentials per [S3 Setup](s3-setup.md).
+
+**Quick test setup:**
+
+```bash
+# Activate S3 credentials (required for integration tests)
+eval $(aws configure export-credentials --profile souzy-s3 --format env)
+
+# Download test datasets
+python scripts/download_dataset.py --all-tests
+```
 
 ## Running Benchmarks
 
@@ -80,3 +92,15 @@ uv run pre-commit run -a   # Run manually on all files
 | `scripts/` | Utility scripts |
 | `assets/` | Generated charts and images |
 | `data/` | Local test data (gitignored) |
+
+## Pull Request Workflow
+
+1. Create a feature branch from `main`
+2. Make changes and add tests
+3. Run linting and tests locally:
+   ```bash
+   uv run ruff check . --fix
+   uv run pytest test/ -v
+   ```
+4. Push and open a PR against `main`
+5. Ensure CI passes before requesting review

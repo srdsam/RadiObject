@@ -136,25 +136,23 @@ class TestDiscoverNiftiPairs:
 class TestRawIngestion:
     """Tests for RadiObject.from_niftis with raw data storage."""
 
-    def test_from_image_dir(self, temp_dir: Path, nifti_dir: Path) -> None:
+    def test_from_images_dict_with_directory(self, temp_dir: Path, nifti_dir: Path) -> None:
         uri = str(temp_dir / "radi_from_dir")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            image_dir=nifti_dir,
+            images={"lung_ct": nifti_dir},
         )
 
         assert len(radi) == 3
-        # lung_xxx files infer to CT modality
-        assert "CT" in radi.collection_names
+        assert "lung_ct" in radi.collection_names
 
     def test_explicit_collection_name(self, temp_dir: Path, nifti_dir: Path) -> None:
         uri = str(temp_dir / "radi_named")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            image_dir=nifti_dir,
-            collection_name="lung_ct",
+            images={"lung_ct": nifti_dir},
         )
 
         assert "lung_ct" in radi.collection_names
@@ -165,8 +163,7 @@ class TestRawIngestion:
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            image_dir=mixed_shape_niftis,
-            collection_name="mixed",
+            images={"mixed": mixed_shape_niftis},
         )
 
         vc = radi.collection("mixed")
@@ -180,8 +177,7 @@ class TestRawIngestion:
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            image_dir=nifti_dir,
-            collection_name="ct",
+            images={"ct": nifti_dir},
         )
 
         vc = radi.collection("ct")
@@ -189,32 +185,21 @@ class TestRawIngestion:
         assert vc.is_uniform is True
         assert vc.shape == (32, 32, 16)
 
-    def test_mutually_exclusive_inputs(self, temp_dir: Path, nifti_dir: Path) -> None:
-        uri = str(temp_dir / "radi_error")
-        nifti_path = list(nifti_dir.glob("*.nii.gz"))[0]
-
-        with pytest.raises(ValueError, match="Cannot specify both"):
-            RadiObject.from_niftis(
-                uri=uri,
-                niftis=[(nifti_path, "sub-01")],
-                image_dir=nifti_dir,
-            )
-
-    def test_requires_some_input(self, temp_dir: Path) -> None:
+    def test_images_dict_required(self, temp_dir: Path) -> None:
         uri = str(temp_dir / "radi_no_input")
 
-        with pytest.raises(ValueError, match="Must specify"):
+        with pytest.raises(TypeError):
             RadiObject.from_niftis(uri=uri)
 
-    def test_original_niftis_api(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+    def test_images_dict_with_tuples(
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
-        """Verify tuple-based API works."""
-        uri = str(temp_dir / "radi_original")
+        """Verify images dict with pre-resolved tuples works."""
+        uri = str(temp_dir / "radi_images")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
         )
 
         assert len(radi) == 3
@@ -228,13 +213,13 @@ class TestObsIdUniqueness:
     """Tests for obs_id uniqueness across RadiObject."""
 
     def test_all_obs_ids_property(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_obs_ids")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
         )
 
         # Should have 6 volumes (3 subjects × 2 modalities)
@@ -244,13 +229,13 @@ class TestObsIdUniqueness:
         assert len(set(all_ids)) == 6
 
     def test_get_volume_by_obs_id(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_get_vol")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
         )
 
         # Get first obs_id from T1w collection
@@ -262,13 +247,13 @@ class TestObsIdUniqueness:
         assert vol.to_numpy().shape == (32, 32, 16)
 
     def test_get_volume_not_found(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_not_found")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
         )
 
         with pytest.raises(KeyError, match="not found"):
@@ -282,13 +267,13 @@ class TestRenameCollection:
     """Tests for RadiObject.rename_collection()."""
 
     def test_rename_collection(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_rename")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
         )
 
         assert "T1w" in radi.collection_names
@@ -298,26 +283,26 @@ class TestRenameCollection:
         assert "T1w" not in radi.collection_names
 
     def test_rename_nonexistent_raises(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_rename_err")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
         )
 
         with pytest.raises(KeyError, match="not found"):
             radi.rename_collection("nonexistent", "new_name")
 
     def test_rename_to_existing_raises(
-        self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
+        self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_rename_dup")
 
         radi = RadiObject.from_niftis(
             uri=uri,
-            niftis=synthetic_nifti_files,
+            images=synthetic_nifti_images,
         )
 
         with pytest.raises(ValueError, match="already exists"):
@@ -347,3 +332,17 @@ def synthetic_nifti_files(temp_dir: Path) -> list[tuple[Path, str]]:
             niftis.append((filepath, subject_id))
 
     return niftis
+
+
+@pytest.fixture
+def synthetic_nifti_images(
+    synthetic_nifti_files: list[tuple[Path, str]],
+) -> dict[str, list[tuple[Path, str]]]:
+    """Convert synthetic_nifti_files to images dict format grouped by series type."""
+    images: dict[str, list[tuple[Path, str]]] = {"T1w": [], "FLAIR": []}
+    for path, subject_id in synthetic_nifti_files:
+        if "T1w" in path.name:
+            images["T1w"].append((path, subject_id))
+        elif "FLAIR" in path.name:
+            images["FLAIR"].append((path, subject_id))
+    return images

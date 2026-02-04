@@ -100,6 +100,7 @@ for batch in radi.lazy().filter("split == 'train'").iter_batches(batch_size=32):
 ```
 
 The `VolumeBatch` dataclass contains:
+
 - `volumes`: Dict mapping collection names to stacked numpy arrays `(N, X, Y, Z)`
 - `subject_ids`: List of subject IDs in the batch
 
@@ -149,6 +150,7 @@ for vol in query.iter_volumes():
 | ETL pipelines | **Lazy** | Streaming, composable |
 
 For most use cases, direct filtering is sufficient. Use `lazy()` only when you need:
+
 - Transforms via `map()`
 - Memory-controlled streaming via `iter_batches()`
 - Complex pipelines with deferred execution

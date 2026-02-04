@@ -1,6 +1,6 @@
 # TileDB Configuration System
 
-## Core Configuration Classes (tiledb-py)
+## Configuration Classes (tiledb-py)
 
 **`tiledb.Config`** - A dictionary-like object holding configuration parameters:
 ```python
@@ -14,46 +14,39 @@ cfg["sm.compute_concurrency_level"] = "4"
 ctx = tiledb.Ctx(cfg)  # Thread pools allocated here
 ```
 
-## Key Configuration Parameters
+## Key TileDB Parameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `sm.compute_concurrency_level` | # CPU cores | Thread pool for compute-bound tasks |
-| `sm.io_concurrency_level` | # CPU cores | Thread pool for I/O-bound tasks |
-| `sm.memory_budget` | 5GB | Memory cap for fixed-length attributes |
-| `sm.memory_budget_var` | 10GB | Memory cap for variable-length attributes |
-| `vfs.s3.max_parallel_ops` | 8 | Max concurrent S3 operations |
-| `vfs.s3.multipart_part_size` | 5MB | Multipart upload chunk size |
+For complete configuration details, see [Configuration Reference](../reference/configuration.md).
+
+Key TileDB parameters that affect threading:
+
+- `sm.compute_concurrency_level` / `sm.io_concurrency_level` - Thread pool sizes
+- `sm.memory_budget` / `sm.memory_budget_var` - Memory limits for operations
+- `vfs.s3.max_parallel_ops` - Concurrent S3 operations
 
 Sources:
+
 - [TileDB Configuration Docs](https://docs.tiledb.com/main/how-to/configuration)
 - [TileDB Parallelism Docs](https://docs.tiledb.com/main/background/internal-mechanics/parallelism)
 
 ---
 
-## RadiObject's Current Integration
+## RadiObject's Integration
 
-### Configuration Architecture
+### Architecture
 
-```
-RadiObjectConfig (Pydantic)
-├── WriteConfig
-│   ├── TileConfig (orientation, tile extents)
-│   ├── CompressionConfig (algorithm, level)
-│   └── OrientationConfig (auto_detect, canonical_target)
-├── ReadConfig
-│   ├── memory_budget_mb (default: 1024)
-│   ├── concurrency (default: 4) → sm.compute/io_concurrency_level
-│   └── max_workers (default: 4) → Python ThreadPoolExecutor
-└── S3Config
-    ├── region, endpoint
-    ├── max_parallel_ops (default: 8)
-    └── multipart_part_size_mb (default: 50)
-```
+RadiObject's configuration is managed through nested Pydantic models.
+For the full configuration hierarchy and defaults, see [Configuration Reference](../reference/configuration.md).
 
-**Location:** `src/radiobject/ctx.py`
+Key threading-related settings:
+
+- `ReadConfig.concurrency` → TileDB thread pools (`sm.compute/io_concurrency_level`)
+- `ReadConfig.max_workers` → Python ThreadPoolExecutor
+- `S3Config.max_parallel_ops` → Concurrent S3 operations (`vfs.s3.max_parallel_ops`)
 
 ### Global State Management
+
+The internal `tdb_ctx()` function is exposed publicly as `ctx()`:
 
 ```python
 _config: RadiObjectConfig = RadiObjectConfig()  # Global config
@@ -65,6 +58,9 @@ def tdb_ctx() -> tiledb.Ctx:
     if _ctx is None:
         _ctx = _config.to_tiledb_ctx()
     return _ctx
+
+# Public API
+ctx = tdb_ctx  # Exposed as radiobject.ctx()
 ```
 
 ### Context Injection Pattern
@@ -112,7 +108,7 @@ RadiObject operates across **four concurrency layers**:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### TileDB Threading Model (Critical)
+### TileDB Threading Model
 
 From [TileDB Wiki - Threading Model](https://github.com/TileDB-Inc/TileDB/wiki/Threading-Model):
 
@@ -202,3 +198,5 @@ For benchmark results, see [Performance Analysis](performance-analysis.md).
 - [TileDB Concurrency & Consistency](https://tiledb-inc-tiledb.readthedocs-hosted.com/en/1.6.3/tutorials/concurrency-consistency.html)
 - [TileDB-Py Issue #247: Context Thread Safety](https://github.com/TileDB-Inc/TileDB-Py/issues/247)
 - [TileDB-Py Issue #440: Usage Tips](https://github.com/TileDB-Inc/TileDB-Py/issues/440)
+
+For TileDB terminology (contexts, tiles, arrays), see the [Lexicon](../reference/lexicon.md).

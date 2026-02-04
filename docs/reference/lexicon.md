@@ -415,6 +415,7 @@ Scan Time (3D) = TR × Phase Matrix × NEX × Number of Slices
 [1 ]   [0   0   0   1 ]   [1]
 
 Where:
+
 - (i,j,k) = voxel indices
 - (x',y',z') = real-world coordinates
 - r = rotation/scaling components
@@ -519,7 +520,7 @@ Where:
 
 | Term | Definition |
 |------|------------|
-| **from_niftis** | Factory method for bulk NIfTI ingestion with raw data storage (no preprocessing). Supports `images` dict (recommended), legacy `niftis` list, or `image_dir` modes |
+| **from_niftis** | Factory method for bulk NIfTI ingestion with raw data storage (no preprocessing). Takes `images` dict mapping collection names to NIfTI sources |
 | **images** | Recommended from_niftis param: dict mapping collection names to NIfTI sources (glob patterns, directories, or pre-resolved lists). Example: `{"CT": "./imagesTr/*.nii.gz", "seg": "./labelsTr"}` |
 | **validate_alignment** | Optional from_niftis param to verify all collections have matching subject IDs (useful for image/segmentation pairs) |
 | **from_dicoms** | Factory method for bulk DICOM ingestion with automatic metadata extraction and modality-based grouping |
@@ -605,7 +606,7 @@ Where:
 | **CompressionConfig** | Compression settings (algorithm, level). Part of WriteConfig |
 | **OrientationConfig** | Anatomical orientation settings (canonical_target, reorient_on_load). Part of WriteConfig |
 | **S3Config** | Cloud storage settings (region, endpoint, credentials). Applies to both read and write |
-| **configure()** | Global function to update configuration. Supports nested API (`write=WriteConfig(...)`) and deprecated flat API (`tile=TileConfig(...)`) |
+| **configure()** | Global function to update configuration. Takes optional `write`, `read`, and `s3` config objects |
 | **get_config()** | Returns current global RadiObjectConfig instance |
 | **ctx()** | Returns lazily-built TileDB context from current configuration |
 
