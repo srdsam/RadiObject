@@ -53,7 +53,7 @@ uv run jupyter nbconvert --execute --inplace benchmarks/framework_benchmark.ipyn
 cd benchmarks && uv run python run_benchmarks.py
 ```
 
-Benchmark outputs (charts, tables) are saved to `assets/benchmark/`.
+Benchmark outputs (charts, tables) are saved to `benchmarks/assets/`.
 
 ## Linting & Formatting
 
@@ -90,7 +90,6 @@ uv run pre-commit run -a   # Run manually on all files
 | `benchmarks/` | Performance benchmark suite |
 | `docs/` | Documentation |
 | `scripts/` | Utility scripts |
-| `assets/` | Generated charts and images |
 | `data/` | Local test data (gitignored) |
 
 ## Pull Request Workflow

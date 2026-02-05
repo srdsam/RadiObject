@@ -4,7 +4,7 @@
 
 **TL;DR**: RadiObject enables **200-660x faster** partial reads and native S3 access.
 
-![Benchmark Overview](../assets/benchmark/benchmark_hero.png)
+![Benchmark Overview](../benchmarks/assets/benchmark_hero.png)
 
 ## Key Results
 
@@ -16,7 +16,7 @@
 
 S3 partial reads are **5-16x faster** than local NIfTI frameworks because MONAI/TorchIO must decompress entire volumes.
 
-![Full Volume Load Times](../assets/benchmark/full_volume_load.png)
+![Full Volume Load Times](../benchmarks/assets/full_volume_load.png)
 
 ## Why the Difference?
 
@@ -32,7 +32,7 @@ TileDB: [tile][tile] → read 1 tile   → slice
 | NIfTI (.nii.gz) | 2.1 GB | No |
 | TileDB | 5.7 GB | Yes (local & S3) |
 
-![Disk Space Comparison](../assets/benchmark/disk_space_comparison.png)
+![Disk Space Comparison](../benchmarks/assets/disk_space_comparison.png)
 
 ## When to Use Each
 
@@ -53,7 +53,7 @@ TileDB: [tile][tile] → read 1 tile   → slice
 
 RadiObject reads only the tiles needed—slice extraction uses **912x less memory** than MONAI.
 
-![Memory by Backend](../assets/benchmark/memory_by_backend.png)
+![Memory by Backend](../benchmarks/assets/memory_by_backend.png)
 
 ## CPU Utilization
 

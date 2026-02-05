@@ -65,7 +65,7 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 
 **Key insight:** RadiObject with isotropic tiling is 3× faster than nibabel gzip, 6× faster than TorchIO, and 10× faster than MONAI for full volume loads.
 
-![Full Volume Load](../assets/benchmark/full_volume_load.png)
+![Full Volume Load](../benchmarks/assets/full_volume_load.png)
 
 ### 2D Slice Extraction (Single Axial Slice)
 
@@ -79,7 +79,7 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 
 **Key insight:** Axial tiling provides **656× speedup** for 2D slice extraction compared to MONAI (which must load the full volume). This is the primary use case for axial tiling.
 
-![Slice Extraction](../assets/benchmark/slice_extraction.png)
+![Slice Extraction](../benchmarks/assets/slice_extraction.png)
 
 ### 3D ROI Extraction (64³ Patch)
 
@@ -93,7 +93,7 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 
 **Key insight:** Isotropic tiling provides **558× speedup** for 3D patch extraction compared to MONAI. This is the primary use case for isotropic tiling.
 
-![ROI Extraction](../assets/benchmark/roi_extraction.png)
+![ROI Extraction](../benchmarks/assets/roi_extraction.png)
 
 ### S3 vs Local Latency
 
@@ -105,8 +105,8 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 
 **Key insight:** S3 adds ~150-200ms latency per slice operation. For batch processing, amortize this with parallel workers. For S3 setup and credential configuration, see [S3 Setup](../how-to/s3-setup.md).
 
-![S3 vs Local - Full Volume](../assets/benchmark/s3_vs_local_full.png)
-![S3 vs Local - Slice](../assets/benchmark/s3_vs_local_slice.png)
+![S3 vs Local - Full Volume](../benchmarks/assets/s3_vs_local_full.png)
+![S3 vs Local - Slice](../benchmarks/assets/s3_vs_local_slice.png)
 
 ### Storage Format Comparison
 
@@ -120,8 +120,8 @@ For a quick reference of key benchmark numbers, see [Benchmarks](../reference/be
 
 **Key insight:** TileDB achieves comparable compression to NIfTI gzip while enabling random access.
 
-![Disk Space Comparison](../assets/benchmark/disk_space_comparison.png)
-![Format Overhead](../assets/benchmark/format_overhead.png)
+![Disk Space Comparison](../benchmarks/assets/disk_space_comparison.png)
+![Format Overhead](../benchmarks/assets/format_overhead.png)
 
 ## Performance Characteristics
 
@@ -458,7 +458,7 @@ For optimal caching, share TileDB contexts across threads. See [Tuning Concurren
 
 *Note: Single-process (workers=0) performance improved ~40% after lazy loading optimization.*
 
-![DataLoader Throughput](../assets/benchmark/dataloader_throughput.png)
+![DataLoader Throughput](../benchmarks/assets/dataloader_throughput.png)
 
 ### Training Integration
 
@@ -973,7 +973,7 @@ For available tiling options and configuration, see [Configuration: TileConfig](
 
 **Key observation:** Memory usage is dominated by TileDB's internal buffers (304 MB default), not the volume data. This is configurable via `sm.mem.total_budget` in TileDB config.
 
-![Memory by Backend](../assets/benchmark/memory_by_backend.png)
+![Memory by Backend](../benchmarks/assets/memory_by_backend.png)
 
 ### Optimization Recommendations
 

@@ -9,8 +9,11 @@ RadiObject/
 ├── README.md
 ├── pyproject.toml
 ├── uv.lock
-├── assets/
-│   └── benchmark/
+├── benchmarks/
+│   ├── config.py                   # Benchmark configuration (S3 region)
+│   ├── run_benchmarks.py           # Papermill runner for benchmarks
+│   ├── framework_benchmark.ipynb   # Comprehensive benchmark suite
+│   └── assets/
 │       ├── benchmark_hero.png          # Overview benchmark comparison chart
 │       ├── benchmark_results.json      # Exported benchmark results with disk space
 │       ├── disk_space_comparison.png   # Storage format size comparison
@@ -22,10 +25,6 @@ RadiObject/
 │       ├── dataloader_throughput.png   # ML training throughput
 │       ├── s3_vs_local_full.png        # S3 overhead for full reads
 │       └── s3_vs_local_slice.png       # S3 overhead for partial reads
-├── benchmarks/
-│   ├── config.py                   # Benchmark configuration (S3 region)
-│   ├── run_benchmarks.py           # Papermill runner for benchmarks
-│   └── framework_benchmark.ipynb   # Comprehensive benchmark suite
 ├── docs/
 │   ├── index.md                    # Homepage
 │   ├── tutorials/

@@ -5,7 +5,7 @@ from pathlib import Path
 import papermill as pm
 
 NOTEBOOK = "framework_benchmark.ipynb"
-OUTPUT_DIR = Path("../assets/benchmark")
+OUTPUT_DIR = Path("assets")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Benchmark configurations
