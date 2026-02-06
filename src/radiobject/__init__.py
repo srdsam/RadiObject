@@ -11,10 +11,10 @@ from radiobject.ctx import (
     TileConfig,
     WriteConfig,
     configure,
-    radi_cfg,
-    radi_reset,
-    tdb_cfg,
-    tdb_ctx,
+    get_radiobject_config,
+    get_tiledb_config,
+    get_tiledb_ctx,
+    reset_radiobject_config,
 )
 from radiobject.dataframe import Dataframe
 from radiobject.indexing import Index, align
@@ -35,10 +35,10 @@ __all__ = [
     "align",
     # Configuration functions
     "configure",
-    "radi_cfg",
-    "radi_reset",
-    "tdb_ctx",
-    "tdb_cfg",
+    "get_radiobject_config",
+    "reset_radiobject_config",
+    "get_tiledb_ctx",
+    "get_tiledb_config",
     # Configuration classes
     "WriteConfig",
     "ReadConfig",

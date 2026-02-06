@@ -20,11 +20,6 @@ hierarchical organization of multi-volume datasets.
 *See full [thoughts here](https://souzy.up.railway.app/thoughts/radiology-object).*
 
 
-## Gaps
-
-- The storage format for this library is TileDB. No comparison with Zarr, NumPy, or other flat-file formats.
-- No profiling of `.cuda()` transfer, no end-to-end training throughput, no tests to evaluate whether a system is I/O-bound or compute-bound.
-
 ## Installation
 
 ```bash
@@ -70,6 +65,8 @@ Works with local paths or S3 URIs (`s3://bucket/dataset`).
 NIfTI requires decompressing entire volumes; TileDB reads only the tiles needed.
 This enables **200-660x faster** partial reads. [See benchmarks →](docs/reference/benchmarks.md)
 
+![Benchmark overview](benchmarks/results/figures/benchmark_hero.png)
+
 ## Sample Data
 
 Download sample datasets for tutorials and testing:
@@ -87,13 +84,20 @@ python scripts/download_dataset.py --list
 
 ## Documentation
 
-- **[Tutorials](notebooks/README.md)** - Interactive notebooks
-- **[Ingest Data](docs/how-to/ingest-data.md)** - NIfTI/DICOM ingestion
-- **[Query & Filter](docs/how-to/query-filter-data.md)** - Data access patterns
-- **[ML Integration](docs/how-to/ml-training.md)** - MONAI/TorchIO setup
-- **[Architecture](docs/explanation/architecture.md)** - Design decisions
-- **[Benchmarks](docs/reference/benchmarks.md)** - Performance analysis
-- **[Datasets](docs/how-to/datasets.md)** - Available datasets and download instructions
+| | |
+|---|---|
+| **[Tutorials](docs/tutorials/index.md)** | Interactive notebooks: ingestion, querying, volumes, ML |
+| **[How-to Guides](docs/how-to/index.md)** | Task-oriented recipes for ingestion, access, ML, cloud |
+| **[Reference](docs/reference/index.md)** | API docs, configuration, benchmarks, lexicon |
+| **[Explanation](docs/explanation/architecture.md)** | Architecture, performance analysis |
+
+## Development
+
+```bash
+uv sync --all-extras
+eval $(aws configure export-credentials --profile souzy-s3 --format env)
+uv run pytest test/ --ignore=test/ml -v
+```
 
 ## License
 

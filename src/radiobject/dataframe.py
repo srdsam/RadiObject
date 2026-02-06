@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import tiledb
 
-from radiobject.ctx import radi_cfg, tdb_ctx
+from radiobject.ctx import get_radiobject_config, get_tiledb_ctx
 
 # Mandatory index columns for all Dataframes
 INDEX_COLUMNS = ("obs_subject_id", "obs_id")
@@ -29,7 +29,7 @@ class Dataframe:
         self._ctx: tiledb.Ctx | None = ctx
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else tdb_ctx()
+        return self._ctx if self._ctx else get_tiledb_ctx()
 
     @cached_property
     def _schema(self) -> tiledb.ArraySchema:
@@ -120,6 +120,113 @@ class Dataframe:
                 except TypeError as e:
                     raise TypeError(f"Invalid dtype for column {name!r}: {dtype}") from e
 
+    @staticmethod
+    def _compression_filters() -> tiledb.FilterList:
+        """Build compression filter list from current config."""
+        compression_filter = get_radiobject_config().write.compression.as_filter()
+        if compression_filter:
+            return tiledb.FilterList([compression_filter])
+        return tiledb.FilterList()
+
+    def _invalidate_cache(self) -> None:
+        """Clear cached schema and dtypes after schema-mutating operations."""
+        for prop in ("_schema", "dtypes"):
+            self.__dict__.pop(prop, None)
+
+    def add_column(
+        self,
+        name: str,
+        dtype: np.dtype | type,
+        fill: object = None,
+    ) -> None:
+        """Add a new attribute column to the dataframe.
+
+        Args:
+            name: Column name (must not conflict with index columns or existing columns).
+            dtype: NumPy dtype for the column.
+            fill: If provided, write this value to all existing rows.
+        """
+        if name in INDEX_COLUMNS:
+            raise ValueError(f"Column name conflicts with index column: {name!r}")
+        if name in self.columns:
+            raise ValueError(f"Column {name!r} already exists")
+
+        ctx = self._effective_ctx()
+        se = tiledb.ArraySchemaEvolution(ctx=ctx)
+        se.add_attribute(
+            tiledb.Attr(name=name, dtype=dtype, filters=self._compression_filters(), ctx=ctx)
+        )
+        se.array_evolve(self.uri)
+        self._invalidate_cache()
+
+        if fill is not None and len(self) > 0:
+            with tiledb.open(self.uri, "r", ctx=ctx) as arr:
+                all_data = arr[:]
+                subject_ids = all_data[INDEX_COLUMNS[0]]
+                obs_ids = all_data[INDEX_COLUMNS[1]]
+                data = {col: all_data[col] for col in self.columns if col != name}
+            data[name] = np.full(len(subject_ids), fill, dtype=np.dtype(dtype))
+            with tiledb.open(self.uri, "w", ctx=ctx) as arr:
+                arr[subject_ids, obs_ids] = data
+
+    def drop_column(self, name: str) -> None:
+        """Remove an attribute column from the dataframe."""
+        if name in INDEX_COLUMNS:
+            raise ValueError(f"Cannot drop index column: {name!r}")
+        if name not in self.columns:
+            raise ValueError(f"Column {name!r} does not exist")
+
+        ctx = self._effective_ctx()
+        se = tiledb.ArraySchemaEvolution(ctx=ctx)
+        se.drop_attribute(name)
+        se.array_evolve(self.uri)
+        self._invalidate_cache()
+
+    def update(self, df: pd.DataFrame) -> None:
+        """Upsert rows from a pandas DataFrame.
+
+        Existing coordinates are overwritten, new coordinates are appended.
+        All non-index columns in df must already exist in the schema.
+        """
+        for idx_col in INDEX_COLUMNS:
+            if idx_col not in df.columns:
+                raise ValueError(f"DataFrame must contain index column: {idx_col!r}")
+
+        attr_cols = [c for c in df.columns if c not in INDEX_COLUMNS]
+        existing = set(self.columns)
+        unknown = [c for c in attr_cols if c not in existing]
+        if unknown:
+            raise ValueError(f"Unknown columns: {unknown}. Use add_column() first.")
+
+        ctx = self._effective_ctx()
+        subject_ids = df[INDEX_COLUMNS[0]].astype(str).to_numpy()
+        obs_ids = df[INDEX_COLUMNS[1]].astype(str).to_numpy()
+        data = {col: df[col].to_numpy() for col in attr_cols}
+
+        # TileDB sparse write requires all attributes — read missing ones for existing rows
+        all_attrs = self.columns
+        missing_attrs = [c for c in all_attrs if c not in attr_cols]
+        if missing_attrs:
+            with tiledb.open(self.uri, "r", ctx=ctx) as arr:
+                existing = arr.query(attrs=missing_attrs)[subject_ids, obs_ids]
+                for col in missing_attrs:
+                    raw = existing[col]
+                    if len(raw) == len(subject_ids):
+                        data[col] = raw
+                    else:
+                        # New rows — fill with dtype default
+                        dt = self.dtypes[col]
+                        data[col] = np.zeros(len(subject_ids), dtype=dt)
+
+        with tiledb.open(self.uri, "w", ctx=ctx) as arr:
+            arr[subject_ids, obs_ids] = data
+
+    def delete(self, cond: str) -> None:
+        """Delete rows matching a TileDB query condition."""
+        ctx = self._effective_ctx()
+        with tiledb.open(self.uri, "d", ctx=ctx) as arr:
+            arr.query(cond=cond).submit()
+
     @classmethod
     def create(
         cls,
@@ -129,7 +236,7 @@ class Dataframe:
     ) -> Dataframe:
         """Create an empty sparse Dataframe indexed by obs_subject_id and obs_id."""
         cls._validate_schema(schema)
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
 
         dims = [
             tiledb.Dim(name=INDEX_COLUMNS[0], dtype="ascii", ctx=effective_ctx),
@@ -137,11 +244,7 @@ class Dataframe:
         ]
         domain = tiledb.Domain(*dims, ctx=effective_ctx)
 
-        config = radi_cfg()
-        compression_filter = config.write.compression.as_filter()
-        compression = (
-            tiledb.FilterList([compression_filter]) if compression_filter else tiledb.FilterList()
-        )
+        compression = cls._compression_filters()
         attrs = [
             tiledb.Attr(name=name, dtype=dtype, filters=compression, ctx=effective_ctx)
             for name, dtype in schema.items()
@@ -173,7 +276,7 @@ class Dataframe:
         schema = {col: df[col].to_numpy().dtype for col in attr_cols}
         dataframe = cls.create(uri, schema=schema, ctx=ctx)
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
             coords = {
                 INDEX_COLUMNS[0]: df[INDEX_COLUMNS[0]].astype(str).to_numpy(),

@@ -10,7 +10,7 @@ import nibabel as nib
 import numpy as np
 import tiledb
 
-from radiobject.ctx import SliceOrientation, radi_cfg, tdb_ctx
+from radiobject.ctx import SliceOrientation, get_radiobject_config, get_tiledb_ctx
 from radiobject.orientation import (
     OrientationInfo,
     detect_dicom_orientation,
@@ -192,7 +192,7 @@ class Volume:
             arr.meta["obs_id"] = obs_id
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else tdb_ctx()
+        return self._ctx if self._ctx else get_tiledb_ctx()
 
     @cached_property
     def _schema(self) -> tiledb.ArraySchema:
@@ -217,8 +217,8 @@ class Volume:
         if len(shape) not in (3, 4):
             raise ValueError(f"Shape must be 3D or 4D, got {len(shape)}D")
 
-        effective_ctx = ctx if ctx else tdb_ctx()
-        config = radi_cfg()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
+        config = get_radiobject_config()
 
         # Build dimensions with orientation-aware tiling
         dim_names = ["x", "y", "z", "t"][: len(shape)]
@@ -272,7 +272,7 @@ class Volume:
     ) -> Volume:
         """Create Volume from numpy array."""
         vol = cls.create(uri, shape=data.shape, dtype=data.dtype, ctx=ctx)
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
         with tiledb.open(uri, mode="w", ctx=effective_ctx) as arr:
             arr[:] = data
         return vol
@@ -293,7 +293,7 @@ class Volume:
             ctx: TileDB context (uses global if None).
             reorient: Reorient to canonical orientation (None uses config default).
         """
-        config = radi_cfg()
+        config = get_radiobject_config()
         should_reorient = (
             reorient if reorient is not None else config.write.orientation.reorient_on_load
         )
@@ -318,7 +318,7 @@ class Volume:
         vol = cls.from_numpy(uri, data, ctx=ctx)
 
         # Store orientation metadata
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
         metadata = orientation_info_to_metadata(
             orientation_info,
             original_affine=(
@@ -368,7 +368,7 @@ class Volume:
         """
         import pydicom
 
-        config = radi_cfg()
+        config = get_radiobject_config()
         should_reorient = (
             reorient if reorient is not None else config.write.orientation.reorient_on_load
         )
@@ -422,7 +422,7 @@ class Volume:
         vol = cls.from_numpy(uri, output_data, ctx=ctx)
 
         # Store orientation metadata
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
         metadata = orientation_info_to_metadata(
             orientation_info,
             original_affine=(

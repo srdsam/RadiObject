@@ -65,8 +65,11 @@ class VolumeCollectionDataset(Dataset):
         if len(collections_dict) > 1:
             validate_collection_alignment(collections_dict)
 
-        # Validate uniform shapes (required for batched loading)
-        self._volume_shape = validate_uniform_shapes(collections_dict)
+        # Validate uniform shapes (required for full volume and slice modes, not patch mode)
+        if self._config.loading_mode == LoadingMode.PATCH:
+            self._volume_shape: tuple[int, int, int] | None = None
+        else:
+            self._volume_shape = validate_uniform_shapes(collections_dict)
 
         first_coll = self._collections[0]
         self._n_volumes = len(first_coll)
@@ -122,7 +125,10 @@ class VolumeCollectionDataset(Dataset):
         patch_size = self._config.patch_size
         assert patch_size is not None
 
-        max_start = tuple(max(0, self._volume_shape[i] - patch_size[i]) for i in range(3))
+        # Use per-volume shape (supports heterogeneous collections)
+        vol_shape = self._collections[0].iloc[volume_idx].shape
+
+        max_start = tuple(max(0, vol_shape[i] - patch_size[i]) for i in range(3))
         start = tuple(
             rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
         )

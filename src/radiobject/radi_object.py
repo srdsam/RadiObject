@@ -13,7 +13,7 @@ import numpy.typing as npt
 import pandas as pd
 import tiledb
 
-from radiobject.ctx import tdb_ctx
+from radiobject.ctx import get_tiledb_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.imaging_metadata import (
     extract_dicom_metadata,
@@ -614,7 +614,7 @@ class RadiObject:
     def _effective_ctx(self) -> tiledb.Ctx:
         if self._source is not None:
             return self._source._effective_ctx()
-        return self._ctx if self._ctx else tdb_ctx()
+        return self._ctx if self._ctx else get_tiledb_ctx()
 
     def _effective_uri(self) -> str:
         """Get the storage URI (from root if this is a view)."""
@@ -680,7 +680,7 @@ class RadiObject:
         ctx: tiledb.Ctx | None,
     ) -> RadiObject:
         """Materialize view to storage using streaming writer."""
-        from radiobject.streaming import RadiObjectWriter
+        from radiobject.writers import RadiObjectWriter
 
         subject_ids = set(obs_meta_df["obs_subject_id"])
 
@@ -998,7 +998,7 @@ class RadiObject:
         if not groups or all(len(nifti_list) == 0 for nifti_list in groups.values()):
             raise ValueError("No NIfTI files found")
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
 
         tiledb.Group.create(uri, ctx=effective_ctx)
         collections_uri = f"{uri}/collections"
@@ -1143,7 +1143,7 @@ class RadiObject:
             key = (shape, group_key)
             groups[key].append((path, subject_id))
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
 
         tiledb.Group.create(uri, ctx=effective_ctx)
         collections_uri = f"{uri}/collections"
@@ -1255,7 +1255,7 @@ class RadiObject:
         if not collections:
             raise ValueError("At least one collection is required")
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
         collections_uri = f"{uri}/collections"
 
         # Resolve string URIs to VolumeCollection objects
@@ -1364,7 +1364,7 @@ class RadiObject:
         ctx: tiledb.Ctx | None = None,
     ) -> RadiObject:
         """Internal: create an empty RadiObject with optional obs_meta schema."""
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
 
         tiledb.Group.create(uri, ctx=effective_ctx)
 
@@ -1394,7 +1394,7 @@ class RadiObject:
         if not collections:
             raise ValueError("At least one VolumeCollection is required")
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
 
         n_subjects = len(obs_meta) if obs_meta is not None else 0
 
@@ -1459,7 +1459,7 @@ def _copy_volume_collection(
     ctx: tiledb.Ctx | None = None,
 ) -> None:
     """Copy a VolumeCollection to a new URI."""
-    effective_ctx = ctx if ctx else tdb_ctx()
+    effective_ctx = ctx if ctx else get_tiledb_ctx()
 
     collection_name = name if name is not None else src.name
 
@@ -1514,7 +1514,7 @@ def _copy_filtered_volume_collection(
     ctx: tiledb.Ctx | None = None,
 ) -> None:
     """Copy a VolumeCollection, filtering to volumes matching obs_subject_ids."""
-    effective_ctx = ctx if ctx else tdb_ctx()
+    effective_ctx = ctx if ctx else get_tiledb_ctx()
 
     collection_name = name if name is not None else src.name
 

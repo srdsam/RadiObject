@@ -37,6 +37,17 @@ if TYPE_CHECKING:
     from radiobject.volume_collection import VolumeCollection
 
 
+def _compose_transforms(prev_fn: TransformFn | None, new_fn: TransformFn) -> TransformFn:
+    """Compose two transform functions, applying prev_fn then new_fn."""
+    if prev_fn is None:
+        return new_fn
+
+    def composed_fn(v: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
+        return new_fn(prev_fn(v))
+
+    return composed_fn
+
+
 @dataclass(frozen=True)
 class VolumeBatch:
     """Batch of volumes for ML training with stacked numpy arrays."""
@@ -227,15 +238,7 @@ class Query:
         Args:
             fn: Function (X, Y, Z) -> (X', Y', Z'). Can change shape.
         """
-        if self._transform_fn is not None:
-            # Compose transforms: apply previous transform, then new one
-            prev_fn = self._transform_fn
-
-            def composed_fn(v: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
-                return fn(prev_fn(v))
-
-            return self._copy(transform_fn=composed_fn)
-        return self._copy(transform_fn=fn)
+        return self._copy(transform_fn=_compose_transforms(self._transform_fn, fn))
 
     def count(self) -> QueryCount:
         """Count subjects and volumes matching the query without loading volume data."""
@@ -333,7 +336,7 @@ class Query:
             ctx: TileDB context
         """
         from radiobject.radi_object import RadiObject
-        from radiobject.streaming import RadiObjectWriter
+        from radiobject.writers import RadiObjectWriter
 
         subject_mask = self._resolve_final_subject_mask()
         output_collections = self._resolve_output_collections()
@@ -631,15 +634,7 @@ class CollectionQuery:
         Args:
             fn: Function (X, Y, Z) -> (X', Y', Z'). Can change shape.
         """
-        if self._transform_fn is not None:
-            # Compose transforms: apply previous transform, then new one
-            prev_fn = self._transform_fn
-
-            def composed_fn(v: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
-                return fn(prev_fn(v))
-
-            return self._copy(transform_fn=composed_fn)
-        return self._copy(transform_fn=fn)
+        return self._copy(transform_fn=_compose_transforms(self._transform_fn, fn))
 
     def count(self) -> int:
         """Count volumes matching the query."""
@@ -683,8 +678,8 @@ class CollectionQuery:
             name: Collection name. Also used to derive URI when uri is None.
             ctx: TileDB context.
         """
-        from radiobject.streaming import StreamingWriter
         from radiobject.volume_collection import _generate_adjacent_uri
+        from radiobject.writers import VolumeCollectionWriter
 
         if uri is None:
             uri = _generate_adjacent_uri(
@@ -706,7 +701,7 @@ class CollectionQuery:
 
         output_shape = None if self._transform_fn is not None else self._source.shape
 
-        with StreamingWriter(
+        with VolumeCollectionWriter(
             uri=uri,
             shape=output_shape,
             obs_schema=obs_schema,

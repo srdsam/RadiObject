@@ -11,7 +11,14 @@ import numpy as np
 import pytest
 import tiledb
 
-from radiobject import SliceOrientation, TileConfig, Volume, WriteConfig, configure, radi_reset
+from radiobject import (
+    SliceOrientation,
+    TileConfig,
+    Volume,
+    WriteConfig,
+    configure,
+    reset_radiobject_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +74,7 @@ class TestVolumeTileOrientation:
             vol = Volume.create(uri, shape=(32, 32, 16))
             assert vol.tile_orientation == SliceOrientation.SAGITTAL
         finally:
-            radi_reset()
+            reset_radiobject_config()
 
 
 class TestVolumeFromNumpy:

@@ -21,9 +21,9 @@ def uri_exists(uri: str) -> bool:
     """Check if a TileDB object (group or array) exists at the given URI."""
     import tiledb
 
-    from radiobject.ctx import tdb_ctx
+    from radiobject.ctx import get_tiledb_ctx
 
-    ctx = tdb_ctx()
+    ctx = get_tiledb_ctx()
     obj_type = tiledb.object_type(uri, ctx=ctx)
     return obj_type is not None
 
@@ -32,8 +32,8 @@ def delete_tiledb_uri(uri: str) -> None:
     """Delete a TileDB group/array at URI (works for S3 and local)."""
     import tiledb
 
-    from radiobject.ctx import tdb_ctx
+    from radiobject.ctx import get_tiledb_ctx
 
-    vfs = tiledb.VFS(ctx=tdb_ctx())
+    vfs = tiledb.VFS(ctx=get_tiledb_ctx())
     if vfs.is_dir(uri):
         vfs.remove_dir(uri)

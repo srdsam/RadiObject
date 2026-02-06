@@ -10,17 +10,13 @@
 | Anatomical orientation | [OrientationConfig](#orientationconfig) |
 | Compression algorithm | [CompressionConfig](#compressionconfig) |
 
-For practical tuning recipes, see [Tuning Concurrency](../how-to/tuning-concurrency.md).
+For practical tuning recipes, see [ML Training: Performance Tuning](../how-to/ml-training.md#performance-tuning).
 
 ---
 
 RadiObject uses a global configuration pattern to manage [TileDB](https://docs.tiledb.com/main/how-to/configuration) settings. Configuration is organized into **write-time** settings (immutable after array creation) and **read-time** settings (affect all reads).
 
-## Configuration Classes
-
-### RadiObjectConfig
-
-Top-level configuration model with nested settings:
+## Configuration Tree
 
 ```
 RadiObjectConfig
@@ -38,11 +34,9 @@ RadiObjectConfig
     └── multipart_part_size_mb (default: 50)
 ```
 
-**Location:** `src/radiobject/ctx.py`
+## WriteConfig
 
-### WriteConfig
-
-Settings applied when creating new TileDB arrays. These are immutable after array creation.
+Settings applied when creating new TileDB arrays. Immutable after array creation.
 
 | Setting | Type | Description |
 |---------|------|-------------|
@@ -50,7 +44,7 @@ Settings applied when creating new TileDB arrays. These are immutable after arra
 | `compression` | `CompressionConfig` | Compression settings |
 | `orientation` | `OrientationConfig` | Anatomical orientation handling |
 
-### ReadConfig
+## ReadConfig
 
 Settings for reading TileDB arrays. Affects all reads.
 
@@ -60,9 +54,9 @@ Settings for reading TileDB arrays. Affects all reads.
 | `concurrency` | 4 | TileDB thread pool size (`sm.compute/io_concurrency_level`) |
 | `max_workers` | 4 | Python `ThreadPoolExecutor` workers |
 
-### S3Config
+## S3Config
 
-Cloud storage settings for S3 backends. For practical setup steps (credentials, profiles, regions), see [S3 Setup](../how-to/s3-setup.md).
+Cloud storage settings. For credential setup, see [Cloud Setup](../how-to/cloud-setup.md).
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -71,7 +65,7 @@ Cloud storage settings for S3 backends. For practical setup steps (credentials, 
 | `max_parallel_ops` | 8 | Max concurrent S3 operations (`vfs.s3.max_parallel_ops`) |
 | `multipart_part_size_mb` | 50 | Multipart upload chunk size |
 
-### TileConfig
+## TileConfig
 
 Controls how data is chunked on disk.
 
@@ -88,16 +82,16 @@ Controls how data is chunked on disk.
 | `CORONAL` | `[X, 1, Z]` | Coronal slice viewers |
 | `ISOTROPIC` | `[64, 64, 64]` | 3D patches, ML training |
 
-For 4D volumes, tile extents automatically include a temporal extent of `1` (i.e., `[X, Y, 1, 1]` for AXIAL). This ensures efficient per-timepoint access.
+For 4D volumes, tile extents automatically include a temporal extent of `1` (e.g., `[X, Y, 1, 1]` for AXIAL).
 
-### CompressionConfig
+## CompressionConfig
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `algorithm` | `ZSTD` | Compression algorithm |
 | `level` | 3 | Compression level (1-9) |
 
-### OrientationConfig
+## OrientationConfig
 
 Controls anatomical orientation handling during ingestion.
 
@@ -110,57 +104,70 @@ Controls anatomical orientation handling during ingestion.
 
 ## configure() API
 
-Use `configure()` to update global settings:
-
 ```python
-from radiobject import configure, tdb_ctx, WriteConfig, ReadConfig, TileConfig, SliceOrientation, CompressionConfig
+from radiobject import configure, WriteConfig, ReadConfig, TileConfig, SliceOrientation, CompressionConfig
 
-# Use defaults
-array = tiledb.open(uri, ctx=tdb_ctx())
-
-# Configure write-time settings (affect new arrays only)
+# Write-time settings (affect new arrays only)
 configure(write=WriteConfig(
     tile=TileConfig(orientation=SliceOrientation.ISOTROPIC),
     compression=CompressionConfig(level=5)
 ))
 
-# Configure read-time settings (affect all reads)
+# Read-time settings (affect all reads)
 configure(read=ReadConfig(memory_budget_mb=2048, concurrency=8))
 ```
 
-## tdb_ctx() Function
+## TileDB Context Management
 
-The global `tdb_ctx()` function returns a TileDB context built from `configure()` settings:
+`get_tiledb_ctx()` returns a TileDB context built from `configure()` settings:
 
 ```python
-from radiobject import tdb_ctx
+from radiobject import get_tiledb_ctx
 
-# Get configured TileDB context
-ctx = tdb_ctx()
-
-# Use in Volume/VolumeCollection operations
+ctx = get_tiledb_ctx()
 vol = Volume(uri, ctx=ctx)
 ```
 
-See [Threading Model](../explanation/threading-model.md) for how contexts are managed across threads and processes.
+TileDB contexts are thread-safe. Sharing a context across threads enables metadata caching. For forked processes (DataLoader workers), use `ctx_for_process()` to create isolated contexts. See [Architecture: Concurrency Model](../explanation/architecture.md#concurrency-model) for details.
 
-## Default Settings Summary
+## Defaults Summary
 
-| Setting | Path | Default | Description |
-|---------|------|---------|-------------|
-| Tile orientation | `write.tile.orientation` | `AXIAL` | X-Y slices optimized for neuroimaging |
-| Compression | `write.compression` | `ZSTD` level 3 | Balanced speed/ratio |
-| Canonical orientation | `write.orientation.canonical_target` | `RAS` | Target coordinate system |
-| Reorient on load | `write.orientation.reorient_on_load` | `False` | Preserves original orientation |
-| Memory budget | `read.memory_budget_mb` | 1024 MB | TileDB operation limit |
-| I/O concurrency | `read.concurrency` | 4 threads | Parallel read/write |
-| Max workers | `read.max_workers` | 4 | Python thread pool |
-| S3 parallel ops | `s3.max_parallel_ops` | 8 | Concurrent S3 operations |
+| Setting | Path | Default |
+|---------|------|---------|
+| Tile orientation | `write.tile.orientation` | `AXIAL` |
+| Compression | `write.compression` | `ZSTD` level 3 |
+| Canonical orientation | `write.orientation.canonical_target` | `RAS` |
+| Reorient on load | `write.orientation.reorient_on_load` | `False` |
+| Memory budget | `read.memory_budget_mb` | 1024 MB |
+| I/O concurrency | `read.concurrency` | 4 threads |
+| Max workers | `read.max_workers` | 4 |
+| S3 parallel ops | `s3.max_parallel_ops` | 8 |
 
-Tile size is auto-computed from array shape based on orientation. For example, `AXIAL` uses full X-Y slices with Z=1, `ISOTROPIC` uses 64³ chunks.
+## Recipes
 
-## Related Documentation
+### Radiology Viewer (2D Slice Access)
 
-- [Tuning Concurrency](../how-to/tuning-concurrency.md) - Practical tuning recipes
-- [Threading Model](../explanation/threading-model.md) - Context management architecture
-- [Performance Analysis](../explanation/performance-analysis.md) - Benchmark data
+```python
+configure(write=WriteConfig(
+    tile=TileConfig(orientation=SliceOrientation.AXIAL),
+    compression=CompressionConfig(algorithm=Compressor.LZ4, level=1),
+))
+```
+
+### ML Training (3D Patch Extraction)
+
+```python
+configure(write=WriteConfig(
+    tile=TileConfig(orientation=SliceOrientation.ISOTROPIC),
+    compression=CompressionConfig(algorithm=Compressor.ZSTD, level=3),
+))
+```
+
+### S3 Cloud Storage
+
+```python
+configure(
+    read=ReadConfig(max_workers=8, concurrency=2),
+    s3=S3Config(region="us-east-1", max_parallel_ops=32),
+)
+```

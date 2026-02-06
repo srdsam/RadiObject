@@ -21,6 +21,14 @@ class NiftiSource:
         return self.label_path is not None
 
 
+def _default_subject_id(p: Path) -> str:
+    """Extract subject ID from path (stem without .nii extension)."""
+    name = p.stem
+    if name.endswith(".nii"):
+        name = name[:-4]
+    return name
+
+
 def discover_nifti_pairs(
     image_dir: str | Path,
     label_dir: str | Path | None = None,
@@ -44,12 +52,7 @@ def discover_nifti_pairs(
         raise FileNotFoundError(f"Image directory not found: {image_dir}")
 
     if subject_id_fn is None:
-
-        def subject_id_fn(p: Path) -> str:
-            name = p.stem
-            if name.endswith(".nii"):
-                name = name[:-4]
-            return name
+        subject_id_fn = _default_subject_id
 
     # Find all image files
     image_files = sorted(image_dir.glob(pattern))
@@ -113,12 +116,7 @@ def resolve_nifti_source(
     source_str = str(source)
 
     if subject_id_fn is None:
-
-        def subject_id_fn(p: Path) -> str:
-            name = p.stem
-            if name.endswith(".nii"):
-                name = name[:-4]
-            return name
+        subject_id_fn = _default_subject_id
 
     # Glob pattern
     if any(c in source_str for c in "*?["):

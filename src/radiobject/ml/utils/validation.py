@@ -74,7 +74,7 @@ def validate_uniform_shapes(collections: dict[str, VolumeCollection]) -> tuple[i
             shape = coll_shape
         elif coll_shape != shape:
             raise ValueError(
-                f"Shape mismatch: collection '{name}' has shape {coll_shape}, " f"expected {shape}"
+                f"Shape mismatch: collection '{name}' has shape {coll_shape}, expected {shape}"
             )
 
     if shape is None:

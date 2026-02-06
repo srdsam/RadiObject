@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import tiledb
 
-from radiobject import configure, radi_cfg, radi_reset, tdb_ctx
+from radiobject import configure, get_radiobject_config, get_tiledb_ctx, reset_radiobject_config
 from radiobject.ctx import RadiObjectConfig, ReadConfig
 from radiobject.parallel import ctx_for_threads, map_on_threads
 from radiobject.volume import Volume
@@ -203,7 +203,7 @@ class TestThreadPoolVsTileDBThreading:
         _ = map_on_threads(write_vol_b, range(n_volumes), max_workers=1)
         time_b = time.perf_counter() - start
 
-        radi_reset()
+        reset_radiobject_config()
 
         logger.info(
             "4x4 config: %.2fs, 1x16 config: %.2fs, ratio: %.2f",
@@ -258,14 +258,14 @@ class TestMaxWorkersConfiguration:
 
     def test_max_workers_from_config(self) -> None:
         """Verify max_workers defaults and can be configured."""
-        default_config = radi_cfg()
+        default_config = get_radiobject_config()
         assert default_config.read.max_workers == 4
 
         configure(read=ReadConfig(max_workers=8))
-        new_config = radi_cfg()
+        new_config = get_radiobject_config()
         assert new_config.read.max_workers == 8
 
-        radi_reset()
+        reset_radiobject_config()
 
     def test_map_on_threads_respects_config(self, temp_dir: "Path", array_3d: np.ndarray) -> None:
         """Verify map_on_threads uses configured max_workers."""
@@ -282,7 +282,7 @@ class TestMaxWorkersConfiguration:
         # All should run in same process (threads, not processes)
         assert len(set(worker_pids)) == 1
 
-        radi_reset()
+        reset_radiobject_config()
 
 
 class TestWorkerContextIsolation:
@@ -299,7 +299,7 @@ class TestWorkerContextIsolation:
 
     def test_worker_ctx_inherits_base_config(self) -> None:
         """Verify ctx_for_threads with base context returns valid context."""
-        base_ctx = tdb_ctx()
+        base_ctx = get_tiledb_ctx()
         worker_ctx = ctx_for_threads(base_ctx)
 
         assert isinstance(worker_ctx, tiledb.Ctx)

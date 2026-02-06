@@ -21,6 +21,7 @@ CLAUDE.md
 test/data/nifti/
 test/data/dicom/
 data/
+benchmarks/results/
 
 # Local cache directory
 .cache/radiobject/
@@ -31,3 +32,9 @@ site/
 
 # Scratch files
 scratch.md
+
+# Benchmark results (generated artifacts)
+results/
+benchmarks/results/raw/
+benchmarks/assets/*.json
+benchmarks/assets/*.png

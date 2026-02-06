@@ -14,7 +14,7 @@ import pandas as pd
 import tiledb
 
 from radiobject._types import TransformFn
-from radiobject.ctx import tdb_ctx
+from radiobject.ctx import get_tiledb_ctx
 from radiobject.dataframe import Dataframe
 from radiobject.imaging_metadata import (
     DicomMetadata,
@@ -39,6 +39,13 @@ def _normalize_index(idx: int, length: int) -> int:
     if idx < 0 or idx >= length:
         raise IndexError(f"Index {idx} out of range [0, {length})")
     return idx
+
+
+def _get_volume_by_obs_id(collection: VolumeCollection, obs_id: str) -> Volume:
+    """Construct Volume on-demand by obs_id (shared by iloc and loc indexers)."""
+    root = collection._root
+    idx = root._index.get_index(obs_id)
+    return Volume(f"{root.uri}/volumes/{idx}", ctx=root._ctx)
 
 
 def generate_obs_id(obs_subject_id: str, series_type: str) -> str:
@@ -90,12 +97,6 @@ class _ILocIndexer:
     def __init__(self, collection: VolumeCollection):
         self._collection = collection
 
-    def _get_volume(self, obs_id: str) -> Volume:
-        """Construct Volume on-demand by obs_id."""
-        root = self._collection._root
-        idx = root._index.get_index(obs_id)
-        return Volume(f"{root.uri}/volumes/{idx}", ctx=root._ctx)
-
     @overload
     def __getitem__(self, key: int) -> Volume: ...
     @overload
@@ -113,7 +114,7 @@ class _ILocIndexer:
         n = len(obs_ids)
         if isinstance(key, int):
             idx = _normalize_index(key, n)
-            return self._get_volume(obs_ids[idx])
+            return _get_volume_by_obs_id(self._collection, obs_ids[idx])
 
         elif isinstance(key, slice):
             indices = list(range(*key.indices(n)))
@@ -142,12 +143,6 @@ class _LocIndexer:
     def __init__(self, collection: VolumeCollection):
         self._collection = collection
 
-    def _get_volume(self, obs_id: str) -> Volume:
-        """Construct Volume on-demand by obs_id."""
-        root = self._collection._root
-        idx = root._index.get_index(obs_id)
-        return Volume(f"{root.uri}/volumes/{idx}", ctx=root._ctx)
-
     @overload
     def __getitem__(self, key: str) -> Volume: ...
     @overload
@@ -159,7 +154,7 @@ class _LocIndexer:
             # Validate the key is in the effective set
             if self._collection.is_view and key not in self._collection._volume_ids:
                 raise KeyError(f"obs_id '{key}' not in view")
-            return self._get_volume(key)
+            return _get_volume_by_obs_id(self._collection, key)
 
         elif isinstance(key, list):
             selected_ids = frozenset(key)
@@ -391,7 +386,7 @@ class VolumeCollection:
             name: Collection name. Also used to derive URI when uri is None.
             ctx: TileDB context.
         """
-        from radiobject.streaming import StreamingWriter
+        from radiobject.writers import VolumeCollectionWriter
 
         if uri is None:
             uri = _generate_adjacent_uri(self._root.uri, name=name)
@@ -416,7 +411,7 @@ class VolumeCollection:
 
         effective_ctx = ctx if ctx else self._effective_ctx()
 
-        with StreamingWriter(
+        with VolumeCollectionWriter(
             uri=uri,
             shape=self._root.shape,
             obs_schema=obs_schema,
@@ -617,7 +612,7 @@ class VolumeCollection:
         return Index.build(list(obs_data["obs_id"]), name="obs_id")
 
     def _effective_ctx(self) -> tiledb.Ctx:
-        return self._ctx if self._ctx else tdb_ctx()
+        return self._ctx if self._ctx else get_tiledb_ctx()
 
     def _check_not_view(self, operation: str) -> None:
         """Raise if this is a view (views are immutable)."""
@@ -762,7 +757,7 @@ class VolumeCollection:
             # Only validate dimensions if collection has uniform shape requirement
             if self.is_uniform and shape != self.shape:
                 raise ValueError(
-                    f"Dimension mismatch: {path.name} has shape {shape}, " f"expected {self.shape}"
+                    f"Dimension mismatch: {path.name} has shape {shape}, expected {self.shape}"
                 )
 
             metadata_list.append((path, obs_subject_id, metadata))
@@ -892,7 +887,7 @@ class VolumeCollection:
 
             metadata_list.append((path, obs_subject_id, metadata, series_type))
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
         # Only set uniform shape if all volumes have same spatial dimensions
         collection_shape = first_spatial_shape if all_same_shape else None
 
@@ -1030,14 +1025,13 @@ class VolumeCollection:
             elif shape != first_shape:
                 if validate_dimensions:
                     raise ValueError(
-                        f"Dimension mismatch: {path.name} has shape {shape}, "
-                        f"expected {first_shape}"
+                        f"Dimension mismatch: {path.name} has shape {shape}, expected {first_shape}"
                     )
                 all_same_shape = False
 
             metadata_list.append((path, obs_subject_id, metadata))
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
         # Only set uniform shape if all volumes have same dimensions
         collection_shape = first_shape if all_same_shape else None
 
@@ -1137,7 +1131,7 @@ class VolumeCollection:
             name: Collection name
             ctx: TileDB context
         """
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
 
         tiledb.Group.create(uri, ctx=effective_ctx)
 
@@ -1180,7 +1174,7 @@ class VolumeCollection:
                     f"Volume '{obs_id}' has shape {vol.shape[:3]}, expected {first_shape}"
                 )
 
-        effective_ctx = ctx if ctx else tdb_ctx()
+        effective_ctx = ctx if ctx else get_tiledb_ctx()
 
         obs_schema = None
         if obs_data is not None:

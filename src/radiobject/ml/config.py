@@ -15,7 +15,7 @@ class LoadingMode(str, Enum):
 
 
 class DatasetConfig(BaseModel):
-    """Configuration for RadiObjectDataset."""
+    """Configuration for ML datasets."""
 
     loading_mode: LoadingMode = LoadingMode.FULL_VOLUME
     patch_size: tuple[int, int, int] | None = None

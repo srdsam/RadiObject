@@ -2,16 +2,10 @@
 
 Technical specifications and lookup information.
 
-## Configuration
-
-| Resource | Description |
-|----------|-------------|
-| [Configuration](configuration.md) | All configuration classes and defaults |
-
 ## API Reference
 
-| Resource | Description |
-|----------|-------------|
+| Module | Description |
+|--------|-------------|
 | [RadiObject](../api/radi_object.md) | Top-level data container |
 | [VolumeCollection](../api/volume_collection.md) | Collection of volumes |
 | [Volume](../api/volume.md) | Single 3D/4D volume |
@@ -25,12 +19,7 @@ Technical specifications and lookup information.
 
 | Resource | Description |
 |----------|-------------|
-| [Benchmarks](benchmarks.md) | Performance comparison tables |
-| [Lexicon](lexicon.md) | Medical imaging terminology |
-| [Layout](layout.md) | Codebase structure |
-
-## Quick Links
-
-Looking for how to do something? See [How-to Guides](../how-to/index.md).
-
-Want to understand why things work? See [Explanation](../explanation/index.md).
+| [Configuration](configuration.md) | All configuration classes, defaults, and recipes |
+| [Benchmarks](benchmarks.md) | Performance comparison tables and charts |
+| [Datasets](datasets.md) | Available test/demo datasets and download commands |
+| [Lexicon](lexicon.md) | RadiObject terminology |

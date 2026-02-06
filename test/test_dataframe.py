@@ -168,3 +168,138 @@ class TestDataframeRead:
         data = df.read(columns=["age"])
 
         assert list(data.columns)[:2] == ["obs_subject_id", "obs_id"]
+
+
+class TestDataframeMutation:
+    """Tests for add_column, drop_column, update, and delete."""
+
+    def test_add_column(self, dataframe_uri: str, sample_pandas_df: pd.DataFrame) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        df.add_column("site", np.dtype("U10"))
+
+        assert "site" in df.columns
+        assert "site" in df.dtypes
+
+    def test_add_column_with_fill(self, dataframe_uri: str, sample_pandas_df: pd.DataFrame) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        df.add_column("label", np.int32, fill=0)
+
+        result = df.read(columns=["label"], include_index=False)
+        np.testing.assert_array_equal(result["label"].values, np.zeros(5, dtype=np.int32))
+
+    def test_add_column_rejects_duplicate(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+
+        with pytest.raises(ValueError, match="already exists"):
+            df.add_column("age", np.int32)
+
+    def test_add_column_rejects_index_name(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+
+        with pytest.raises(ValueError, match="conflicts with index column"):
+            df.add_column("obs_subject_id", np.int32)
+
+    def test_drop_column(self, dataframe_uri: str, sample_pandas_df: pd.DataFrame) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        df.drop_column("survival_months")
+
+        assert "survival_months" not in df.columns
+
+    def test_drop_column_rejects_nonexistent(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+
+        with pytest.raises(ValueError, match="does not exist"):
+            df.drop_column("nonexistent_col")
+
+    def test_drop_column_rejects_index(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+
+        with pytest.raises(ValueError, match="Cannot drop index column"):
+            df.drop_column("obs_id")
+
+    def test_update_existing_values(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        update_df = pd.DataFrame(
+            {
+                "obs_subject_id": ["subj_1"],
+                "obs_id": ["vol_1"],
+                "age": np.array([99], dtype=np.int32),
+            }
+        )
+        df.update(update_df)
+
+        result = df.read(value_filter="obs_subject_id == 'subj_1'")
+        assert result["age"].iloc[0] == 99
+
+    def test_update_appends_new_rows(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        new_row = pd.DataFrame(
+            {
+                "obs_subject_id": ["subj_6"],
+                "obs_id": ["vol_6"],
+                "age": np.array([55], dtype=np.int32),
+                "tumor_volume": np.array([7.0], dtype=np.float64),
+                "survival_months": np.array([20.0], dtype=np.float64),
+            }
+        )
+        df.update(new_row)
+
+        assert len(df) == 6
+
+    def test_update_rejects_unknown_columns(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        bad_df = pd.DataFrame(
+            {"obs_subject_id": ["subj_1"], "obs_id": ["vol_1"], "nonexistent": [1]}
+        )
+
+        with pytest.raises(ValueError, match="Unknown columns.*add_column"):
+            df.update(bad_df)
+
+    def test_update_rejects_missing_index(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        bad_df = pd.DataFrame({"age": [99]})
+
+        with pytest.raises(ValueError, match="must contain index column"):
+            df.update(bad_df)
+
+    def test_delete(self, dataframe_uri: str, sample_pandas_df: pd.DataFrame) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        df.delete("age < 40")
+
+        result = df.read()
+        assert all(result["age"] >= 40)
+        assert len(result) < 5
+
+    def test_add_then_update_new_column(
+        self, dataframe_uri: str, sample_pandas_df: pd.DataFrame
+    ) -> None:
+        df = Dataframe.from_pandas(dataframe_uri, sample_pandas_df)
+        df.add_column("grade", np.int32)
+
+        update_df = pd.DataFrame(
+            {
+                "obs_subject_id": ["subj_1", "subj_2"],
+                "obs_id": ["vol_1", "vol_2"],
+                "grade": np.array([3, 4], dtype=np.int32),
+            }
+        )
+        df.update(update_df)
+
+        result = df.read(value_filter="obs_subject_id == 'subj_1'")
+        assert result["grade"].iloc[0] == 3

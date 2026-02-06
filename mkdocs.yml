@@ -47,41 +47,30 @@ nav:
   - Home: index.md
 
   - Tutorials:
-      - Overview: tutorials/index.md
-      - Getting Started:
-          - "1. Ingest NIfTI Data": notebooks/00_ingest_brats.ipynb
-          - "2. RadiObject API": notebooks/01_radi_object.ipynb
-          - "3. VolumeCollection": notebooks/02_volume_collection.ipynb
-          - "4. Volume Operations": notebooks/03_volume.ipynb
-      - Advanced:
-          - "5. Storage Config": notebooks/04_configuration.ipynb
-          - "6. Multi-Collection": notebooks/05_ingest_msd.ipynb
-          - "7. ML Training": notebooks/06_ml_training.ipynb
+      - tutorials/index.md
+      - "1. Ingest BraTS Data": notebooks/00_ingest_brats.ipynb
+      - "2. RadiObject API": notebooks/01_radi_object.ipynb
+      - "3. VolumeCollection": notebooks/02_volume_collection.ipynb
+      - "4. Volume Operations": notebooks/03_volume.ipynb
+      - "5. Storage Config": notebooks/04_configuration.ipynb
+      - "6. Multi-Collection Ingestion": notebooks/05_ingest_msd.ipynb
+      - "7. ML Training": notebooks/06_ml_training.ipynb
 
   - How-to Guides:
-      - Overview: how-to/index.md
-      - Ingestion & Storage:
-          - Ingest Data: how-to/ingest-data.md
-          - Streaming Writes: how-to/streaming-writes.md
-          - Append Data: how-to/append-data.md
-      - Querying & Access:
-          - Indexing & Filtering: how-to/query-filter-data.md
-          - Working with Metadata: how-to/working-with-metadata.md
-          - Lazy Pipelines: how-to/lazy-queries.md
-          - Volume Operations: how-to/volume-operations.md
-      - ML Training:
-          - ML Integration: how-to/ml-training.md
-          - Tuning Concurrency: how-to/tuning-concurrency.md
-      - Infrastructure:
-          - S3 Setup: how-to/s3-setup.md
-          - Profiling: how-to/profiling.md
-          - Troubleshooting: how-to/troubleshooting.md
-          - Download Datasets: how-to/datasets.md
-          - Contributing: how-to/contributing.md
+      - how-to/index.md
+      - Ingest Data: how-to/ingest-data.md
+      - Access Data: how-to/access-data.md
+      - Lazy Pipelines: how-to/lazy-queries.md
+      - ML Training: how-to/ml-training.md
+      - Cloud Setup: how-to/cloud-setup.md
+      - Troubleshooting: how-to/troubleshooting.md
 
   - Reference:
-      - Overview: reference/index.md
+      - reference/index.md
       - Configuration: reference/configuration.md
+      - Benchmarks: reference/benchmarks.md
+      - Datasets: reference/datasets.md
+      - Lexicon: reference/lexicon.md
       - API:
           - RadiObject: api/radi_object.md
           - VolumeCollection: api/volume_collection.md
@@ -91,12 +80,7 @@ nav:
           - Context: api/ctx.md
           - Statistics: api/stats.md
           - ML: api/ml.md
-      - Benchmarks: reference/benchmarks.md
-      - Lexicon: reference/lexicon.md
-      - Layout: reference/layout.md
 
   - Explanation:
-      - Overview: explanation/index.md
       - Architecture: explanation/architecture.md
-      - Threading Model: explanation/threading-model.md
-      - Performance Analysis: explanation/performance-analysis.md
+      - Performance Analysis: explanation/performance.md

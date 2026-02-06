@@ -1,10 +1,8 @@
-# RadiObject Design
+# Architecture
 
-Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes. The hierarchy maps to [TileDB](https://docs.tiledb.com/main/) primitives (Groups and Arrays). For the directory structure mapping to this architecture, see [Layout](../reference/layout.md).
+Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes. The hierarchy maps to [TileDB](https://docs.tiledb.com/main/) primitives (Groups and Arrays).
 
 ## TileDB Structure
-
-The entity hierarchy with explicit dimensions and attributes:
 
 ```
 RadiObject (TileDB Group)
@@ -33,29 +31,15 @@ RadiObject (TileDB Group)
     │   │   │    dim[1]: obs_id          (ascii)  <- Unique volume ID        │
     │   │   │                                                                │
     │   │   │  ATTRIBUTES (Data):                                            │
-    │   │   │    series_type      <- "T1w", "FLAIR", etc.                    │
-    │   │   │    voxel_spacing    <- "(1.0, 1.0, 1.0)" per-volume spacing    │
-    │   │   │    dimensions       <- "(240, 240, 155)" or "(64, 64, 32, 200)" per-volume shape │
-    │   │   │    axcodes, affine_json, datatype, bitpix, ...                 │
+    │   │   │    series_type, voxel_spacing, dimensions, axcodes, ...         │
     │   │   └────────────────────────────────────────────────────────────────┘
     │   │
     │   └── volumes (TileDB Group)
-    │       │
     │       ├── 0 (Volume - Dense Array) ───────────────────────────────────┐
-    │       │   │  Each volume has its OWN shape (can differ across volumes) │
-    │       │   │                                                            │
-    │       │   │  DIMENSIONS (Indexes):                                     │
-    │       │   │    dim[0]: x  (int32, 0..X-1)                              │
-    │       │   │    dim[1]: y  (int32, 0..Y-1)                              │
-    │       │   │    dim[2]: z  (int32, 0..Z-1)                              │
-    │       │   │   [dim[3]: t  (int32, 0..T-1)]  <- 4D volumes only         │
-    │       │   │                                                            │
-    │       │   │  ATTRIBUTES (Data):                                        │
-    │       │   │    voxels  (float32/int16)  <- Intensity values            │
-    │       │   │                                                            │
-    │       │   │  METADATA: obs_id, slice_orientation, orientation info     │
+    │       │   │  DIMENSIONS: x, y, z [, t]                                │
+    │       │   │  ATTRIBUTES: voxels (float32/int16)                       │
+    │       │   │  METADATA:   obs_id, slice_orientation, orientation info   │
     │       │   └────────────────────────────────────────────────────────────┘
-    │       │
     │       ├── 1 (Volume) ...  <- may have different shape than Volume[0]
     │       └── N (Volume) ...
     │
@@ -84,11 +68,9 @@ RadiObject (TileDB Group)
 │         v                                          v                         │
 │  ┌──────────────────────────────────────────────────────────────┐           │
 │  │                        Volume (Dense Array)                   │           │
-│  │  ┌──────────────────────────────────────────────────────┐    │           │
-│  │  │  DIMENSIONS: x, y, z [, t]                           │    │           │
-│  │  │  ATTRIBUTES: voxels                                  │    │           │
-│  │  │  METADATA:   obs_id (links to obs dataframe)         │    │           │
-│  │  └──────────────────────────────────────────────────────┘    │           │
+│  │  DIMENSIONS: x, y, z [, t]                                   │           │
+│  │  ATTRIBUTES: voxels                                          │           │
+│  │  METADATA:   obs_id (links to obs dataframe)                 │           │
 │  └──────────────────────────────────────────────────────────────┘           │
 │                                                                              │
 │  (D) = Dimension    (A) = Attribute                                          │
@@ -102,34 +84,29 @@ RadiObject (TileDB Group)
 | **RadiObject** | Group | — | metadata: subject_count, n_collections |
 | **obs_meta** | Sparse Array | `obs_subject_id`, `obs_id` | User-defined (age, labels, etc.) |
 | **VolumeCollection** | Group | — | metadata: n_volumes, name, [shape]? |
-| **obs** | Sparse Array | `obs_subject_id`, `obs_id` | series_type, voxel_spacing, **dimensions**, etc. |
+| **obs** | Sparse Array | `obs_subject_id`, `obs_id` | series_type, voxel_spacing, dimensions, etc. |
 | **Volume** | Dense Array | `x`, `y`, `z` [, `t`] | `voxels` (intensity values) |
 
-## Index
+## Index Design
 
-`Index` is an immutable, named dataclass that provides bidirectional mapping between string IDs and integer positions. It is the public-facing object for working with ordered ID sequences in RadiObject.
+`Index` is an immutable, named dataclass providing bidirectional mapping between string IDs and integer positions:
 
 - **RadiObject.index**: `Index(name="obs_subject_id")` — subject-level ordering
 - **VolumeCollection.index**: `Index(name="obs_id")` — volume-level ordering
 - **VolumeCollection.subjects**: `Index(name="obs_subject_id")` — deduplicated subject IDs
 
-Index supports set algebra (`&`, `|`, `-`, `^`) with order preservation from the left operand, positional selection (`take`, `mask`), alignment checking (`is_aligned`), and subset/superset comparison (`<=`, `>=`). These operations enable concise cross-collection alignment validation and data splitting:
+Index supports set algebra (`&`, `|`, `-`, `^`) with order preservation from the left operand, positional selection (`take`, `mask`), alignment checking (`is_aligned`), and subset/superset comparison (`<=`, `>=`):
 
 ```python
-# Verify modalities share the same subjects
 radi.T1w.subjects.is_aligned(radi.seg.subjects)  # True
-
-# Intersection preserving first-index order
 common = radi.T1w.subjects & radi.seg.subjects
-
-# Train/val split completeness check
 train.index | val.index  # all subjects
 train.index & val.index  # empty = no overlap
 ```
 
 The standalone `align(*indexes)` function computes the intersection of multiple indexes, preserving order from the first.
 
-**Note on shapes:**
+**Shapes:**
 
 - **Uniform collections**: `x_dim, y_dim, z_dim` stored in group metadata; `is_uniform=True`
 - **Heterogeneous collections**: No shape in group metadata; each volume's shape stored in `obs.dimensions`
@@ -137,33 +114,84 @@ The standalone `align(*indexes)` function computes the intersection of multiple 
 
 ## Organisation
 
-Radiology datasets follow the DICOM hierarchy: patients undergo studies containing multiple series (acquisitions), each composed of instances (slices/frames). Volume dimensionality varies by acquisition type—structural scans are 3D while functional and diffusion data are 4D.
-
-Critically, **dimensions are irregular across a dataset**:
-
-- Different scanners produce different matrix sizes
-- Protocols vary by site and evolve over time
-- Preprocessing (resampling, registration) changes dimensions
-
-This irregularity makes batch analysis and ML challenging, as most frameworks expect uniform tensor shapes.
-
-`VolumeCollection` addresses this by grouping volumes with consistent spatial (X/Y/Z) dimensions—4D volumes with different time dimensions but the same spatial grid share a collection. `RadiObject` organizes heterogeneous collections (e.g., T1w at 1mm³, fMRI at 3mm³) under a unified structure.
+Radiology dimensions are irregular across datasets (different scanners, protocols, preprocessing). `VolumeCollection` groups volumes with consistent spatial (X/Y/Z) dimensions — 4D volumes with different time dimensions but the same spatial grid share a collection. `RadiObject` organizes heterogeneous collections (e.g., T1w at 1mm^3, fMRI at 3mm^3) under a unified structure.
 
 ## Composition
 
-The TileDB entities are a public property of each given entity. This allows direct access to the TileDB object for power users, while persisting a simple API surface. The individual entities are **stateless** - meaning file handles are not cached in memory (to prevent file handle exhaustion).
+The TileDB entities are a public property of each entity. This allows direct access to the TileDB object for power users, while presenting a simple API surface. Individual entities are **stateless** — file handles are not cached in memory (preventing file handle exhaustion).
 
 ## Anatomical Orientation
 
-Medical images encode spatial orientation via an **affine matrix** that maps voxel indices to physical (world) coordinates. RadiObject preserves this information and optionally standardizes orientation during ingestion.
+Medical images encode spatial orientation via an **affine matrix** mapping voxel indices to physical (world) coordinates. RadiObject preserves this information and optionally standardizes orientation during ingestion.
 
-Orientation is described by three-letter codes (RAS, LPS, LAS) indicating which anatomical direction each axis points. See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-orientation) for terminology.
+Orientation is described by three-letter codes (RAS, LPS, LAS) indicating which anatomical direction each axis points. See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-and-orientation) for terminology.
 
-**Tile orientation vs anatomical orientation** — these are distinct concepts:
+**Tile orientation vs anatomical orientation** — distinct concepts:
 
 - **Anatomical orientation** (`orientation_info`): Physical coordinate system (RAS/LPS)
 - **Tile orientation** (`tile_orientation`): Storage chunking strategy for I/O performance
 
 Choose tile orientation based on access patterns (see [Benchmarks](../reference/benchmarks.md)), not anatomical convention.
 
-For reorientation configuration during ingestion, see [Ingest Data: Handling Orientation](../how-to/ingest-data.md#handling-orientation). For tile configuration options, see [Configuration: TileConfig](../reference/configuration.md#tileconfig).
+For reorientation configuration, see [Ingest Data: Handling Orientation](../how-to/ingest-data.md#handling-orientation). For tile options, see [Configuration: TileConfig](../reference/configuration.md#tileconfig).
+
+## Concurrency Model
+
+RadiObject operates across **four concurrency layers**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer 4: PyTorch DataLoader Workers (PROCESSES via fork)       │
+│          num_workers=4, persistent_workers=True                 │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 3: Python ThreadPoolExecutor (THREADS)                   │
+│          max_workers from ReadConfig (default: 4)              │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 2: TileDB Internal Threads                               │
+│          sm.compute_concurrency_level, sm.io_concurrency_level │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 1: S3/VFS Level                                          │
+│          vfs.s3.max_parallel_ops (default: 8)                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Global State Management
+
+`get_tiledb_ctx()` lazily initializes a global TileDB context from `configure()` settings. All data objects accept an optional `ctx` parameter — if `None`, they fall back to the global context.
+
+### Context Injection
+
+```python
+class Volume:
+    def __init__(self, uri: str, ctx: tiledb.Ctx | None = None):
+        self._ctx = ctx  # None = use global
+
+    def _effective_ctx(self) -> tiledb.Ctx:
+        return self._ctx if self._ctx else get_tiledb_ctx()
+```
+
+### Threads vs Processes
+
+From [TileDB Wiki](https://github.com/TileDB-Inc/TileDB/wiki/Threading-Model): libtiledb is thread-safe, and sharing one `Ctx` across a thread pool is optimal because schema and fragment metadata is cached per-Ctx.
+
+RadiObject provides two semantically distinct context functions:
+
+```python
+def ctx_for_threads(ctx=None) -> tiledb.Ctx:
+    """Return context for thread pool workers. Shares caching."""
+    return ctx if ctx else get_tiledb_ctx()
+
+def ctx_for_process(base_ctx=None) -> tiledb.Ctx:
+    """Create new context for forked process. Isolated memory."""
+    if base_ctx is not None:
+        return tiledb.Ctx(base_ctx.config())
+    return get_radiobject_config().to_tiledb_ctx()
+```
+
+| Scenario | Function | Behavior |
+|----------|----------|----------|
+| `ThreadPoolExecutor` | `ctx_for_threads()` | Returns same context (shared caching) |
+| `multiprocessing.Pool` | `ctx_for_process()` | Creates new isolated context |
+| DataLoader (`num_workers>0`) | `ctx_for_process()` | Creates new isolated context |
+
+For practical tuning recipes, see [ML Training: Performance Tuning](../how-to/ml-training.md#performance-tuning).

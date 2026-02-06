@@ -139,7 +139,7 @@ def _get_manifest_cached(dataset: str) -> list[dict]:
         return manifest
     except FileNotFoundError:
         pytest.skip(
-            f"{dataset} manifest not found. " "Run: python scripts/download_dataset.py --all-tests"
+            f"{dataset} manifest not found. Run: python scripts/download_dataset.py --all-tests"
         )
 
 
@@ -459,8 +459,7 @@ def s3_tiledb_ctx() -> tiledb.Ctx:
     """TileDB context for S3 tests. Skips if S3 unavailable."""
     if not _is_s3_available():
         pytest.skip(
-            f"S3 bucket '{S3_TEST_BUCKET}' not accessible. "
-            "Configure AWS credentials: aws configure"
+            f"S3 bucket '{S3_TEST_BUCKET}' not accessible. Configure AWS credentials: aws configure"
         )
     ctx = _get_s3_ctx()
     if ctx is None:

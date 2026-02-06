@@ -1,20 +1,20 @@
 # Ingest Data
 
-RadiObject ingests NIfTI and DICOM files into TileDB arrays for efficient storage and retrieval. For terminology (NIfTI, DICOM, voxel spacing), see the [Lexicon](../reference/lexicon.md).
+RadiObject ingests NIfTI and DICOM files into TileDB arrays for efficient storage and retrieval. For terminology, see the [Lexicon](../reference/lexicon.md).
 
 ## Choosing an Ingestion Method
 
-| Method | Best For | Memory Requirement |
-|--------|----------|-------------------|
+| Method | Best For | Memory |
+|--------|----------|--------|
 | `RadiObject.from_niftis()` | Small-medium datasets (<1000 subjects) | Fits in memory |
-| `StreamingWriter` | Large single-collection datasets | Constant memory |
+| `VolumeCollectionWriter` | Large single-collection datasets | Constant |
 | `RadiObjectWriter` | Complex multi-collection builds | Controlled batches |
 
 **Decision guide:**
 
-1. **Can all data fit in memory?** → Use `RadiObject.from_niftis()`
-2. **Single collection, too large for memory?** → Use `StreamingWriter`
-3. **Multiple collections with custom logic?** → Use `RadiObjectWriter`
+1. **Can all data fit in memory?** Use `RadiObject.from_niftis()`
+2. **Single collection, too large for memory?** Use `VolumeCollectionWriter`
+3. **Multiple collections with custom logic?** Use `RadiObjectWriter`
 
 ## NIfTI Ingestion
 
@@ -23,7 +23,6 @@ The `images` dict API is the recommended way to create a RadiObject from NIfTI f
 ```python
 from radiobject import RadiObject
 
-# Ingest multiple collections in a single call
 radi = RadiObject.from_niftis(
     uri="./my-dataset",
     images={
@@ -38,11 +37,11 @@ radi = RadiObject.from_niftis(
 
 **Source formats** (values in `images` dict):
 
-| Format | Example | Description |
-|--------|---------|-------------|
-| Glob pattern | `"./data/*.nii.gz"` | Match files by pattern |
-| Directory | `"./data/imagesTr"` | Discover all NIfTIs in directory |
-| Pre-resolved list | `[(path, subject_id), ...]` | Explicit mapping |
+| Format | Example |
+|--------|---------|
+| Glob pattern | `"./data/*.nii.gz"` |
+| Directory | `"./data/imagesTr"` |
+| Pre-resolved list | `[(path, subject_id), ...]` |
 
 **Options:**
 
@@ -55,7 +54,7 @@ radi = RadiObject.from_niftis(
 
 ## DICOM Ingestion
 
-For DICOM data, use `from_dicoms` which automatically extracts metadata and groups by modality:
+`from_dicoms` automatically extracts metadata and groups by modality:
 
 ```python
 radi = RadiObject.from_dicoms(
@@ -70,55 +69,128 @@ radi = RadiObject.from_dicoms(
 
 Each tuple maps a DICOM directory to a subject ID. Collections are auto-grouped by modality and dimensions.
 
-## Writing to S3
+## Streaming Writes
 
-Ingest directly to S3 by using an S3 URI:
+For datasets too large to fit in memory, use streaming writers to build RadiObjects incrementally.
+
+### VolumeCollectionWriter
+
+Incremental writes to a single VolumeCollection:
 
 ```python
-RadiObject.from_niftis(
-    "s3://your-bucket/new-dataset",
-    images={"CT": "./local/images"},
-    obs_meta=df,
+from radiobject.writers import VolumeCollectionWriter
+
+with VolumeCollectionWriter("./large-collection", name="CT") as writer:
+    for path, subject_id in discover_niftis("./source"):
+        data = load_nifti(path)
+        writer.write_volume(
+            data=data,
+            obs_id=f"{subject_id}_CT",
+            obs_subject_id=subject_id,
+            voxel_spacing=(1.0, 1.0, 1.0),
+        )
+
+collection = VolumeCollection("./large-collection")
+```
+
+`write_volume()` accepts `(X, Y, Z)` or `(X, Y, Z, T)` numpy arrays. Additional keyword arguments become volume-level obs attributes. `write_batch()` accepts a list of `(data, obs_id, obs_subject_id, attrs_dict)` tuples.
+
+### RadiObjectWriter
+
+Builds complete RadiObjects with multiple collections:
+
+```python
+from radiobject.writers import RadiObjectWriter
+import pandas as pd
+
+with RadiObjectWriter("./large-dataset") as writer:
+    writer.write_obs_meta(pd.DataFrame({
+        "obs_subject_id": ["sub-01", "sub-02"],
+        "age": [45, 52],
+        "diagnosis": ["tumor", "healthy"],
+    }))
+
+    with writer.add_collection("T1w") as t1_writer:
+        for subject_id, data in load_t1w_data():
+            t1_writer.write_volume(data, obs_id=f"{subject_id}_T1w", obs_subject_id=subject_id)
+
+    with writer.add_collection("FLAIR") as flair_writer:
+        for subject_id, data in load_flair_data():
+            flair_writer.write_volume(data, obs_id=f"{subject_id}_FLAIR", obs_subject_id=subject_id)
+
+radi = RadiObject("./large-dataset")
+```
+
+Streaming writers work with S3 URIs. For S3 write performance, configure parallel uploads:
+
+```python
+from radiobject import configure, S3Config
+configure(s3=S3Config(max_parallel_ops=16, multipart_part_size_mb=100))
+```
+
+## Appending Data
+
+Add new subjects to existing RadiObjects without rebuilding:
+
+```python
+radi = RadiObject("./my-dataset")
+
+new_obs_meta = pd.DataFrame({
+    "obs_subject_id": ["sub-100", "sub-101"],
+    "age": [38, 45],
+    "diagnosis": ["healthy", "tumor"],
+})
+
+radi.append(
+    niftis=[
+        ("sub-100_T1w.nii.gz", "sub-100"),
+        ("sub-101_T1w.nii.gz", "sub-101"),
+    ],
+    obs_meta=new_obs_meta,
+    progress=True,
 )
 ```
 
-See [S3 Setup](s3-setup.md) for AWS credential configuration.
+Appends are atomic: both `obs_meta` and volumes are written together. Cached properties are automatically invalidated.
+
+Append directly to a VolumeCollection:
+
+```python
+radi.T1w.append(niftis=[("sub-102_T1w.nii.gz", "sub-102")], progress=True)
+```
+
+**Constraints:**
+
+1. Append adds to existing collections only. To add new collections, use `add_collection()`.
+2. Appended `obs_subject_id` values must not already exist in the RadiObject.
+3. New subjects require corresponding metadata in the `obs_meta` DataFrame.
 
 ## Handling Orientation
 
-Medical images use coordinate systems (RAS, LPS, etc.) to map voxels to physical space. RadiObject can reorient volumes during ingestion.
-
-### Automatic Reorientation
+Medical images use coordinate systems (RAS, LPS) to map voxels to physical space. RadiObject can reorient volumes during ingestion.
 
 ```python
 from radiobject import configure, WriteConfig, OrientationConfig
 
 configure(write=WriteConfig(
-    orientation=OrientationConfig(
-        canonical_target="RAS",
-        reorient_on_load=True
-    )
+    orientation=OrientationConfig(canonical_target="RAS", reorient_on_load=True)
 ))
 
-# All subsequent ingestions will reorient to RAS
 radi = RadiObject.from_niftis(uri, images={"CT": "./data"})
 ```
 
-### When to Reorient
-
 | Scenario | Recommendation |
 |----------|----------------|
-| Multi-site studies with inconsistent scanner orientations | **Do reorient** |
-| Preserving original acquisition geometry matters | **Don't reorient** |
-| ML training (standardized input expected) | **Do reorient** |
-| Clinical review (radiologist expects native orientation) | **Don't reorient** |
+| Multi-site studies with inconsistent orientations | Reorient |
+| Preserving original acquisition geometry | Don't reorient |
+| ML training (standardized input expected) | Reorient |
+| Clinical review (native orientation expected) | Don't reorient |
 
-See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-orientation) for terminology.
+See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-and-orientation) for terminology.
 
-## 4D / Functional Data (fMRI, DTI)
+## 4D Data (fMRI, DTI)
 
-RadiObject natively supports 4D NIfTI volumes (3 spatial + 1 temporal/channel dimension).
-No special configuration is needed—4D files are ingested the same way as 3D:
+RadiObject natively supports 4D NIfTI volumes. No special configuration needed:
 
 ```python
 radi = RadiObject.from_niftis(
@@ -127,23 +199,18 @@ radi = RadiObject.from_niftis(
 )
 
 vol = radi.bold.iloc[0]
-print(vol.shape)   # (64, 64, 32, 200)  — 200 timepoints
-print(vol.ndim)    # 4
+print(vol.shape)   # (64, 64, 32, 200) — 200 timepoints
 ```
 
-**How dimensions work with 4D data:**
+**How dimensions work:**
 
-- **Collection shape** (`radi.bold.shape`) reports spatial dimensions only: `(64, 64, 32)`
-- **Volume shape** (`vol.shape`) reports the full shape including time: `(64, 64, 32, 200)`
-- **Metadata** (`obs.dimensions`) captures the full 4D shape as a string
-- **Shape validation** compares spatial dims only—volumes with different timepoint counts
-  but the same spatial grid pass `validate_dimensions=True`
+- **Collection shape** reports spatial dimensions only: `(64, 64, 32)`
+- **Volume shape** reports the full shape including time: `(64, 64, 32, 200)`
+- **Shape validation** compares spatial dims only — volumes with different timepoint counts pass `validate_dimensions=True`
 
 ## Managing Existing Data
 
 ### Check If Data Exists
-
-Before ingesting, verify whether a TileDB object already exists at the target URI:
 
 ```python
 from radiobject import uri_exists
@@ -154,8 +221,6 @@ if uri_exists("s3://bucket/my-dataset"):
 
 ### Delete and Reingest
 
-Remove an existing TileDB object to replace it:
-
 ```python
 from radiobject import delete_tiledb_uri
 
@@ -165,41 +230,14 @@ radi = RadiObject.from_niftis("s3://bucket/my-dataset", images={"CT": "./data"})
 
 ### Create from Existing VolumeCollections
 
-Assemble a RadiObject from pre-existing VolumeCollections — useful after materializing transformed collections:
+Assemble a RadiObject from pre-existing VolumeCollections:
 
 ```python
-from radiobject import RadiObject
-
-# Collections already at expected sub-paths (no copy)
-ct = radi.CT.lazy().map(transform).materialize(uri=f"{URI}/collections/CT")
-seg = radi.seg.lazy().map(transform).materialize(uri=f"{URI}/collections/seg")
-
-new_radi = RadiObject.from_collections(
-    uri=URI,
-    collections={"CT": ct, "seg": seg},
-)
-
-# Collections from elsewhere (will be copied to target)
 new_radi = RadiObject.from_collections(
     uri="./new-dataset",
     collections={"T1w": existing_collection},
-    obs_meta=metadata_df,  # Optional; derived from collections if omitted
+    obs_meta=metadata_df,
 )
 ```
 
 For full API details, see [RadiObject API](../api/radi_object.md).
-
-## Large Dataset Ingestion
-
-For datasets too large to fit in memory, use streaming writes:
-
-- [Streaming Writes](streaming-writes.md) - Incremental writes with `StreamingWriter`
-- [Append Data](append-data.md) - Add subjects to existing RadiObjects
-
-## Next Step
-
-**Data ingested?** Explore it with [Indexing & Filtering](query-filter-data.md) — filter subjects, inspect collections, and access individual volumes.
-
-## Related Documentation
-
-- [Configuration](../reference/configuration.md) - Tile orientation, compression settings

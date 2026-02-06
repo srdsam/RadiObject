@@ -2,11 +2,11 @@
 
 Common issues and solutions when working with RadiObject.
 
-## macOS DataLoader Workers with S3
+## macOS DataLoader Fork Issue
 
 **Symptom:** Hang or crash when using `num_workers > 0` in PyTorch DataLoader with S3-backed data.
 
-**Cause:** macOS uses `fork()` for multiprocessing by default, which is unsafe with S3 connections. The forked child inherits the parent's TileDB context, but S3 connections are not fork-safe.
+**Cause:** macOS uses `fork()` for multiprocessing by default, which is unsafe with S3 connections.
 
 **Fix:** Use `num_workers=0` (single-process loading):
 
@@ -17,30 +17,12 @@ loader = create_training_dataloader(
 )
 ```
 
-Alternatively, set the multiprocessing start method to `spawn`:
+Or set the multiprocessing start method to `spawn`:
 
 ```python
 import torch.multiprocessing as mp
 mp.set_start_method("spawn", force=True)
 ```
-
-## TileDB Context Errors
-
-**Symptom:** `tiledb.TileDBError: Context already finalized` or similar context-related errors.
-
-**Cause:** Sharing TileDB contexts across forked processes.
-
-**Fix:** Use `ctx_for_process()` in forked workers, not `ctx_for_threads()`:
-
-```python
-from radiobject.parallel import ctx_for_process
-
-def worker_fn():
-    ctx = ctx_for_process()  # Creates a new context for this process
-    vol = Volume(uri, ctx=ctx)
-```
-
-See [Threading Model](../explanation/threading-model.md) for details on context isolation.
 
 ## Out of Memory (OOM)
 
@@ -72,25 +54,71 @@ See [Threading Model](../explanation/threading-model.md) for details on context 
    )
    ```
 
-## Slow S3 Performance
+## Slow Reads Diagnostic Tree
 
-**Symptom:** Operations on S3-backed data are slower than expected.
+```
+Slow reads?
+├── Check cache hit rate (stats.cache_stats().hit_rate)
+│   ├── <60%? → Share TileDB contexts across operations
+│   └── >60%? → Check all_counters() for read latency breakdown
+│       ├── Network/disk dominant? → Increase max_parallel_ops (S3) or check disk
+│       └── Consider lower compression level or faster codec (LZ4)
+│
+Slow S3 access?
+├── Cold start >5s? → Expected for first connection
+├── Warm reads still slow?
+│   ├── Check parallelization rate
+│   │   ├── <50%? → Increase max_parallel_ops
+│   │   └── >50%? → Network bandwidth limited
+│   └── Consider patch-based reads instead of full volumes
+│
+Memory issues (OOM)?
+├── Reduce num_workers in DataLoader
+├── Reduce memory_budget_mb
+└── Use streaming with iter_volumes() instead of loading all
+```
 
-**Checklist:**
+Use `TileDBStats` to measure:
 
-1. **Same-region access?** Ensure compute and S3 bucket are in the same AWS region
-2. **Parallel ops configured?**
-   ```python
-   from radiobject import configure, S3Config
-   configure(s3=S3Config(max_parallel_ops=16))
-   ```
-3. **Using partial reads?** Prefer `vol.axial(z)` or `vol.slice(...)` over `vol.to_numpy()` when possible
-4. **Check network bandwidth** with `iperf3` or similar tools
+```python
+from radiobject import TileDBStats
 
-See [Tuning Concurrency](tuning-concurrency.md) and [S3 Setup](s3-setup.md) for optimization guidance.
+with TileDBStats() as stats:
+    data = vol.to_numpy()
 
-## Related Documentation
+counters = stats.all_counters()
+for key, value in sorted(counters.items()):
+    if value > 0:
+        print(f"{key}: {value}")
+```
 
-- [Configuration](../reference/configuration.md) - All configuration options
-- [Profiling](profiling.md) - Measure and diagnose performance
-- [Threading Model](../explanation/threading-model.md) - Context isolation details
+## S3 Latency
+
+**Cold start (>5s):** Expected for first S3 connection. Subsequent reads are faster.
+
+**Warm reads still slow:**
+
+```python
+from radiobject import configure, S3Config
+configure(s3=S3Config(max_parallel_ops=16))
+```
+
+Prefer partial reads (`vol.axial(z)`, `vol.slice(...)`) over `vol.to_numpy()` when possible.
+
+## Context Errors
+
+**Symptom:** `tiledb.TileDBError: Context already finalized` or similar.
+
+**Cause:** Sharing TileDB contexts across forked processes.
+
+**Fix:** Use `ctx_for_process()` in forked workers, not `ctx_for_threads()`:
+
+```python
+from radiobject.parallel import ctx_for_process
+
+def worker_fn():
+    ctx = ctx_for_process()
+    vol = Volume(uri, ctx=ctx)
+```
+
+See [Architecture: Concurrency Model](../explanation/architecture.md#concurrency-model) for details.

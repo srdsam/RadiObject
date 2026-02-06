@@ -1,36 +1,12 @@
 # How-to Guides
 
-Task-oriented guides organized by workflow stage. Follow the journey from ingestion through training, or jump to the guide you need.
-
-## Ingest → Explore → Transform → Train
-
-### 1. Get Data In
+Task-oriented guides for common RadiObject workflows.
 
 | I want to... | Guide |
 |--------------|-------|
-| Ingest NIfTI/DICOM files or manage existing data | [Ingest Data](ingest-data.md) |
-| Write large datasets incrementally | [Streaming Writes](streaming-writes.md) / [Append Data](append-data.md) |
-
-**Next:** Once data is ingested, explore it with [Indexing & Filtering](query-filter-data.md).
-
-### 2. Explore & Access
-
-| I want to... | Guide |
-|--------------|-------|
-| Filter subjects, index by position or ID | [Indexing & Filtering](query-filter-data.md) |
-| Browse subject/volume metadata | [Working with Metadata](working-with-metadata.md) |
-| Read slices, get statistics, or export to NIfTI | [Volume Operations](volume-operations.md) |
-
-**Next:** For ETL or ML data prep, continue to [Lazy Pipelines](lazy-queries.md).
-
-### 3. Transform & Train
-
-| I want to... | Guide |
-|--------------|-------|
-| Build ETL pipelines with transforms or streaming | [Lazy Pipelines](lazy-queries.md) |
-| Train with MONAI or TorchIO | [ML Integration](ml-training.md) |
-| Tune DataLoader and thread settings | [Tuning Concurrency](tuning-concurrency.md) |
-
-### 4. Infrastructure
-
-[S3 Setup](s3-setup.md) | [Profiling](profiling.md) | [Troubleshooting](troubleshooting.md) | [Datasets](datasets.md) | [Contributing](contributing.md)
+| Ingest NIfTI/DICOM files, stream large datasets, append data | [Ingest Data](ingest-data.md) |
+| Index, filter, inspect metadata, read slices, export | [Access Data](access-data.md) |
+| Build transform pipelines, iterate volumes in batches | [Lazy Pipelines](lazy-queries.md) |
+| Train with MONAI/TorchIO, tune DataLoader performance | [ML Training](ml-training.md) |
+| Set up AWS S3 credentials and cloud storage | [Cloud Setup](cloud-setup.md) |
+| Fix macOS fork crashes, OOM errors, slow reads | [Troubleshooting](troubleshooting.md) |

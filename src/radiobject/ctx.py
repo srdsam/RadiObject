@@ -237,19 +237,19 @@ _config: RadiObjectConfig = RadiObjectConfig()
 _ctx: tiledb.Ctx | None = None
 
 
-def radi_cfg() -> RadiObjectConfig:
+def get_radiobject_config() -> RadiObjectConfig:
     """Get the current RadiObject configuration."""
     return _config
 
 
-def radi_reset() -> None:
+def reset_radiobject_config() -> None:
     """Reset RadiObject configuration to defaults."""
     global _config, _ctx
     _config = RadiObjectConfig()
     _ctx = None
 
 
-def tdb_ctx() -> tiledb.Ctx:
+def get_tiledb_ctx() -> tiledb.Ctx:
     """Get the global TileDB context (lazily built from config)."""
     global _ctx
     if _ctx is None:
@@ -257,7 +257,7 @@ def tdb_ctx() -> tiledb.Ctx:
     return _ctx
 
 
-def tdb_cfg() -> tiledb.Config:
+def get_tiledb_config() -> tiledb.Config:
     """Get the underlying TileDB Config object for advanced users."""
     return _config.to_tiledb_config()
 

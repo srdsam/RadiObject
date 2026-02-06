@@ -25,7 +25,7 @@ jupyter notebook
 | **01_radi_object.ipynb** | Core RadiObject API |
 | **02_volume_collection.ipynb** | Working with VolumeCollections |
 | **03_volume.ipynb** | Volume operations and slicing |
-| **04_storage_configuration.ipynb** | Tile orientation, compression |
+| **04_configuration.ipynb** | Tile orientation, compression |
 | **05_ingest_msd.ipynb** | Multi-collection ingestion with `images` dict API |
 | **06_ml_training.ipynb** | MONAI/TorchIO integration |
 
@@ -52,4 +52,4 @@ from radiobject.data import get_brats_uri
 BRATS_URI = get_brats_uri()  # Returns S3 URI if credentials available
 ```
 
-See [S3 Setup Guide](https://srdsam.github.io/RadiObject/S3_SETUP/) for AWS configuration.
+See [Cloud Setup](https://srdsam.github.io/RadiObject/how-to/cloud-setup/) for AWS configuration.
