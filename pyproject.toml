@@ -87,6 +87,7 @@ Repository = "https://github.com/srdsam/radiobject"
 
 [dependency-groups]
 dev = [
+    "ipykernel>=6.29.0,<7",
     "papermill>=2.6.0",
     "pre-commit>=4.5.1",
     "pyinstrument>=5.0.0",

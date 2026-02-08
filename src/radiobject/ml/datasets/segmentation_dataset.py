@@ -30,22 +30,6 @@ class SegmentationDataset(Dataset):
         foreground_threshold: float = 0.01,
         foreground_max_retries: int = 10,
     ):
-        """Initialize segmentation dataset.
-
-        Args:
-            image: VolumeCollection containing input images (CT, MRI, etc.).
-            mask: VolumeCollection containing segmentation masks.
-            config: Dataset configuration (loading mode, patch size, etc.).
-            image_transform: Transform applied to image only (e.g., normalization).
-                Should operate on keys=["image"].
-            spatial_transform: Transform applied to both image and mask (e.g., flips).
-                Should operate on keys=["image", "mask"].
-            foreground_sampling: If True, bias patch sampling toward regions with
-                foreground (non-zero mask values).
-            foreground_threshold: Minimum fraction of foreground voxels in patch
-                when foreground_sampling is enabled.
-            foreground_max_retries: Maximum random attempts before accepting any patch.
-        """
         self._config = config or DatasetConfig()
         self._image_transform = image_transform
         self._spatial_transform = spatial_transform
@@ -53,29 +37,39 @@ class SegmentationDataset(Dataset):
         self._foreground_threshold = foreground_threshold
         self._foreground_max_retries = foreground_max_retries
 
-        # Store collections directly
         self._image = image
         self._mask = mask
 
-        # Cache obs_ids and obs_subject_ids for fast access
         self._obs_ids = image.obs_ids
         self._obs_subject_ids = image.obs_subject_ids
 
-        # Validate alignment between image and mask collections
         collections = {"image": self._image, "mask": self._mask}
         validate_collection_alignment(collections)
 
-        # Validate uniform shapes
         self._volume_shape = validate_uniform_shapes(collections)
         self._n_volumes = len(self._image)
 
-        # Compute dataset length
+        # Pre-compute foreground regions for guided patch sampling
+        self._fg_coords: dict[int, np.ndarray] | None = None
+        if self._foreground_sampling and self._config.loading_mode == LoadingMode.PATCH:
+            self._fg_coords = self._precompute_foreground_coords()
+
         if self._config.loading_mode == LoadingMode.PATCH:
             self._length = self._n_volumes * self._config.patches_per_volume
         elif self._config.loading_mode == LoadingMode.SLICE_2D:
             self._length = self._n_volumes * self._volume_shape[2]
         else:
             self._length = self._n_volumes
+
+    def _precompute_foreground_coords(self) -> dict[int, np.ndarray]:
+        """Load each mask once and cache nonzero voxel coordinates for guided sampling."""
+        fg_coords: dict[int, np.ndarray] = {}
+        for vol_idx in range(self._n_volumes):
+            mask_data = self._mask.iloc[vol_idx].to_numpy()
+            coords = np.argwhere(mask_data > 0)  # (N, 3) array of [x, y, z]
+            if len(coords) > 0:
+                fg_coords[vol_idx] = coords
+        return fg_coords
 
     def __len__(self) -> int:
         return self._length
@@ -113,11 +107,10 @@ class SegmentationDataset(Dataset):
 
         max_start = tuple(max(0, self._volume_shape[i] - patch_size[i]) for i in range(3))
 
-        if self._foreground_sampling:
-            # Try to find a patch with sufficient foreground
-            start = self._sample_foreground_patch(volume_idx, max_start, patch_size, idx)
+        if self._fg_coords is not None and volume_idx in self._fg_coords:
+            start = self._sample_guided_patch(volume_idx, max_start, patch_size)
         else:
-            rng = np.random.default_rng(seed=idx)
+            rng = np.random.default_rng(seed=None)
             start = tuple(
                 rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
             )
@@ -148,6 +141,29 @@ class SegmentationDataset(Dataset):
 
         return self._apply_transforms(result)
 
+    def _sample_guided_patch(
+        self,
+        volume_idx: int,
+        max_start: tuple[int, ...],
+        patch_size: tuple[int, int, int],
+    ) -> tuple[int, int, int]:
+        """Sample a patch center from pre-computed foreground coordinates.
+
+        Picks a random foreground voxel and centers the patch around it,
+        clamped to valid bounds. No extra I/O needed.
+        """
+        rng = np.random.default_rng(seed=None)
+        coords = self._fg_coords[volume_idx]  # type: ignore[index]
+
+        # Pick a random foreground voxel as the patch center
+        center = coords[rng.integers(0, len(coords))]
+
+        # Compute start position so center is within the patch, clamped to bounds
+        half = np.array(patch_size) // 2
+        start = np.clip(center - half, 0, np.array(max_start))
+
+        return tuple(int(s) for s in start)  # type: ignore[return-value]
+
     def _sample_foreground_patch(
         self,
         volume_idx: int,
@@ -155,11 +171,14 @@ class SegmentationDataset(Dataset):
         patch_size: tuple[int, int, int],
         seed: int,
     ) -> tuple[int, int, int]:
-        """Sample a patch position biased toward foreground regions."""
-        rng = np.random.default_rng(seed=seed)
+        """Sample a patch position biased toward foreground regions (legacy fallback)."""
+        rng = np.random.default_rng(seed=None)
         mask_vol = self._mask.iloc[volume_idx]
 
-        for attempt in range(self._foreground_max_retries):
+        best_start: tuple[int, int, int] | None = None
+        best_fg: float = 0.0
+
+        for _attempt in range(self._foreground_max_retries):
             start = tuple(
                 rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
             )
@@ -174,8 +193,11 @@ class SegmentationDataset(Dataset):
             if foreground_ratio >= self._foreground_threshold:
                 return start  # type: ignore[return-value]
 
-        # Fallback: return last sampled position
-        return start  # type: ignore[return-value]
+            if foreground_ratio > best_fg:
+                best_fg = foreground_ratio
+                best_start = start  # type: ignore[assignment]
+
+        return best_start if best_start is not None else start  # type: ignore[return-value]
 
     def _get_slice_item(self, idx: int) -> dict[str, Any]:
         """Load a 2D slice from image and mask."""
@@ -198,11 +220,9 @@ class SegmentationDataset(Dataset):
 
     def _apply_transforms(self, result: dict[str, Any]) -> dict[str, Any]:
         """Apply spatial and image transforms to sample dict."""
-        # Spatial transform affects both image and mask
         if self._spatial_transform is not None:
             result = self._spatial_transform(result)
 
-        # Image transform affects only image
         if self._image_transform is not None:
             result = self._image_transform(result)
 

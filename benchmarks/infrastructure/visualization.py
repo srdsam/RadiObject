@@ -158,25 +158,29 @@ def create_hero_chart(
         print("No results found for hero chart")
         return
 
-    # Build DataFrame
-    rows = []
+    # Build rows, collapsing tiling strategies into best time per framework/operation/scenario
+    best: dict[tuple[str, str, str], float] = {}
     for r in filtered:
         label = r.framework
-        if r.tiling_strategy:
-            label += f" ({r.tiling_strategy})"
         if r.scenario == "s3":
             label += " [S3]"
-        rows.append(
-            {
-                "label": label,
-                "operation": r.benchmark_name,
-                "time_ms": r.time_mean_ms,
-                "framework": r.framework,
-            }
-        )
+        key = (label, r.benchmark_name, r.framework)
+        if key not in best or r.time_mean_ms < best[key]:
+            best[key] = r.time_mean_ms
+
+    rows = [
+        {"label": label, "operation": op, "time_ms": t, "framework": fw}
+        for (label, op, fw), t in best.items()
+    ]
 
     df = pd.DataFrame(rows)
     pivot = df.pivot(index="operation", columns="label", values="time_ms")
+
+    # Consistent ordering: RadiObject first, then RadiObject [S3], then alphabetical others
+    radi_cols = [c for c in pivot.columns if c == "RadiObject"]
+    s3_cols = [c for c in pivot.columns if c == "RadiObject [S3]"]
+    other_cols = sorted(c for c in pivot.columns if c not in radi_cols + s3_cols)
+    pivot = pivot[radi_cols + s3_cols + other_cols]
 
     fig, ax = plt.subplots(figsize=(12, 6))
     pivot.plot(kind="bar", ax=ax, width=0.8, edgecolor="black", linewidth=0.5)
