@@ -301,7 +301,7 @@ class TestVolumeCollectionMap:
         original_data = original_vol.to_numpy()
 
         new_uri = str(temp_dir / "vc_map_transform")
-        new_vc = populated_collection.map(lambda v: v * 5).materialize(new_uri)
+        new_vc = populated_collection.map(lambda v, obs: v * 5).write(new_uri)
 
         new_vol = next(iter(new_vc))
         new_data = new_vol.to_numpy()

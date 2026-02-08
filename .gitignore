@@ -33,6 +33,10 @@ site/
 # Scratch files
 scratch.md
 
+# Model checkpoints
+*.pt
+*.pth
+
 # Benchmark results (generated artifacts)
 results/
 benchmarks/results/raw/

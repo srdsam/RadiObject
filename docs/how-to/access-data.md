@@ -206,7 +206,7 @@ for subject_id, vols in radi.T1w.groupby_subject():
         print(f"{subject_id}: mean={vol.to_numpy().mean():.1f}")
 ```
 
-## Materialization
+## Write Views to Storage
 
 Views can be exported to new storage:
 
@@ -217,4 +217,4 @@ subset.materialize("s3://bucket/subset")
 radi_subset = RadiObject("s3://bucket/subset")
 ```
 
-For streaming materialization and transform pipelines, see [Lazy Pipelines](lazy-queries.md).
+For transform pipelines (eager and lazy), see [Pipelines](pipelines.md).

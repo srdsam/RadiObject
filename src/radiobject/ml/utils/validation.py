@@ -81,3 +81,36 @@ def validate_uniform_shapes(collections: dict[str, VolumeCollection]) -> tuple[i
         raise ValueError("No collections provided")
 
     return shape
+
+
+def collect_volume_shapes(
+    collections: dict[str, VolumeCollection],
+    patch_size: tuple[int, int, int],
+) -> list[tuple[int, int, int]]:
+    """Collect per-volume shapes and validate each is >= patch_size.
+
+    For PATCH mode with heterogeneous collections, reads each volume's shape
+    from TileDB schema metadata (no data I/O).
+
+    Returns:
+        List of (X, Y, Z) shapes, one per volume.
+
+    Raises:
+        ValueError: If any volume is smaller than patch_size in any dimension.
+    """
+    ref_coll = next(iter(collections.values()))
+    n = len(ref_coll)
+    shapes: list[tuple[int, int, int]] = []
+
+    for i in range(n):
+        vol = ref_coll.iloc[i]
+        s = vol.shape[:3]
+        for d in range(3):
+            if s[d] < patch_size[d]:
+                raise ValueError(
+                    f"Volume {i} shape {s} is smaller than patch_size "
+                    f"{patch_size} in dimension {d}"
+                )
+        shapes.append((s[0], s[1], s[2]))
+
+    return shapes

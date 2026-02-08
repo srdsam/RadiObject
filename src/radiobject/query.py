@@ -1,536 +1,234 @@
-"""Lazy query builder pattern for RadiObject and VolumeCollection filtering.
+"""Eager and lazy query builders for VolumeCollection pipelines.
 
-Query Design:
-=============
-Queries work by building up filter conditions and resolving them to masks (sets of IDs).
-The flow is:
+Classes:
+    EagerQuery  — returned by VolumeCollection.map(). Holds computed results
+                  with chaining (.map), persistence (.write), and extraction (.to_list).
+    LazyQuery   — returned by VolumeCollection.lazy(). Defers filter + transform
+                  until .write() for single-pass, memory-efficient ETL.
 
-1. Start with RadiObject.lazy() or VolumeCollection.lazy()
-2. Add filter conditions (obs_meta filters, collection filters)
-3. Add transforms via .map() for compute-intensive operations
-4. Resolve to masks:
-   - Subject mask: set of obs_subject_ids matching criteria
-   - Volume mask: set of obs_ids within each collection matching criteria
-5. Apply masks via materialization (iter_volumes, materialize, etc.)
-
-Key Concepts:
-- obs_meta: Subject-level metadata (indexed by obs_subject_id)
-- obs: Volume-level metadata per collection (indexed by obs_id, contains obs_subject_id FK)
-- A subject matches if it passes obs_meta filter AND has at least one volume passing collection filters
+Transform signature:
+    All transforms receive (volume: np.ndarray, obs_row: pd.Series) and return
+    either a transformed volume, or (volume, obs_updates_dict) to annotate
+    obs metadata during the pipeline.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterator, Sequence
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Generic, Iterator, Sequence, TypeVar
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import tiledb
 
-from radiobject._types import TransformFn
+from radiobject._types import AttrValue, TransformFn, normalize_transform_result
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
-    from radiobject.radi_object import RadiObject
     from radiobject.volume_collection import VolumeCollection
 
 
 def _compose_transforms(prev_fn: TransformFn | None, new_fn: TransformFn) -> TransformFn:
-    """Compose two transform functions, applying prev_fn then new_fn."""
+    """Compose two transform functions, applying prev_fn then new_fn.
+
+    Propagates obs_updates through the chain: prev_fn's updates are merged
+    into obs_row before passing to new_fn, and all updates are combined.
+    """
     if prev_fn is None:
         return new_fn
 
-    def composed_fn(v: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
-        return new_fn(prev_fn(v))
+    def composed_fn(
+        volume: npt.NDArray[np.floating], obs_row: pd.Series
+    ) -> npt.NDArray[np.floating] | tuple[npt.NDArray[np.floating], dict]:
+        prev_result = prev_fn(volume, obs_row)
+        prev_vol, prev_updates = normalize_transform_result(prev_result)
+        merged_obs = obs_row.copy()
+        for k, v in prev_updates.items():
+            merged_obs[k] = v
+        next_result = new_fn(prev_vol, merged_obs)
+        next_vol, next_updates = normalize_transform_result(next_result)
+        combined = {**prev_updates, **next_updates}
+        if combined:
+            return next_vol, combined
+        return next_vol
 
     return composed_fn
 
 
-@dataclass(frozen=True)
-class VolumeBatch:
-    """Batch of volumes for ML training with stacked numpy arrays."""
-
-    volumes: dict[str, npt.NDArray[np.floating]]  # collection_name -> (N, X, Y, Z)
-    subject_ids: tuple[str, ...]
-    obs_ids: dict[str, tuple[str, ...]]  # collection_name -> obs_ids
-
-
-@dataclass(frozen=True)
-class QueryCount:
-    """Count results for a query."""
-
-    n_subjects: int
-    n_volumes: dict[str, int]  # collection_name -> volume count
+def _infer_attr_dtype(value: AttrValue) -> np.dtype:
+    """Infer TileDB-compatible numpy dtype from a Python scalar."""
+    if isinstance(value, bool):
+        return np.dtype("uint8")
+    if isinstance(value, int):
+        return np.dtype("int64")
+    if isinstance(value, float):
+        return np.dtype("float64")
+    return np.dtype("U256")
 
 
-class Query:
-    """Lazy filter builder for RadiObject with explicit materialization.
+_OBS_ID_COLS = frozenset({"obs_id", "obs_subject_id"})
 
-    Filters accumulate without data access. Call `iter_volumes()`, `materialize()`,
-    or `count()` to materialize results.
 
-    Example:
-        Filter and materialize a subset:
+def _build_obs_schema(obs_accessor: object) -> dict[str, np.dtype]:
+    """Build obs_schema from a source's obs columns, excluding identity columns."""
+    return {
+        col: obs_accessor.dtypes[col] for col in obs_accessor.columns if col not in _OBS_ID_COLS
+    }
 
-            result = (
-                radi.lazy()
-                .filter("age > 40")
-                .filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
-                .map(normalize_intensity)
-                .materialize("s3://bucket/subset")
-            )
+
+def _extend_obs_schema(
+    schema: dict[str, np.dtype],
+    updates_iter: Iterator[dict[str, AttrValue]],
+) -> None:
+    """Extend obs_schema in-place with new columns discovered from obs_updates."""
+    for updates in updates_iter:
+        for key, val in updates.items():
+            if key not in schema and key not in _OBS_ID_COLS:
+                schema[key] = _infer_attr_dtype(val)
+
+
+def _extract_obs_attrs(obs_row: pd.Series) -> dict[str, AttrValue]:
+    """Extract non-identity attributes from an obs row."""
+    return {k: v for k, v in obs_row.items() if k not in _OBS_ID_COLS}
+
+
+def _apply_transform_to_volumes(
+    transform_fn: TransformFn,
+    collection: VolumeCollection,
+    filtered_obs: pd.DataFrame,
+) -> list[tuple[str, str, npt.NDArray, dict[str, AttrValue], dict[str, AttrValue]]]:
+    """Apply a transform function to each volume and collect results with obs_updates.
+
+    Returns list of (obs_id, subject_id, data, base_attrs, obs_updates) tuples.
+    """
+    results: list[tuple[str, str, npt.NDArray, dict, dict]] = []
+    for _, row in filtered_obs.iterrows():
+        obs_id = row["obs_id"]
+        data = collection.loc[obs_id].to_numpy()
+
+        raw_result = transform_fn(data, row)
+        data, obs_updates = normalize_transform_result(raw_result)
+
+        attrs = _extract_obs_attrs(row)
+        results.append((obs_id, row["obs_subject_id"], data, attrs, obs_updates))
+    return results
+
+
+T = TypeVar("T")
+
+
+class EagerQuery(Generic[T]):
+    """Computed query results with pipeline methods.
+
+    Holds materialized results paired with obs metadata and accumulated obs_updates,
+    enabling chained transforms via `.map()` and persistence via `.write()`.
+
+    Transforms can return either just a value, or (value, obs_updates_dict) to
+    annotate obs metadata. Updates accumulate across chained `.map()` calls and
+    are merged into obs rows on `.write()`.
     """
 
     def __init__(
         self,
-        source: RadiObject,
-        *,
-        # Subject-level filters (on obs_meta)
-        subject_ids: frozenset[str] | None = None,
-        subject_query: str | None = None,
-        # Collection-level filters (on each collection's obs)
-        collection_filters: dict[str, str] | None = None,  # collection_name -> query expr
-        # Output scope
-        output_collections: frozenset[str] | None = None,
-        # Transform function applied during materialization
-        transform_fn: TransformFn | None = None,
+        results: list[T],
+        obs_df: pd.DataFrame,
+        source: VolumeCollection,
+        obs_updates: list[dict[str, AttrValue]] | None = None,
     ):
+        self._results = results
+        self._obs_df = obs_df
         self._source = source
-        self._subject_ids = subject_ids
-        self._subject_query = subject_query
-        self._collection_filters = collection_filters or {}
-        self._output_collections = output_collections
-        self._transform_fn = transform_fn
+        self._obs_updates = obs_updates or [{} for _ in results]
 
-    def __len__(self) -> int:
-        """Number of subjects matching the query."""
-        return len(self._resolve_final_subject_mask())
+    def map(self, fn: Callable) -> EagerQuery:
+        """Chain another transform, applying fn(result, obs_row) immediately.
 
-    def __repr__(self) -> str:
-        """Concise representation of the Query."""
-        count = self.count()
-        collections = ", ".join(count.n_volumes.keys())
-        return (
-            f"Query({count.n_subjects} subjects, "
-            f"{sum(count.n_volumes.values())} volumes across [{collections}])"
-        )
-
-    def filter(self, expr: str) -> Query:
-        """Filter subjects using TileDB QueryCondition on obs_meta.
-
-        Args:
-            expr: TileDB query expression (e.g., "age > 40 and diagnosis == 'tumor'")
-
-        Returns:
-            New Query with filter applied
+        If fn returns (value, obs_updates_dict), the updates are accumulated
+        and merged into the obs_row for subsequent transforms and on `.write()`.
         """
-        new_query = self._subject_query
-        if new_query is None:
-            new_query = expr
-        else:
-            new_query = f"({new_query}) and ({expr})"
-        return self._copy(subject_query=new_query)
+        new_results = []
+        new_updates = []
+        for result, (_, obs_row), prev_updates in zip(
+            self._results, self._obs_df.iterrows(), self._obs_updates
+        ):
+            merged_obs = obs_row.copy()
+            for k, v in prev_updates.items():
+                merged_obs[k] = v
+            raw_result = fn(result, merged_obs)
+            value, updates = normalize_transform_result(raw_result)
+            new_results.append(value)
+            new_updates.append({**prev_updates, **updates})
+        return EagerQuery(new_results, self._obs_df, self._source, new_updates)
 
-    def filter_subjects(self, ids: Sequence[str]) -> Query:
-        """Filter to specific subject IDs.
-
-        Args:
-            ids: List of obs_subject_ids to include
-
-        Returns:
-            New Query with filter applied
-        """
-        new_ids = frozenset(ids)
-        if self._subject_ids is not None:
-            new_ids = self._subject_ids & new_ids
-        return self._copy(subject_ids=new_ids)
-
-    def filter_collection(self, collection_name: str, expr: str) -> Query:
-        """Filter volumes in a specific collection using TileDB QueryCondition on `obs`.
-
-        Only subjects that have at least one volume matching the filter will be included.
-
-        Args:
-            collection_name: Name of the collection to filter.
-            expr: TileDB query expression on the collection's `obs` dataframe.
-
-        Returns:
-            New Query with filter applied.
-
-        Example:
-            Only include subjects whose T1w scans have 1mm resolution:
-
-                query.filter_collection("T1w", "voxel_spacing == '1.0x1.0x1.0'")
-        """
-        new_filters = dict(self._collection_filters)
-        if collection_name in new_filters:
-            new_filters[collection_name] = f"({new_filters[collection_name]}) and ({expr})"
-        else:
-            new_filters[collection_name] = expr
-        return self._copy(collection_filters=new_filters)
-
-    def iloc(self, key: int | slice | list[int] | npt.NDArray[np.bool_]) -> Query:
-        """Filter subjects by integer position(s)."""
-        n = len(self._source)
-        if isinstance(key, int):
-            idx = key if key >= 0 else n + key
-            indices = [idx]
-        elif isinstance(key, slice):
-            indices = list(range(*key.indices(n)))
-        elif isinstance(key, np.ndarray) and key.dtype == np.bool_:
-            indices = list(np.where(key)[0])
-        elif isinstance(key, list):
-            indices = [i if i >= 0 else n + i for i in key]
-        else:
-            raise TypeError("iloc key must be int, slice, list[int], or bool array")
-
-        ids = self._source._index.take(indices).to_list()
-        return self.filter_subjects(ids)
-
-    def loc(self, key: str | Sequence[str]) -> Query:
-        """Filter subjects by obs_subject_id(s)."""
-        if isinstance(key, str):
-            return self.filter_subjects([key])
-        return self.filter_subjects(key)
-
-    def head(self, n: int = 5) -> Query:
-        """Filter to first n subjects."""
-        return self.iloc(slice(0, n))
-
-    def tail(self, n: int = 5) -> Query:
-        """Filter to last n subjects."""
-        total = len(self._source)
-        return self.iloc(slice(max(0, total - n), total))
-
-    def sample(self, n: int = 5, seed: int | None = None) -> Query:
-        """Filter to n randomly sampled subjects."""
-        rng = np.random.default_rng(seed)
-        resolved = self._resolve_subject_mask()
-        subject_list = list(resolved)
-        n = min(n, len(subject_list))
-        sampled = rng.choice(subject_list, size=n, replace=False)
-        return self.filter_subjects(sampled)
-
-    def select_collections(self, names: Sequence[str]) -> Query:
-        """Limit output to specific collections.
-
-        This doesn't affect filtering - it only limits which collections
-        appear in the output.
-
-        Args:
-            names: Collection names to include in output
-
-        Returns:
-            New Query with output scope set
-        """
-        new_collections = frozenset(names)
-        if self._output_collections is not None:
-            new_collections = self._output_collections & new_collections
-        return self._copy(output_collections=new_collections)
-
-    def map(self, fn: TransformFn) -> Query:
-        """Apply transform to each volume during materialization.
-
-        Multiple map() calls compose: query.map(f1).map(f2) applies f1 then f2.
-
-        Args:
-            fn: Function (X, Y, Z) -> (X', Y', Z'). Can change shape.
-        """
-        return self._copy(transform_fn=_compose_transforms(self._transform_fn, fn))
-
-    def count(self) -> QueryCount:
-        """Count subjects and volumes matching the query without loading volume data."""
-        subject_mask = self._resolve_final_subject_mask()
-        output_collections = self._resolve_output_collections()
-
-        volume_counts: dict[str, int] = {}
-        for name in output_collections:
-            volume_mask = self._resolve_volume_mask(name, subject_mask)
-            volume_counts[name] = len(volume_mask)
-
-        return QueryCount(n_subjects=len(subject_mask), n_volumes=volume_counts)
-
-    def to_obs_meta(self) -> pd.DataFrame:
-        """Return filtered obs_meta DataFrame."""
-        subject_mask = self._resolve_final_subject_mask()
-        obs_meta = self._source.obs_meta.read()
-        return obs_meta[obs_meta["obs_subject_id"].isin(subject_mask)].reset_index(drop=True)
-
-    def iter_volumes(self, collection_name: str | None = None) -> Iterator[Volume]:
-        """Iterate over volumes matching the query.
-
-        Args:
-            collection_name: Specific collection to iterate. If None, iterates
-                           over all output collections.
-        """
-        subject_mask = self._resolve_final_subject_mask()
-        output_collections = self._resolve_output_collections()
-
-        if collection_name is not None:
-            if collection_name not in output_collections:
-                raise ValueError(f"Collection '{collection_name}' not in query scope")
-            output_collections = (collection_name,)
-
-        for coll_name in output_collections:
-            vc = self._source.collection(coll_name)
-            volume_mask = self._resolve_volume_mask(coll_name, subject_mask)
-
-            for obs_id in volume_mask:
-                yield vc.loc[obs_id]
-
-    def iter_batches(self, batch_size: int = 32) -> Iterator[VolumeBatch]:
-        """Iterate over batched volumes for ML training.
-
-        Yields VolumeBatch with stacked numpy arrays for each collection.
-        Batches are grouped by subject.
-        """
-        subject_mask = self._resolve_final_subject_mask()
-        subject_list = sorted(subject_mask)
-        output_collections = self._resolve_output_collections()
-
-        for i in range(0, len(subject_list), batch_size):
-            batch_subjects = subject_list[i : i + batch_size]
-            batch_subject_set = frozenset(batch_subjects)
-
-            volumes: dict[str, npt.NDArray[np.floating]] = {}
-            obs_ids: dict[str, tuple[str, ...]] = {}
-
-            for coll_name in output_collections:
-                volume_mask = self._resolve_volume_mask(coll_name, batch_subject_set)
-                vc = self._source.collection(coll_name)
-
-                batch_arrays = []
-                batch_obs_ids = []
-                for obs_id in sorted(volume_mask):
-                    vol = vc.loc[obs_id]
-                    batch_arrays.append(vol.to_numpy())
-                    batch_obs_ids.append(obs_id)
-
-                if batch_arrays:
-                    volumes[coll_name] = np.stack(batch_arrays, axis=0)
-                    obs_ids[coll_name] = tuple(batch_obs_ids)
-
-            yield VolumeBatch(
-                volumes=volumes,
-                subject_ids=tuple(batch_subjects),
-                obs_ids=obs_ids,
-            )
-
-    def materialize(
+    def write(
         self,
         uri: str,
-        streaming: bool = True,
+        name: str | None = None,
         ctx: tiledb.Ctx | None = None,
-    ) -> RadiObject:
-        """Materialize query results as a new RadiObject.
+    ) -> VolumeCollection:
+        """Persist results to a new VolumeCollection (results must be np.ndarray)."""
+        from radiobject.volume_collection import VolumeCollection
+        from radiobject.writers import VolumeCollectionWriter
 
-        If a transform was set via map(), it is applied to each volume
-        during materialization. If the transform changes volume shapes,
-        the output collection becomes heterogeneous.
+        collection_name = name or self._source.name
 
-        Args:
-            uri: Target URI for the new RadiObject
-            streaming: Use streaming writer for memory efficiency (default: True)
-            ctx: TileDB context
-        """
-        from radiobject.radi_object import RadiObject
-        from radiobject.writers import RadiObjectWriter
+        obs_schema = _build_obs_schema(self._source.obs)
+        _extend_obs_schema(obs_schema, iter(self._obs_updates))
 
-        subject_mask = self._resolve_final_subject_mask()
-        output_collections = self._resolve_output_collections()
+        with VolumeCollectionWriter(
+            uri=uri,
+            shape=None,
+            obs_schema=obs_schema,
+            name=collection_name,
+            ctx=ctx,
+        ) as writer:
+            for result, (_, obs_row), updates in zip(
+                self._results, self._obs_df.iterrows(), self._obs_updates
+            ):
+                attrs = _extract_obs_attrs(obs_row)
+                attrs.update(updates)
+                writer.write_volume(
+                    data=result,
+                    obs_id=obs_row["obs_id"],
+                    obs_subject_id=obs_row["obs_subject_id"],
+                    **attrs,
+                )
 
-        # If no transform, create a RadiObject view and materialize it
-        if self._transform_fn is None:
-            view = RadiObject(
-                uri=None,
-                ctx=ctx,
-                _source=self._source,
-                _subject_ids=subject_mask,
-                _collection_names=frozenset(output_collections),
-            )
-            return view.materialize(uri, streaming=streaming, ctx=ctx)
+        return VolumeCollection(uri, ctx=ctx)
 
-        # With transform: use streaming writer and apply transform to each volume
-        obs_meta_df = self._source.obs_meta.read()
-        filtered_obs_meta = obs_meta_df[
-            obs_meta_df["obs_subject_id"].isin(subject_mask)
-        ].reset_index(drop=True)
+    def to_list(self) -> list[T]:
+        """Extract raw results."""
+        return list(self._results)
 
-        obs_meta_schema: dict[str, np.dtype] = {}
-        for col in filtered_obs_meta.columns:
-            if col in ("obs_subject_id", "obs_id"):
-                continue
-            dtype = filtered_obs_meta[col].to_numpy().dtype
-            if dtype == np.dtype("O"):
-                dtype = np.dtype("U64")
-            obs_meta_schema[col] = dtype
+    def __iter__(self) -> Iterator[T]:
+        return iter(self._results)
 
-        with RadiObjectWriter(uri, obs_meta_schema=obs_meta_schema, ctx=ctx) as writer:
-            writer.write_obs_meta(filtered_obs_meta)
+    def __len__(self) -> int:
+        return len(self._results)
 
-            for coll_name in output_collections:
-                src_collection = self._source.collection(coll_name)
-                volume_mask = self._resolve_volume_mask(coll_name, subject_mask)
+    def __getitem__(self, idx: int) -> T:
+        return self._results[idx]
 
-                if not volume_mask:
-                    continue
-
-                obs_df = src_collection.obs.read()
-                filtered_obs = obs_df[obs_df["obs_id"].isin(volume_mask)]
-
-                obs_schema: dict[str, np.dtype] = {}
-                for col in src_collection.obs.columns:
-                    if col in ("obs_id", "obs_subject_id"):
-                        continue
-                    obs_schema[col] = src_collection.obs.dtypes[col]
-
-                # Transform may change shape, so output is heterogeneous (shape=None)
-                with writer.add_collection(
-                    coll_name, shape=None, obs_schema=obs_schema
-                ) as coll_writer:
-                    for _, row in filtered_obs.iterrows():
-                        obs_id = row["obs_id"]
-                        vol = src_collection.loc[obs_id]
-                        data = vol.to_numpy()
-
-                        data = self._transform_fn(data)
-
-                        attrs = {
-                            k: v for k, v in row.items() if k not in ("obs_id", "obs_subject_id")
-                        }
-                        coll_writer.write_volume(
-                            data=data,
-                            obs_id=obs_id,
-                            obs_subject_id=row["obs_subject_id"],
-                            **attrs,
-                        )
-
-        return RadiObject(uri, ctx=ctx)
-
-    def _copy(self, **kwargs) -> Query:
-        """Create a copy with modified fields."""
-        return Query(
-            self._source,
-            subject_ids=kwargs.get("subject_ids", self._subject_ids),
-            subject_query=kwargs.get("subject_query", self._subject_query),
-            collection_filters=kwargs.get("collection_filters", self._collection_filters),
-            output_collections=kwargs.get("output_collections", self._output_collections),
-            transform_fn=kwargs.get("transform_fn", self._transform_fn),
-        )
-
-    def _resolve_subject_mask(self) -> frozenset[str]:
-        """Resolve subject-level filters to a set of obs_subject_ids.
-
-        This applies:
-        1. Explicit subject_ids filter
-        2. Query expression on obs_meta
-        """
-        all_ids = set(self._source.obs_subject_ids)
-
-        # Apply explicit subject_ids filter
-        if self._subject_ids is not None:
-            all_ids &= self._subject_ids
-
-        # Apply query expression on obs_meta
-        if self._subject_query is not None:
-            filtered = self._source.obs_meta.read(value_filter=self._subject_query)
-            query_ids = set(filtered["obs_subject_id"])
-            all_ids &= query_ids
-
-        return frozenset(all_ids)
-
-    def _resolve_volume_mask(
-        self, collection_name: str, subject_mask: frozenset[str]
-    ) -> frozenset[str]:
-        """Resolve volume-level filters to a set of obs_ids for a collection.
-
-        Uses TileDB dimension slicing for efficient subject filtering,
-        combined with QueryCondition for attribute filters.
-        """
-        vc = self._source.collection(collection_name)
-        effective_ctx = vc.obs._effective_ctx()
-
-        # Build query with dimension slicing for subject_mask
-        with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
-            # Use multi-index for efficient dimension-based filtering
-            subject_list = list(subject_mask) if subject_mask else None
-
-            if subject_list:
-                # Query only rows matching subject_mask using dimension slicing
-                query = arr.query(dims=["obs_subject_id", "obs_id"])
-                if collection_name in self._collection_filters:
-                    query = query.cond(self._collection_filters[collection_name])
-                result = query.multi_index[subject_list, :]
-            else:
-                # No subject filter - apply attribute filter only
-                if collection_name in self._collection_filters:
-                    result = arr.query(cond=self._collection_filters[collection_name])[:]
-                else:
-                    result = arr.query(attrs=[])[:]["obs_id"]
-                    return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in result)
-
-            obs_ids = result["obs_id"]
-            return frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
-
-    def _resolve_final_subject_mask(self) -> frozenset[str]:
-        """Resolve to final subject mask after applying all filters.
-
-        Uses TileDB dimension queries to efficiently find subjects with matching volumes.
-        """
-        subject_mask = self._resolve_subject_mask()
-
-        # If there are collection filters, further filter subjects
-        # to only those with matching volumes
-        if self._collection_filters:
-            subjects_with_matching_volumes = set()
-
-            for coll_name in self._collection_filters:
-                if coll_name not in self._source.collection_names:
-                    continue
-
-                vc = self._source.collection(coll_name)
-                effective_ctx = vc.obs._effective_ctx()
-                expr = self._collection_filters[coll_name]
-
-                # Query with attribute filter, only request obs_subject_id dimension
-                with tiledb.open(vc.obs.uri, "r", ctx=effective_ctx) as arr:
-                    result = arr.query(cond=expr, dims=["obs_subject_id"], attrs=[])[:]
-                    subject_ids = result["obs_subject_id"]
-                    for sid in subject_ids:
-                        s = sid.decode() if isinstance(sid, bytes) else str(sid)
-                        if s in subject_mask:
-                            subjects_with_matching_volumes.add(s)
-
-            subject_mask = subject_mask & frozenset(subjects_with_matching_volumes)
-
-        return subject_mask
-
-    def _resolve_output_collections(self) -> tuple[str, ...]:
-        """Resolve which collections to include in output."""
-        if self._output_collections is not None:
-            return tuple(
-                name for name in self._source.collection_names if name in self._output_collections
-            )
-        return self._source.collection_names
+    def __repr__(self) -> str:
+        return f"EagerQuery({len(self._results)} results)"
 
 
-class CollectionQuery:
-    """Lazy filter builder for VolumeCollection with explicit materialization.
+class LazyQuery:
+    """Lazy filter builder for VolumeCollection with deferred transforms.
 
     Use `.lazy()` to enter lazy mode, then chain `.filter()`, `.head()`, `.map()`,
-    and `.materialize()` to build and execute a transform pipeline.
+    and `.write()` to build and execute a transform pipeline.
 
     Example:
-        Filter and materialize high-resolution volumes:
+        Filter and write high-resolution volumes:
 
             high_res = (
                 radi.T1w.lazy()
                 .filter("voxel_spacing == '1.0x1.0x1.0'")
                 .head(100)
                 .map(normalize)
-                .materialize("./output")
+                .write("./output")
             )
     """
 
@@ -554,13 +252,13 @@ class CollectionQuery:
         return len(self._resolve_volume_mask())
 
     def __repr__(self) -> str:
-        """Concise representation of the CollectionQuery."""
         n = len(self)
         name = self._source.name or "unnamed"
-        shape = "x".join(str(d) for d in self._source.shape)
-        return f"CollectionQuery('{name}', {n} volumes, shape={shape})"
+        shape = self._source.shape
+        shape_str = "x".join(str(d) for d in shape) if shape else "heterogeneous"
+        return f"LazyQuery('{name}', {n} volumes, shape={shape_str})"
 
-    def filter(self, expr: str) -> CollectionQuery:
+    def filter(self, expr: str) -> LazyQuery:
         """Filter volumes using TileDB QueryCondition on obs."""
         new_query = self._volume_query
         if new_query is None:
@@ -569,14 +267,14 @@ class CollectionQuery:
             new_query = f"({new_query}) and ({expr})"
         return self._copy(volume_query=new_query)
 
-    def filter_subjects(self, ids: Sequence[str]) -> CollectionQuery:
+    def filter_subjects(self, ids: Sequence[str]) -> LazyQuery:
         """Filter to volumes belonging to specific subject IDs."""
         new_ids = frozenset(ids)
         if self._subject_ids is not None:
             new_ids = self._subject_ids & new_ids
         return self._copy(subject_ids=new_ids)
 
-    def iloc(self, key: int | slice | list[int] | npt.NDArray[np.bool_]) -> CollectionQuery:
+    def iloc(self, key: int | slice | list[int] | npt.NDArray[np.bool_]) -> LazyQuery:
         """Filter volumes by integer position(s)."""
         n = len(self._source)
         if isinstance(key, int):
@@ -598,7 +296,7 @@ class CollectionQuery:
             new_ids = self._volume_ids & obs_ids
         return self._copy(volume_ids=new_ids)
 
-    def loc(self, key: str | Sequence[str]) -> CollectionQuery:
+    def loc(self, key: str | Sequence[str]) -> LazyQuery:
         """Filter volumes by obs_id(s)."""
         if isinstance(key, str):
             ids = frozenset([key])
@@ -609,16 +307,16 @@ class CollectionQuery:
             new_ids = self._volume_ids & ids
         return self._copy(volume_ids=new_ids)
 
-    def head(self, n: int = 5) -> CollectionQuery:
+    def head(self, n: int = 5) -> LazyQuery:
         """Filter to first n volumes."""
         return self.iloc(slice(0, n))
 
-    def tail(self, n: int = 5) -> CollectionQuery:
+    def tail(self, n: int = 5) -> LazyQuery:
         """Filter to last n volumes."""
         total = len(self._source)
         return self.iloc(slice(max(0, total - n), total))
 
-    def sample(self, n: int = 5, seed: int | None = None) -> CollectionQuery:
+    def sample(self, n: int = 5, seed: int | None = None) -> LazyQuery:
         """Filter to n randomly sampled volumes."""
         rng = np.random.default_rng(seed)
         resolved = list(self._resolve_volume_mask())
@@ -626,13 +324,11 @@ class CollectionQuery:
         sampled = rng.choice(resolved, size=n, replace=False)
         return self._copy(volume_ids=frozenset(sampled))
 
-    def map(self, fn: TransformFn) -> CollectionQuery:
-        """Apply transform to each volume during materialization.
+    def map(self, fn: TransformFn) -> LazyQuery:
+        """Apply transform to each volume during write.
 
         Multiple map() calls compose: query.map(f1).map(f2) applies f1 then f2.
-
-        Args:
-            fn: Function (X, Y, Z) -> (X', Y', Z'). Can change shape.
+        Transform receives (volume, obs_row) and can return volume or (volume, obs_updates).
         """
         return self._copy(transform_fn=_compose_transforms(self._transform_fn, fn))
 
@@ -661,22 +357,16 @@ class CollectionQuery:
         arrays = [self._source.loc[obs_id].to_numpy() for obs_id in sorted(volume_mask)]
         return np.stack(arrays, axis=0)
 
-    def materialize(
+    def write(
         self,
         uri: str | None = None,
         name: str | None = None,
         ctx: tiledb.Ctx | None = None,
     ) -> VolumeCollection:
-        """Materialize query results as a new VolumeCollection.
+        """Write query results as a new VolumeCollection.
 
-        If a transform was set via map(), it is applied to each volume
-        during materialization. If the transform changes volume shapes,
-        the output collection becomes heterogeneous (shape=None).
-
-        Args:
-            uri: Target URI. If None, generates adjacent to source collection.
-            name: Collection name. Also used to derive URI when uri is None.
-            ctx: TileDB context.
+        Applies queued transforms and persists in a single pass.
+        Transforms receive (volume, obs_row) and can return volume or (volume, obs_updates).
         """
         from radiobject.volume_collection import _generate_adjacent_uri
         from radiobject.writers import VolumeCollectionWriter
@@ -692,43 +382,54 @@ class CollectionQuery:
 
         obs_df = self.to_obs()
         collection_name = name or self._source.name
+        obs_schema = _build_obs_schema(self._source.obs)
 
-        obs_schema: dict[str, np.dtype] = {}
-        for col in self._source.obs.columns:
-            if col in ("obs_id", "obs_subject_id"):
-                continue
-            obs_schema[col] = self._source.obs.dtypes[col]
+        if self._transform_fn is None:
+            with VolumeCollectionWriter(
+                uri=uri,
+                shape=self._source.shape,
+                obs_schema=obs_schema,
+                name=collection_name,
+                ctx=ctx,
+            ) as writer:
+                for obs_id in sorted(volume_mask):
+                    data = self._source.loc[obs_id].to_numpy()
+                    obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
+                    attrs = _extract_obs_attrs(obs_row)
+                    writer.write_volume(
+                        data=data,
+                        obs_id=obs_id,
+                        obs_subject_id=obs_row["obs_subject_id"],
+                        **attrs,
+                    )
+        else:
+            filtered_obs = obs_df.set_index("obs_id").loc[sorted(volume_mask)].reset_index()
+            transform_results = _apply_transform_to_volumes(
+                self._transform_fn, self._source, filtered_obs
+            )
+            _extend_obs_schema(obs_schema, (updates for *_, updates in transform_results))
 
-        output_shape = None if self._transform_fn is not None else self._source.shape
-
-        with VolumeCollectionWriter(
-            uri=uri,
-            shape=output_shape,
-            obs_schema=obs_schema,
-            name=collection_name,
-            ctx=ctx,
-        ) as writer:
-            for obs_id in sorted(volume_mask):
-                vol = self._source.loc[obs_id]
-                data = vol.to_numpy()
-
-                if self._transform_fn is not None:
-                    data = self._transform_fn(data)
-
-                obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
-                attrs = {k: v for k, v in obs_row.items() if k not in ("obs_id", "obs_subject_id")}
-                writer.write_volume(
-                    data=data,
-                    obs_id=obs_id,
-                    obs_subject_id=obs_row["obs_subject_id"],
-                    **attrs,
-                )
+            with VolumeCollectionWriter(
+                uri=uri,
+                shape=None,
+                obs_schema=obs_schema,
+                name=collection_name,
+                ctx=ctx,
+            ) as writer:
+                for obs_id, subject_id, data, attrs, obs_updates in transform_results:
+                    attrs.update(obs_updates)
+                    writer.write_volume(
+                        data=data,
+                        obs_id=obs_id,
+                        obs_subject_id=subject_id,
+                        **attrs,
+                    )
 
         return self._source.__class__(uri, ctx=ctx)
 
-    def _copy(self, **kwargs) -> CollectionQuery:
+    def _copy(self, **kwargs) -> LazyQuery:
         """Create a copy with modified fields."""
-        return CollectionQuery(
+        return LazyQuery(
             self._source,
             volume_ids=kwargs.get("volume_ids", self._volume_ids),
             volume_query=kwargs.get("volume_query", self._volume_query),
@@ -741,25 +442,19 @@ class CollectionQuery:
         effective_ctx = self._source.obs._effective_ctx()
 
         with tiledb.open(self._source.obs.uri, "r", ctx=effective_ctx) as arr:
-            # Build query based on filters
             if self._subject_ids is not None and self._volume_query is not None:
-                # Both subject and attribute filters - use dimension slicing + QueryCondition
                 query = arr.query(cond=self._volume_query, dims=["obs_id"])
                 result = query.multi_index[list(self._subject_ids), :]
             elif self._subject_ids is not None:
-                # Subject filter only - use dimension slicing
                 result = arr.query(dims=["obs_id"]).multi_index[list(self._subject_ids), :]
             elif self._volume_query is not None:
-                # Attribute filter only - use QueryCondition
                 result = arr.query(cond=self._volume_query, dims=["obs_id"])[:]
             else:
-                # No filters - return all obs_ids
                 result = arr.query(dims=["obs_id"], attrs=[])[:]
 
             obs_ids = result["obs_id"]
             all_ids = frozenset(v.decode() if isinstance(v, bytes) else str(v) for v in obs_ids)
 
-        # Apply explicit volume_ids filter (intersection with pre-specified IDs)
         if self._volume_ids is not None:
             all_ids &= self._volume_ids
 

@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Iterator
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence, overload
+from typing import Sequence, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -28,9 +28,6 @@ from radiobject.volume_collection import (
     _normalize_index,
     _write_volumes_parallel,
 )
-
-if TYPE_CHECKING:
-    from radiobject.query import Query
 
 
 class _SubjectILocIndexer:
@@ -321,29 +318,6 @@ class RadiObject:
                 raise KeyError(f"Collection '{name}' not found")
         return self._create_view(collection_names=frozenset(names))
 
-    def lazy(self) -> Query:
-        """Enter lazy mode for transform pipelines.
-
-        Returns a Query that accumulates transforms without executing them.
-        Use this when you need to apply transforms via `.map()`.
-
-        Example:
-            normalized = (
-                radi.CT
-                .lazy()
-                .filter("quality == 'good'")
-                .map(normalize_intensity)
-                .materialize("./normalized")
-            )
-        """
-        from radiobject.query import Query
-
-        return Query(
-            self._root,
-            subject_ids=self._subject_ids,
-            output_collections=self._collection_names_filter,
-        )
-
     def materialize(
         self,
         uri: str,
@@ -539,6 +513,59 @@ class RadiObject:
 
         if "collection_names" in self.__dict__:
             del self.__dict__["collection_names"]
+
+    def add_collection(self, name: str, vc: VolumeCollection | str) -> None:
+        """Register an existing VolumeCollection into this RadiObject.
+
+        Links the collection if it's already at the expected URI
+        ({uri}/collections/{name}), otherwise copies it. Updates obs_meta
+        with any new subjects found in the collection.
+        """
+        self._check_not_view("add_collection")
+        if name in self.collection_names:
+            raise ValueError(f"Collection '{name}' already exists")
+
+        effective_ctx = self._effective_ctx()
+        uri = self._effective_uri()
+        collections_uri = f"{uri}/collections"
+        expected_uri = f"{collections_uri}/{name}"
+
+        # Resolve string URI to VolumeCollection
+        if isinstance(vc, str):
+            vc = VolumeCollection(vc, ctx=self._ctx)
+
+        # Link or copy
+        if vc.uri == expected_uri:
+            with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
+                grp.add(vc.uri, name=name)
+        else:
+            _copy_volume_collection(vc, expected_uri, name=name, ctx=self._ctx)
+            with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
+                grp.add(expected_uri, name=name)
+
+        # Update obs_meta with any new subjects
+        vc_obs = vc.obs.read()
+        vc_subject_ids = set(vc_obs["obs_subject_id"])
+        existing_subject_ids = set(self.obs_subject_ids)
+        new_subject_ids = vc_subject_ids - existing_subject_ids
+
+        if new_subject_ids:
+            obs_meta_uri = f"{uri}/obs_meta"
+            new_ids = sorted(new_subject_ids)
+            obs_subject_ids_arr = np.array(new_ids)
+            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
+                arr[obs_subject_ids_arr, obs_subject_ids_arr] = {}
+
+        # Update group metadata
+        new_subject_count = len(existing_subject_ids | vc_subject_ids)
+        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
+            grp.meta["n_collections"] = self.n_collections + 1
+            grp.meta["subject_count"] = new_subject_count
+
+        # Invalidate cached properties
+        for prop in ("_index", "_metadata", "collection_names", "all_obs_ids"):
+            if prop in self.__dict__:
+                del self.__dict__[prop]
 
     def validate(self) -> None:
         """Validate internal consistency of the RadiObject and all collections."""
@@ -908,7 +935,7 @@ class RadiObject:
         """Create RadiObject from NIfTI files with raw data storage.
 
         Ingestion stores volumes in their original dimensions without any
-        preprocessing. Use `.lazy().map()` for post-hoc transformations.
+        preprocessing. Use `.map()` or `.lazy().map()` on individual collections for post-hoc transformations.
 
         Args:
             uri: Target URI for RadiObject.
@@ -1238,8 +1265,8 @@ class RadiObject:
         Examples:
             Collections already at expected locations (no copy):
 
-                ct_vc = radi.CT.lazy().map(transform).materialize(uri=f"{URI}/collections/CT")
-                seg_vc = radi.seg.lazy().map(transform).materialize(uri=f"{URI}/collections/seg")
+                ct_vc = radi.CT.map(transform).write(uri=f"{URI}/collections/CT")
+                seg_vc = radi.seg.map(transform).write(uri=f"{URI}/collections/seg")
                 radi = RadiObject.from_collections(
                     uri=URI,
                     collections={"CT": ct_vc, "seg": seg_vc},
@@ -1278,11 +1305,11 @@ class RadiObject:
                 to_copy[name] = vc
 
         # Check if collections group already exists (from materialize)
-        vfs = tiledb.VFS(ctx=effective_ctx)
-        collections_group_exists = vfs.is_dir(collections_uri)
+        collections_group_exists = tiledb.object_type(collections_uri, ctx=effective_ctx) == "group"
 
-        # Create root group
-        tiledb.Group.create(uri, ctx=effective_ctx)
+        # Create root group (may already exist as directory from materialize)
+        if tiledb.object_type(uri, ctx=effective_ctx) != "group":
+            tiledb.Group.create(uri, ctx=effective_ctx)
 
         # Create or use existing collections group
         if not collections_group_exists:

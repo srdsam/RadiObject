@@ -1,6 +1,6 @@
 """RadiObject - TileDB-backed data structure for radiology data at scale."""
 
-from radiobject._types import AttrValue, LabelSource, TransformFn
+from radiobject._types import AttrValue, BatchTransformFn, LabelSource, TransformFn
 from radiobject.ctx import (
     CompressionConfig,
     Compressor,
@@ -18,6 +18,7 @@ from radiobject.ctx import (
 )
 from radiobject.dataframe import Dataframe
 from radiobject.indexing import Index, align
+from radiobject.query import EagerQuery, LazyQuery
 from radiobject.radi_object import RadiObject
 from radiobject.stats import CacheStats, S3Stats, TileDBStats
 from radiobject.utils import delete_tiledb_uri, uri_exists
@@ -49,8 +50,12 @@ __all__ = [
     # Enums
     "SliceOrientation",
     "Compressor",
+    # Query classes
+    "EagerQuery",
+    "LazyQuery",
     # Types
     "TransformFn",
+    "BatchTransformFn",
     "AttrValue",
     "LabelSource",
     # Stats

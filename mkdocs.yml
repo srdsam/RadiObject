@@ -60,7 +60,7 @@ nav:
       - how-to/index.md
       - Ingest Data: how-to/ingest-data.md
       - Access Data: how-to/access-data.md
-      - Lazy Pipelines: how-to/lazy-queries.md
+      - Pipelines: how-to/pipelines.md
       - ML Training: how-to/ml-training.md
       - Cloud Setup: how-to/cloud-setup.md
       - Troubleshooting: how-to/troubleshooting.md

@@ -542,6 +542,100 @@ class TestOrientationConsistency:
         assert batch["image"].shape[1] == batch["mask"].shape[1] == 1  # channels
 
 
+class TestHeterogeneousPatchMode:
+    """Tests for PATCH mode with heterogeneous volume shapes."""
+
+    @staticmethod
+    def _make_hetero_vc(
+        temp_dir: Path, name: str, shapes: list[tuple[int, int, int]], value_scale: float = 100.0
+    ) -> VolumeCollection:
+        """Create a heterogeneous VolumeCollection using VolumeCollectionWriter."""
+        from radiobject.writers import VolumeCollectionWriter
+
+        uri = str(temp_dir / f"hetero_{name}_vc")
+        with VolumeCollectionWriter(uri, shape=None, name=name) as writer:
+            for i, shape in enumerate(shapes):
+                if value_scale > 0:
+                    data = np.random.randn(*shape).astype(np.float32) * value_scale
+                else:
+                    data = np.zeros(shape, dtype=np.float32)
+                    c = tuple(s // 2 for s in shape)
+                    data[c[0] - 2 : c[0] + 2, c[1] - 2 : c[1] + 2, c[2] - 2 : c[2] + 2] = 1.0
+                writer.write_volume(data, obs_id=f"sub{i}_{name}", obs_subject_id=f"sub{i}")
+        return VolumeCollection(uri)
+
+    @pytest.fixture()
+    def heterogeneous_collections(self, temp_dir: Path) -> dict[str, VolumeCollection]:
+        """Create image/mask VolumeCollections with heterogeneous shapes."""
+        shapes = [(32, 32, 16), (40, 40, 20), (36, 36, 24)]
+        image_vc = self._make_hetero_vc(temp_dir, "img", shapes, value_scale=100.0)
+        mask_vc = self._make_hetero_vc(temp_dir, "mask", shapes, value_scale=0)
+        return {"image": image_vc, "mask": mask_vc}
+
+    def test_patch_extraction_with_heterogeneous_shapes(
+        self, heterogeneous_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """PATCH mode works with heterogeneous volume shapes."""
+        config = DatasetConfig(
+            loading_mode=LoadingMode.PATCH,
+            patch_size=(16, 16, 8),
+            patches_per_volume=2,
+        )
+        dataset = SegmentationDataset(
+            image=heterogeneous_collections["image"],
+            mask=heterogeneous_collections["mask"],
+            config=config,
+        )
+        assert len(dataset) == 3 * 2
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            assert sample["image"].shape == (1, 16, 16, 8)
+            assert sample["mask"].shape == (1, 16, 16, 8)
+
+    def test_foreground_sampling_with_heterogeneous_shapes(
+        self, heterogeneous_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """Foreground sampling works with heterogeneous shapes."""
+        config = DatasetConfig(
+            loading_mode=LoadingMode.PATCH,
+            patch_size=(16, 16, 8),
+            patches_per_volume=2,
+        )
+        dataset = SegmentationDataset(
+            image=heterogeneous_collections["image"],
+            mask=heterogeneous_collections["mask"],
+            config=config,
+            foreground_sampling=True,
+            foreground_threshold=0.001,
+        )
+        sample = dataset[0]
+        assert sample["image"].shape == (1, 16, 16, 8)
+
+    def test_volume_too_small_for_patch_raises(self, temp_dir: Path) -> None:
+        """ValueError raised when a volume is smaller than patch_size."""
+        # Mix of shapes: one normal, one too small for patch
+        shapes = [(32, 32, 16), (8, 8, 8)]
+        image_vc = self._make_hetero_vc(temp_dir, "small_img", shapes, value_scale=100.0)
+        mask_vc = self._make_hetero_vc(temp_dir, "small_mask", shapes, value_scale=0)
+
+        config = DatasetConfig(
+            loading_mode=LoadingMode.PATCH,
+            patch_size=(16, 16, 16),
+        )
+        with pytest.raises(ValueError, match="smaller than patch_size"):
+            SegmentationDataset(image=image_vc, mask=mask_vc, config=config)
+
+    def test_full_volume_mode_rejects_heterogeneous(
+        self, heterogeneous_collections: dict[str, VolumeCollection]
+    ) -> None:
+        """FULL_VOLUME mode still rejects heterogeneous shapes."""
+        with pytest.raises(ValueError, match="heterogeneous shapes"):
+            SegmentationDataset(
+                image=heterogeneous_collections["image"],
+                mask=heterogeneous_collections["mask"],
+            )
+
+
 class TestReorientedVolumeDataset:
     """Tests for datasets created from reoriented volumes."""
 

@@ -50,21 +50,21 @@ RadiObject-specific terminology. For general medical imaging terms, see the [DIC
 
 ---
 
-## Lazy Query System
+## Query System
 
 | Term | Definition |
 |------|------------|
-| **Query** | Lazy filter builder for RadiObject with deferred execution |
-| **CollectionQuery** | Lazy filter builder for VolumeCollection |
-| **lazy()** | Entry point returning Query or CollectionQuery |
-| **map()** | Apply transform function to each volume during materialization |
-| **materialize()** | Write query results to new storage |
-| **iter_volumes()** | Streaming iterator yielding Volume objects |
-| **iter_batches()** | Streaming iterator yielding VolumeBatch for ML training |
-| **count()** | Count subjects and volumes without loading data |
+| **LazyQuery** | Lazy filter builder for VolumeCollection with deferred transforms. Entry point: `vc.lazy()` |
+| **EagerQuery** | Computed query results with pipeline methods (`.map()`, `.write()`, `.to_list()`). Entry point: `vc.map(fn)` |
+| **lazy()** | VolumeCollection method returning LazyQuery for deferred transforms |
+| **map()** | Apply transform to each volume. On VolumeCollection returns EagerQuery (eager); on LazyQuery defers execution |
+| **write()** | Persist query results to new VolumeCollection |
+| **to_list()** | Extract raw results from EagerQuery |
+| **iter_volumes()** | LazyQuery streaming iterator yielding Volume objects |
 | **to_numpy_stack()** | Load all matching volumes as stacked array `(N, X, Y, Z)` |
-| **TransformFn** | Type alias: `Callable[[np.ndarray], np.ndarray]` |
-| **VolumeBatch** | Dataclass containing stacked numpy arrays per collection and subject IDs |
+| **TransformFn** | Type alias: `Callable[[np.ndarray, pd.Series], TransformResult]` — receives `(volume, obs_row)` |
+| **TransformResult** | Union type: `np.ndarray` or `tuple[np.ndarray, dict[str, AttrValue]]` — volume alone or volume + obs updates |
+| **BatchTransformFn** | Type alias for batch transform: receives list of `(volume, obs_row)` tuples |
 
 ---
 

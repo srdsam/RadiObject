@@ -40,7 +40,7 @@ RadiObject/
 │   │   ├── index.md                # How-to guides landing page
 │   │   ├── ingest-data.md          # NIfTI/DICOM ingestion
 │   │   ├── query-filter-data.md    # Indexing & filtering
-│   │   ├── lazy-queries.md         # Lazy pipelines (ETL with transforms)
+│   │   ├── pipelines.md            # Transform pipelines (eager & lazy)
 │   │   ├── working-with-metadata.md # Subject and volume metadata
 │   │   ├── volume-operations.md    # Partial reads, stats, NIfTI export
 │   │   ├── streaming-writes.md     # Large dataset ingestion

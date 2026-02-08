@@ -25,11 +25,12 @@ from radiobject.imaging_metadata import (
 )
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, ctx_for_threads, map_on_threads
+from radiobject.query import EagerQuery
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
     from radiobject.ml.datasets.collection_dataset import VolumeCollectionDataset
-    from radiobject.query import CollectionQuery
+    from radiobject.query import LazyQuery
 
 
 def _normalize_index(idx: int, length: int) -> int:
@@ -360,15 +361,43 @@ class VolumeCollection:
         sampled = rng.choice(obs_ids, size=n, replace=False)
         return self._create_view(volume_ids=frozenset(sampled))
 
-    def lazy(self) -> CollectionQuery:
-        """Enter lazy mode for transform pipelines via map()."""
-        from radiobject.query import CollectionQuery
+    def lazy(self) -> LazyQuery:
+        """Enter lazy mode for deferred transform pipelines."""
+        from radiobject.query import LazyQuery
 
-        return CollectionQuery(self._root, volume_ids=self._volume_ids)
+        return LazyQuery(self._root, volume_ids=self._volume_ids)
 
-    def map(self, fn: TransformFn) -> CollectionQuery:
-        """Apply transform to all volumes during materialization. Returns lazy query."""
-        return self.lazy().map(fn)
+    def map(self, fn: Callable) -> EagerQuery:
+        """Apply fn(volume, obs_row) to each volume eagerly. Returns EagerQuery for chaining."""
+        from radiobject._types import normalize_transform_result
+
+        obs_df = self.to_obs()
+        results = []
+        obs_updates = []
+        for obs_id in self._effective_obs_ids:
+            vol = self.loc[obs_id]
+            obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
+            raw = fn(vol.to_numpy(), obs_row)
+            value, updates = normalize_transform_result(raw)
+            results.append(value)
+            obs_updates.append(updates)
+        return EagerQuery(results, obs_df, source=self._root, obs_updates=obs_updates)
+
+    def map_batches(self, fn: Callable, batch_size: int = 8) -> EagerQuery:
+        """Apply fn to batches of (volume, obs_row) pairs. Returns EagerQuery."""
+        obs_df = self.to_obs()
+        obs_ids = self._effective_obs_ids
+        all_results = []
+        for i in range(0, len(obs_ids), batch_size):
+            batch_ids = obs_ids[i : i + batch_size]
+            batch = []
+            for obs_id in batch_ids:
+                vol = self.loc[obs_id]
+                obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
+                batch.append((vol.to_numpy(), obs_row))
+            batch_results = fn(batch)
+            all_results.extend(batch_results)
+        return EagerQuery(all_results, obs_df, source=self._root)
 
     def materialize(
         self,

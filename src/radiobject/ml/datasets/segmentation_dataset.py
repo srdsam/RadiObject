@@ -10,7 +10,11 @@ import torch
 from torch.utils.data import Dataset
 
 from radiobject.ml.config import DatasetConfig, LoadingMode
-from radiobject.ml.utils.validation import validate_collection_alignment, validate_uniform_shapes
+from radiobject.ml.utils.validation import (
+    collect_volume_shapes,
+    validate_collection_alignment,
+    validate_uniform_shapes,
+)
 
 if TYPE_CHECKING:
     from radiobject.volume_collection import VolumeCollection
@@ -46,8 +50,19 @@ class SegmentationDataset(Dataset):
         collections = {"image": self._image, "mask": self._mask}
         validate_collection_alignment(collections)
 
-        self._volume_shape = validate_uniform_shapes(collections)
         self._n_volumes = len(self._image)
+
+        # PATCH mode supports heterogeneous shapes; other modes require uniform
+        if self._config.loading_mode == LoadingMode.PATCH and self._config.patch_size:
+            if self._image.is_uniform:
+                self._volume_shape = validate_uniform_shapes(collections)
+                self._volume_shapes = [self._volume_shape] * self._n_volumes
+            else:
+                self._volume_shapes = collect_volume_shapes(collections, self._config.patch_size)
+                self._volume_shape = self._volume_shapes[0]
+        else:
+            self._volume_shape = validate_uniform_shapes(collections)
+            self._volume_shapes = [self._volume_shape] * self._n_volumes
 
         # Pre-compute foreground regions for guided patch sampling
         self._fg_coords: dict[int, np.ndarray] | None = None
@@ -105,7 +120,8 @@ class SegmentationDataset(Dataset):
         patch_size = self._config.patch_size
         assert patch_size is not None
 
-        max_start = tuple(max(0, self._volume_shape[i] - patch_size[i]) for i in range(3))
+        vol_shape = self._volume_shapes[volume_idx]
+        max_start = tuple(max(0, vol_shape[i] - patch_size[i]) for i in range(3))
 
         if self._fg_coords is not None and volume_idx in self._fg_coords:
             start = self._sample_guided_patch(volume_idx, max_start, patch_size)

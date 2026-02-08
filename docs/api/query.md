@@ -1,5 +1,7 @@
 # Query
 
-Lazy query builder for deferred execution pipelines. Build up complex filter/transform chains that execute only when results are materialized.
+Lazy and eager query builders for transform pipelines and deferred execution.
 
-::: radiobject.query.Query
+::: radiobject.query.LazyQuery
+
+::: radiobject.query.EagerQuery

@@ -38,7 +38,7 @@ mp.set_start_method("spawn", force=True)
 
 2. **Use streaming instead of loading all volumes:**
    ```python
-   for vol in radi.lazy().filter("split == 'train'").iter_volumes():
+   for vol in radi.CT.lazy().filter("split == 'train'").iter_volumes():
        process(vol.to_numpy())
    ```
 
