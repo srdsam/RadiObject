@@ -31,6 +31,7 @@ RadiObject-specific terminology. For general medical imaging terms, see the [DIC
 | **Dataframe** | TileDB-backed sparse array with configurable index dimensions for tabular data |
 | **INDEX_COLUMNS** | Default dimension tuple `(obs_subject_id, obs_id)` for VolumeCollection.obs. obs_meta uses `(obs_subject_id,)` only. |
 | **obs_ids** | System-managed obs_meta attribute: JSON-serialized sorted list of volume obs_ids linked to each subject |
+| **generate_obs_id()** | Creates obs_id from `f"{obs_subject_id}_{collection_name}"`. Ensures global uniqueness across collections |
 
 ---
 

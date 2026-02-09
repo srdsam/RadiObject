@@ -168,7 +168,7 @@ class EagerQuery(Generic[T]):
         ctx: tiledb.Ctx | None = None,
     ) -> VolumeCollection:
         """Persist results to a new VolumeCollection (results must be np.ndarray)."""
-        from radiobject.volume_collection import VolumeCollection
+        from radiobject.volume_collection import VolumeCollection, generate_obs_id
         from radiobject.writers import VolumeCollectionWriter
 
         collection_name = name or self._source.name
@@ -188,9 +188,10 @@ class EagerQuery(Generic[T]):
             ):
                 attrs = _extract_obs_attrs(obs_row)
                 attrs.update(updates)
+                obs_id = generate_obs_id(obs_row["obs_subject_id"], collection_name)
                 writer.write_volume(
                     data=result,
-                    obs_id=obs_row["obs_id"],
+                    obs_id=obs_id,
                     obs_subject_id=obs_row["obs_subject_id"],
                     **attrs,
                 )
@@ -368,7 +369,7 @@ class LazyQuery:
         Applies queued transforms and persists in a single pass.
         Transforms receive (volume, obs_row) and can return volume or (volume, obs_updates).
         """
-        from radiobject.volume_collection import _generate_adjacent_uri
+        from radiobject.volume_collection import _generate_adjacent_uri, generate_obs_id
         from radiobject.writers import VolumeCollectionWriter
 
         if uri is None:
@@ -392,10 +393,11 @@ class LazyQuery:
                 name=collection_name,
                 ctx=ctx,
             ) as writer:
-                for obs_id in sorted(volume_mask):
-                    data = self._source.loc[obs_id].to_numpy()
-                    obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
+                for source_obs_id in sorted(volume_mask):
+                    data = self._source.loc[source_obs_id].to_numpy()
+                    obs_row = obs_df[obs_df["obs_id"] == source_obs_id].iloc[0]
                     attrs = _extract_obs_attrs(obs_row)
+                    obs_id = generate_obs_id(obs_row["obs_subject_id"], collection_name)
                     writer.write_volume(
                         data=data,
                         obs_id=obs_id,
@@ -416,8 +418,9 @@ class LazyQuery:
                 name=collection_name,
                 ctx=ctx,
             ) as writer:
-                for obs_id, subject_id, data, attrs, obs_updates in transform_results:
+                for _, subject_id, data, attrs, obs_updates in transform_results:
                     attrs.update(obs_updates)
+                    obs_id = generate_obs_id(subject_id, collection_name)
                     writer.write_volume(
                         data=data,
                         obs_id=obs_id,

@@ -50,9 +50,9 @@ def _get_volume_by_obs_id(collection: VolumeCollection, obs_id: str) -> Volume:
     return Volume(f"{root.uri}/volumes/{idx}", ctx=root._ctx)
 
 
-def generate_obs_id(obs_subject_id: str, series_type: str) -> str:
-    """Generate a unique obs_id from subject ID and series type."""
-    return f"{obs_subject_id}_{series_type}"
+def generate_obs_id(obs_subject_id: str, collection_name: str) -> str:
+    """Generate a unique obs_id from subject ID and collection name."""
+    return f"{obs_subject_id}_{collection_name}"
 
 
 def _write_volumes_parallel(
@@ -448,12 +448,13 @@ class VolumeCollection:
             name=collection_name,
             ctx=effective_ctx,
         ) as writer:
-            for obs_id in obs_ids:
-                vol = self.loc[obs_id]
+            for source_obs_id in obs_ids:
+                vol = self.loc[source_obs_id]
                 data = vol.to_numpy()
 
-                obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
+                obs_row = obs_df[obs_df["obs_id"] == source_obs_id].iloc[0]
                 attrs = {k: v for k, v in obs_row.items() if k not in ("obs_id", "obs_subject_id")}
+                obs_id = generate_obs_id(obs_row["obs_subject_id"], collection_name)
                 writer.write_volume(
                     data=data,
                     obs_id=obs_id,
@@ -707,7 +708,8 @@ class VolumeCollection:
 
         # Check for duplicate obs_ids
         existing_obs_ids = set(self.obs_ids)
-        new_obs_ids = {generate_obs_id(sid, st) for _, sid, _, st in metadata_list}
+        append_name = self.name or "volume"
+        new_obs_ids = {generate_obs_id(sid, append_name) for _, sid, _, st in metadata_list}
         duplicates = existing_obs_ids & new_obs_ids
         if duplicates:
             raise ValueError(f"obs_ids already exist: {sorted(duplicates)[:5]}")
@@ -717,7 +719,7 @@ class VolumeCollection:
             idx, path, obs_subject_id, metadata, series_type = args
             worker_ctx = ctx_for_threads(self._ctx)
             volume_uri = f"{self.uri}/volumes/{idx}"
-            obs_id = generate_obs_id(obs_subject_id, series_type)
+            obs_id = generate_obs_id(obs_subject_id, append_name)
             try:
                 vol = Volume.from_nifti(volume_uri, path, ctx=worker_ctx, reorient=reorient)
                 vol.set_obs_id(obs_id)
@@ -741,7 +743,7 @@ class VolumeCollection:
         # Build and write obs rows
         obs_rows: list[dict] = []
         for path, obs_subject_id, metadata, series_type in metadata_list:
-            obs_id = generate_obs_id(obs_subject_id, series_type)
+            obs_id = generate_obs_id(obs_subject_id, append_name)
             obs_rows.append(metadata.to_obs_dict(obs_id, obs_subject_id, series_type))
 
         obs_df = pd.DataFrame(obs_rows)
@@ -783,7 +785,8 @@ class VolumeCollection:
 
         # Check for duplicate obs_ids
         existing_obs_ids = set(self.obs_ids)
-        new_obs_ids = {generate_obs_id(sid, meta.modality) for _, sid, meta in metadata_list}
+        append_name = self.name or "volume"
+        new_obs_ids = {generate_obs_id(sid, append_name) for _, sid, meta in metadata_list}
         duplicates = existing_obs_ids & new_obs_ids
         if duplicates:
             raise ValueError(f"obs_ids already exist: {sorted(duplicates)[:5]}")
@@ -793,7 +796,7 @@ class VolumeCollection:
             idx, path, obs_subject_id, metadata = args
             worker_ctx = ctx_for_threads(self._ctx)
             volume_uri = f"{self.uri}/volumes/{idx}"
-            obs_id = generate_obs_id(obs_subject_id, metadata.modality)
+            obs_id = generate_obs_id(obs_subject_id, append_name)
             try:
                 vol = Volume.from_dicom(volume_uri, path, ctx=worker_ctx, reorient=reorient)
                 vol.set_obs_id(obs_id)
@@ -816,7 +819,7 @@ class VolumeCollection:
         # Build and write obs rows
         obs_rows: list[dict] = []
         for path, obs_subject_id, metadata in metadata_list:
-            obs_id = generate_obs_id(obs_subject_id, metadata.modality)
+            obs_id = generate_obs_id(obs_subject_id, append_name)
             obs_rows.append(metadata.to_obs_dict(obs_id, obs_subject_id))
 
         obs_df = pd.DataFrame(obs_rows)
@@ -967,7 +970,8 @@ class VolumeCollection:
         if obs is not None:
             obs_ids_list = obs["obs_id"].tolist()
         else:
-            obs_ids_list = [generate_obs_id(sid, st) for _, sid, _, st in metadata_list]
+            collection_name = name or "volume"
+            obs_ids_list = [generate_obs_id(sid, collection_name) for _, sid, _, _ in metadata_list]
 
         # Write volumes in parallel
         def write_volume(args: tuple[int, Path, str, NiftiMetadata, str, str]) -> WriteResult:
@@ -1148,7 +1152,8 @@ class VolumeCollection:
         if obs is not None:
             obs_ids_list = obs["obs_id"].tolist()
         else:
-            obs_ids_list = [generate_obs_id(sid, meta.modality) for _, sid, meta in metadata_list]
+            collection_name = name or "volume"
+            obs_ids_list = [generate_obs_id(sid, collection_name) for _, sid, meta in metadata_list]
 
         # Write volumes in parallel
         def write_volume(args: tuple[int, Path, str, DicomMetadata, str]) -> WriteResult:

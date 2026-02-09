@@ -6,76 +6,41 @@ Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/bl
 
 ```
 RadiObject (TileDB Group)
-├── metadata: { subject_count, n_collections }
 │
-├── obs_meta (Sparse Array) ────────────────────────────────────────────────┐
-│   │                                                                        │
-│   │  DIMENSIONS (Indexes):                                                 │
-│   │    dim[0]: obs_subject_id  (ascii)  <- Primary subject identifier      │
-│   │                                                                        │
-│   │  ATTRIBUTES (Data):                                                    │
-│   │    obs_ids            (U2048)  <- JSON list of volume obs_ids (system) │
-│   │    User-defined columns (age, sex, diagnosis, labels, etc.)            │
-│   └────────────────────────────────────────────────────────────────────────┘
+├── obs_meta (Sparse Array)
+│   dim: obs_subject_id
+│   attrs: obs_ids (system), age, sex, diagnosis, ...
 │
-└── collections (TileDB Group)
-    │
-    ├── T1w (VolumeCollection - TileDB Group)
-    │   ├── metadata: { n_volumes, name, [x_dim, y_dim, z_dim]? }
-    │   │              └── shape fields only present if collection is uniform
-    │   │
-    │   ├── obs (Sparse Array) ─────────────────────────────────────────────┐
-    │   │   │                                                                │
-    │   │   │  DIMENSIONS (Indexes):                                         │
-    │   │   │    dim[0]: obs_subject_id  (ascii)  <- FK to RadiObject.obs_meta
-    │   │   │    dim[1]: obs_id          (ascii)  <- Unique volume ID        │
-    │   │   │                                                                │
-    │   │   │  ATTRIBUTES (Data):                                            │
-    │   │   │    series_type, voxel_spacing, dimensions, axcodes, ...         │
-    │   │   └────────────────────────────────────────────────────────────────┘
-    │   │
-    │   └── volumes (TileDB Group)
-    │       ├── 0 (Volume - Dense Array) ───────────────────────────────────┐
-    │       │   │  DIMENSIONS: x, y, z [, t]                                │
-    │       │   │  ATTRIBUTES: voxels (float32/int16)                       │
-    │       │   │  METADATA:   obs_id, slice_orientation, orientation info   │
-    │       │   └────────────────────────────────────────────────────────────┘
-    │       ├── 1 (Volume) ...  <- may have different shape than Volume[0]
-    │       └── N (Volume) ...
-    │
+└── collections/
+    ├── T1w (VolumeCollection Group)
+    │   ├── obs (Sparse Array)
+    │   │   dims: obs_subject_id (FK), obs_id (unique)
+    │   │   attrs: series_type, voxel_spacing, dimensions, ...
+    │   └── volumes/
+    │       ├── 0 (Dense Array: x, y, z [, t] → voxels)
+    │       ├── 1 ...
+    │       └── N ...
     ├── FLAIR (VolumeCollection) ...
     └── seg (VolumeCollection) ...
 ```
 
-## Key Relationships
+**Relationships**: obs_meta → VolumeCollection.obs is 1:N via `obs_subject_id` (one subject, many volumes). Each obs row maps 1:1 to a Volume via `obs_id`.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           INDEX RELATIONSHIPS                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  RadiObject.obs_meta                     VolumeCollection.obs                │
-│  ┌────────────────────┐                  ┌─────────────────────┐             │
-│  │ obs_subject_id (D) │<────────────────>│ obs_subject_id (D)  │  FK         │
-│  │ obs_ids        (A) │                  │ obs_id          (D) │             │
-│  │ age            (A) │                  │ series_type     (A) │             │
-│  │ sex            (A) │                  │ voxel_spacing   (A) │             │
-│  │ tumor_grade    (A) │                  │ dimensions      (A) │             │
-│  └────────────────────┘                  └─────────────────────┘             │
-│         │                                          │                         │
-│         │ 1:N relationship                         │ 1:1 relationship        │
-│         │ (one subject, many volumes)              │                         │
-│         v                                          v                         │
-│  ┌──────────────────────────────────────────────────────────────┐           │
-│  │                        Volume (Dense Array)                   │           │
-│  │  DIMENSIONS: x, y, z [, t]                                   │           │
-│  │  ATTRIBUTES: voxels                                          │           │
-│  │  METADATA:   obs_id (links to obs dataframe)                 │           │
-│  └──────────────────────────────────────────────────────────────┘           │
-│                                                                              │
-│  (D) = Dimension    (A) = Attribute                                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+## Mapping to Radiology Standards
+
+RadiObject's data model maps directly to established radiology data standards:
+
+| RadiObject | DICOM | BIDS |
+|---|---|---|
+| `obs_subject_id` | PatientID | `sub-XX` |
+| `VolumeCollection` | Series Description / Modality | Suffix (T1w, FLAIR, seg) |
+| `obs_id` | SeriesInstanceUID (unique) | Full filename stem |
+| `obs_meta` | Patient-level demographics | `participants.tsv` |
+| `obs` | Series-level metadata | Sidecar JSON |
+
+**obs_id uniqueness**: Like DICOM's SeriesInstanceUID, `obs_id` is globally unique across the entire RadiObject — not just within a single collection. The formula is `{obs_subject_id}_{collection_name}` (e.g., `sub-01_T1w`, `sub-01_seg`). This enables unambiguous single-key lookup across all collections while `obs_subject_id` handles the subject-level grouping (analogous to PatientID linking multiple series).
+
+**VolumeCollections as layers**: Each collection represents a distinct imaging "layer" for the same set of subjects — analogous to how a DICOM study contains multiple series (CT, segmentation, MR) for one patient, or how BIDS organizes different suffixes (T1w, FLAIR, bold) under the same subject.
 
 ## Component Summary
 
