@@ -9,7 +9,7 @@
 
 **Why?** NIfTI/DICOM must be read from local disk and don't support partial reads.
 TileDB enables cloud-native storage (S3), efficient partial reads, and
-hierarchical organization of multi-volume datasets.
+hierarchical organization of large datasets.
 
 
 ## First Principles
@@ -67,6 +67,8 @@ This enables **200-660x faster** partial reads. [See benchmarks →](docs/refere
 
 ![Benchmark overview](benchmarks/results/figures/benchmark_hero.png)
 
+*N.B. Missing comparison with [Zarr](https://github.com/zarr-developers/zarr-python) or NumPy files* 
+
 ## Sample Data
 
 Download sample datasets for tutorials and testing:
@@ -95,7 +97,6 @@ python scripts/download_dataset.py --list
 
 ```bash
 uv sync --all-extras
-eval $(aws configure export-credentials --profile souzy-s3 --format env)
 uv run pytest test/ --ignore=test/ml -v
 ```
 
