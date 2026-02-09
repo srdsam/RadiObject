@@ -16,6 +16,7 @@ hierarchical organization of large datasets.
 
 - Contextualised data: *Data is always read/written alongside annotations and context, aligned on shared and labelled indexes. Minimize manual joins.*
 - Interoperability: *Software should complement the ecosystem of tooling, not compete.*
+- Independence: *Each component can exist independently from it's parent (e.g. a `VolumeCollection` can exist without a `RadiObject`)*
 
 *See full [thoughts here](https://souzy.up.railway.app/thoughts/radiology-object).*
 
@@ -50,7 +51,7 @@ radi = RadiObject.from_niftis(
         "seg": "./labelsTr",          # Directory path
     },
     validate_alignment=True,          # Ensure matching subjects across collections
-    obs_meta=metadata_df,             # Optional subject-level metadata
+    obs_meta=metadata_df,             # Optional subject-level metadata (must include obs_id and subject_obs_id)
 )
 
 # Access data (pandas-like)
@@ -104,10 +105,56 @@ python scripts/download_dataset.py --list
 
 ## Development
 
+### Setup
+
 ```bash
+git clone https://github.com/srdsam/RadiObject.git
+cd RadiObject
 uv sync --all-extras
+```
+
+### Sample Data
+
+Download datasets for tutorials and tests:
+
+```bash
+pip install radiobject[download]
+
+# BraTS brain tumour (tutorials 00-04, ~1.5 GB)
+python scripts/download_dataset.py msd-brain-tumour
+
+# MSD Lung tumour (tutorials 05-06, ~8.5 GB)
+python scripts/download_dataset.py msd-lung
+
+# All test datasets
+python scripts/download_dataset.py --all-tests
+```
+
+### Tests
+
+```bash
 uv run pytest test/ --ignore=test/ml -v
 ```
+
+S3 integration tests are automatically skipped without AWS credentials. To run the full suite including S3 tests:
+
+```bash
+eval $(aws configure export-credentials --profile xxx-s3 --format env)
+uv run pytest test/ --ignore=test/ml -v
+```
+
+### Notebooks (Local Storage)
+
+Notebooks default to S3 URIs. To run locally, change the URI variable at the top of each notebook from the S3 path to a local path:
+
+```python
+# Comment out the S3 URI:
+# BRATS_URI = "s3://souzy-scratch/radiobject/brats-tutorial"
+# Uncomment the local path:
+BRATS_URI = "./data/brats_radiobject"
+```
+
+Then run `00_ingest_brats.ipynb` to ingest data, followed by notebooks 01-04. For MSD Lung (notebooks 05-06), change `MSD_LUNG_URI` similarly.
 
 ## License
 
