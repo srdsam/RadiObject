@@ -9,7 +9,7 @@
 
 **Why?** NIfTI/DICOM must be read from local disk and don't support partial reads.
 This introduces **challenges for analysis/machine-learning at scale** or with limited compute.
-TileDB enables **cloud-native* storage (S3), efficient **partial reads**, and
+TileDB enables **cloud-native** storage (S3), efficient **partial reads**, and
 hierarchical **organization** of large datasets.
 
 
