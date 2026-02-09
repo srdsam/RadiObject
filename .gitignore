@@ -5,14 +5,16 @@ build/
 dist/
 wheels/
 *.egg-info
-.vscode
 .pytest_cache
 .ruff_cache
 
 # Virtual environments
 .venv
 
-# Claude
+# IDE
+.vscode
+
+# Claude / Serena
 .claude
 CLAUDE.md
 .serena
@@ -36,10 +38,9 @@ scratch.md
 *.pt
 *.pth
 
-# Benchmark results (generated artifacts)
-results/
-!benchmarks/results/
-benchmarks/results/*
-!benchmarks/results/figures/
+# Benchmark generated artifacts (keep figures/ for docs)
+benchmarks/results/*.json
+benchmarks/results/CHANGELOG.md
+benchmarks/results/raw/
 benchmarks/assets/*.json
 benchmarks/assets/*.png

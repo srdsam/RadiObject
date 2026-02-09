@@ -52,14 +52,14 @@ radi = RadiObject.from_niftis(
 vol = radi.CT.iloc[0]            # First CT volume
 data = vol[100:200, :, :]        # Partial read (only loads needed tiles)
 
-# Filtering (returns views)
-subset = radi.filter("age > 40")       # Query expression
-subset = radi.head(10)                 # First 10 subjects
-subset.materialize("./subset")         # Write to storage
+# Transform data (polars-like)
+CT_resampled = radi.CT.map(resample).write(name="CT_resampled") # Eagerly OR .lazy().map()
+radi.add_collection(name="CT_resampled", vc=CT_resampled)       # Add new collection to RadiObject
 
-# Mapping (.lazy() to do lazy processing)
-CT_resampled = radi.CT.map(resample).write(name="CT_resampled")
-radi.add_collection(name="CT_resampled", vc=CT_resampled)
+# Filter data (returns views)
+subset = radi.filter("age > 40")                         # Query expression
+subset = radi.head(10)                                   # First 10 subjects
+subset.materialize("./subset_with_resampled_CT")         # Write to storage
 ```
 
 Works with local paths or S3 URIs (`s3://bucket/dataset`).
