@@ -111,7 +111,6 @@ RadiObject/
 │           ├── config.py
 │           ├── distributed.py
 │           ├── factory.py
-│           ├── reader.py
 │           ├── compat/
 │           │   ├── __init__.py
 │           │   └── torchio.py
@@ -140,7 +139,6 @@ RadiObject/
     ├── test_query.py
     ├── test_radi_object.py
     ├── test_writers.py
-    ├── test_threading_investigation.py
     ├── test_performance_regression.py  # Performance threshold tests
     ├── test_stats.py                   # TileDB stats collection tests
     ├── test_utils.py
