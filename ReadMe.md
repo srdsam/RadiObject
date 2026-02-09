@@ -56,6 +56,10 @@ data = vol[100:200, :, :]        # Partial read (only loads needed tiles)
 subset = radi.filter("age > 40")       # Query expression
 subset = radi.head(10)                 # First 10 subjects
 subset.materialize("./subset")         # Write to storage
+
+# Mapping (.lazy() to do lazy processing)
+CT_resampled = radi.CT.map(resample).write(name="CT_resampled")
+radi.add_collection(name="CT_resampled", vc=CT_resampled)
 ```
 
 Works with local paths or S3 URIs (`s3://bucket/dataset`).

@@ -99,10 +99,11 @@ Resample and assemble a new RadiObject:
 from radiobject import RadiObject
 
 URI = "s3://bucket/study_2mm"
-radi_raw = RadiObject("s3://bucket/study_raw")
+radi = RadiObject("s3://bucket/study_raw")
 
-ct_2mm = radi_raw.CT.lazy().map(resample(order=1)).write(f"{URI}/collections/CT", name="CT")
-seg_2mm = radi_raw.seg.lazy().map(resample(order=0)).write(f"{URI}/collections/seg", name="seg")
+ct_2mm = radi.CT.lazy().map(resample(order=1)).write(f"{URI}/collections/CT", name="CT")
+seg_2mm = radi.seg.lazy().map(resample(order=0)).write(f"{URI}/collections/seg", name="seg")
 
-radi = RadiObject.from_collections(URI, collections={"CT": ct_2mm, "seg": seg_2mm})
+radi.add_collection(name="CT", vc=ct_2mm)
+radi.add_collection(name="seg", vc=seg_2mm)
 ```
