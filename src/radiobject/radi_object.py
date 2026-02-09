@@ -742,8 +742,7 @@ class RadiObject:
         written_pairs: list[tuple[str, str]] = []
 
         with RadiObjectWriter(uri, obs_meta_schema=obs_meta_schema, ctx=ctx) as writer:
-            writer.write_obs_meta(meta_to_write)
-
+            # Write collections first to collect obs_id pairs
             for coll_name in self.collection_names:
                 src_collection = self.collection(coll_name)
                 obs_df = src_collection.obs.read()
@@ -769,18 +768,16 @@ class RadiObject:
                         )
                         written_pairs.append((row["obs_subject_id"], obs_id))
 
-        # Recompute obs_ids from actually-written volumes
-        dst = RadiObject(uri, ctx=ctx)
-        if written_pairs:
-            pairs_df = pd.DataFrame(written_pairs, columns=["obs_subject_id", "obs_id"])
-            obs_ids_map = _aggregate_obs_ids(pairs_df)
-            write_obs_dataframe(
-                f"{uri}/obs_meta",
-                obs_ids_map,
-                ctx=ctx,
-                columns={"obs_ids"},
-            )
-        return dst
+            # Compute obs_ids from written volumes and merge into obs_meta
+            if written_pairs:
+                pairs_df = pd.DataFrame(written_pairs, columns=["obs_subject_id", "obs_id"])
+                obs_ids_map = _aggregate_obs_ids(pairs_df)
+                meta_to_write = meta_to_write.merge(obs_ids_map, on="obs_subject_id", how="left")
+                meta_to_write["obs_ids"] = meta_to_write["obs_ids"].fillna("[]")
+
+            writer.write_obs_meta(meta_to_write)
+
+        return RadiObject(uri, ctx=ctx)
 
     def _append_niftis(
         self,

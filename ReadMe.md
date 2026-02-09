@@ -52,7 +52,7 @@ radi = RadiObject.from_niftis(
         "seg": "./labelsTr",          # Directory path
     },
     validate_alignment=True,          # Ensure matching subjects across collections
-    obs_meta=metadata_df,             # Optional subject-level metadata (must include obs_id and subject_obs_id)
+    obs_meta=metadata_df,             # Optional subject-level metadata (must include obs_subject_id)
 )
 
 # Access data (pandas-like)
