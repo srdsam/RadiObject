@@ -14,7 +14,7 @@ hierarchical organization of large datasets.
 
 ## First Principles
 
-- Contextualised data: *Data is always read/written alongside annotations and context, aligned on shared and labelled indexes. Minimize manual joins.*
+- Contextualised data: *Data is always read/written alongside annotations and context (`obs` and `obs_meta`), aligned on shared and labelled indexes -- minimizing manual joins.*
 - Interoperability: *Software should complement the ecosystem of tooling, not compete.*
 - Independence: *Each component can exist independently from it's parent (e.g. a `VolumeCollection` can exist without a `RadiObject`)*
 
