@@ -8,15 +8,16 @@
 **What?** A TileDB-backed data structure for radiology data at scale.
 
 **Why?** NIfTI/DICOM must be read from local disk and don't support partial reads.
-TileDB enables cloud-native storage (S3), efficient partial reads, and
-hierarchical organization of large datasets.
+This introduces **challenges for analysis/machine-learning at scale** or with limited compute.
+TileDB enables **cloud-native* storage (S3), efficient **partial reads**, and
+hierarchical **organization** of large datasets.
 
 
 ## First Principles
 
 - Contextualised data: *Data is always read/written alongside annotations and context (`obs` and `obs_meta`), aligned on shared and labelled indexes -- minimizing manual joins.*
 - Interoperability: *Software should complement the ecosystem of tooling, not compete.*
-- Independence: *Each component can exist independently from it's parent (e.g. a `VolumeCollection` can exist without a `RadiObject`)*
+- Modular: *Each component can exist independently from it's parent (e.g. a `VolumeCollection` can exist without a `RadiObject`)*
 
 *See full [thoughts here](https://souzy.up.railway.app/thoughts/radiology-object).*
 

@@ -26,7 +26,7 @@ from radiobject.imaging_metadata import (
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, ctx_for_threads, map_on_threads
 from radiobject.query import EagerQuery
-from radiobject.utils import write_obs_dataframe
+from radiobject.utils import ensure_obs_columns, validate_no_column_collisions, write_obs_dataframe
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
@@ -837,6 +837,7 @@ class VolumeCollection:
         cls,
         uri: str,
         niftis: Sequence[tuple[str | Path, str]],
+        obs: pd.DataFrame | None = None,
         reorient: bool | None = None,
         validate_dimensions: bool = True,
         valid_subject_ids: set[str] | None = None,
@@ -849,6 +850,9 @@ class VolumeCollection:
         Args:
             uri: Target URI for the VolumeCollection.
             niftis: List of (nifti_path, obs_subject_id) tuples.
+            obs: Per-volume metadata with custom obs_id values. Positionally aligned
+                with input files. Requires obs_id and obs_subject_id columns. Imaging
+                metadata is always extracted; raises ValueError on column collisions.
             reorient: Reorient to canonical orientation (None uses config default).
             validate_dimensions: Raise if dimensions are inconsistent.
             valid_subject_ids: Optional whitelist for FK validation.
@@ -861,6 +865,23 @@ class VolumeCollection:
         """
         if not niftis:
             raise ValueError("At least one NIfTI file is required")
+
+        # Validate user-provided obs
+        if obs is not None:
+            ensure_obs_columns(obs, require_obs_id=True, context="VolumeCollection.from_niftis")
+            if len(obs) != len(niftis):
+                raise ValueError(f"obs length ({len(obs)}) != niftis length ({len(niftis)})")
+
+            # Vectorized subject ID alignment
+            expected_sids = np.array([sid for _, sid in niftis])
+            actual_sids = obs["obs_subject_id"].to_numpy(dtype=str)
+            mismatches = expected_sids != actual_sids
+            if mismatches.any():
+                idx = int(np.argmax(mismatches))
+                raise ValueError(
+                    f"obs_subject_id mismatch at position {idx}: "
+                    f"obs='{actual_sids[idx]}', niftis='{expected_sids[idx]}'"
+                )
 
         # Validate subject IDs if whitelist provided
         if valid_subject_ids is not None:
@@ -918,6 +939,20 @@ class VolumeCollection:
             "source_path": np.dtype("U512"),
         }
 
+        # Extend schema with user extra columns (check collisions first)
+        if obs is not None:
+            user_cols = set(obs.columns) - {"obs_id", "obs_subject_id"}
+            validate_no_column_collisions(
+                user_cols,
+                set(obs_schema.keys()),
+                context="VolumeCollection.from_niftis",
+            )
+            for col in obs.columns:
+                if col in ("obs_id", "obs_subject_id"):
+                    continue
+                dtype = obs[col].to_numpy().dtype
+                obs_schema[col] = np.dtype("U64") if dtype == np.dtype("O") else dtype
+
         # Create collection
         cls._create(
             uri,
@@ -928,12 +963,17 @@ class VolumeCollection:
             ctx=ctx,
         )
 
+        # Determine obs_ids
+        if obs is not None:
+            obs_ids_list = obs["obs_id"].tolist()
+        else:
+            obs_ids_list = [generate_obs_id(sid, st) for _, sid, _, st in metadata_list]
+
         # Write volumes in parallel
-        def write_volume(args: tuple[int, Path, str, NiftiMetadata, str]) -> WriteResult:
-            idx, path, obs_subject_id, metadata, series_type = args
+        def write_volume(args: tuple[int, Path, str, NiftiMetadata, str, str]) -> WriteResult:
+            idx, path, obs_subject_id, metadata, series_type, obs_id = args
             worker_ctx = ctx_for_threads(ctx)
             volume_uri = f"{uri}/volumes/{idx}"
-            obs_id = generate_obs_id(obs_subject_id, series_type)
             try:
                 vol = Volume.from_nifti(volume_uri, path, ctx=worker_ctx, reorient=reorient)
                 vol.set_obs_id(obs_id)
@@ -942,7 +982,8 @@ class VolumeCollection:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
         write_args = [
-            (idx, path, sid, meta, st) for idx, (path, sid, meta, st) in enumerate(metadata_list)
+            (idx, path, sid, meta, st, obs_ids_list[idx])
+            for idx, (path, sid, meta, st) in enumerate(metadata_list)
         ]
         results = _write_volumes_parallel(
             write_volume, write_args, progress, f"Writing {name or 'volumes'}"
@@ -953,13 +994,18 @@ class VolumeCollection:
             for result in results:
                 vol_grp.add(result.uri, name=str(result.index))
 
-        # Build obs DataFrame rows
+        # Build obs DataFrame rows (imaging metadata)
         obs_rows: list[dict] = []
-        for path, obs_subject_id, metadata, series_type in metadata_list:
-            obs_id = generate_obs_id(obs_subject_id, series_type)
-            obs_rows.append(metadata.to_obs_dict(obs_id, obs_subject_id, series_type))
+        for i, (path, obs_subject_id, metadata, series_type) in enumerate(metadata_list):
+            obs_rows.append(metadata.to_obs_dict(obs_ids_list[i], obs_subject_id, series_type))
+        imaging_df = pd.DataFrame(obs_rows)
 
-        obs_df = pd.DataFrame(obs_rows)
+        # Merge user extra columns
+        if obs is not None:
+            user_extra = obs.drop(columns=["obs_id", "obs_subject_id"]).reset_index(drop=True)
+            obs_df = pd.concat([imaging_df, user_extra], axis=1)
+        else:
+            obs_df = imaging_df
 
         # Write obs data
         write_obs_dataframe(f"{uri}/obs", obs_df, ctx=effective_ctx)
@@ -971,6 +1017,7 @@ class VolumeCollection:
         cls,
         uri: str,
         dicom_dirs: Sequence[tuple[str | Path, str]],
+        obs: pd.DataFrame | None = None,
         reorient: bool | None = None,
         validate_dimensions: bool = True,
         valid_subject_ids: set[str] | None = None,
@@ -983,6 +1030,9 @@ class VolumeCollection:
         Args:
             uri: Target URI for the VolumeCollection.
             dicom_dirs: List of (dicom_dir, obs_subject_id) tuples.
+            obs: Per-volume metadata with custom obs_id values. Positionally aligned
+                with input files. Requires obs_id and obs_subject_id columns. Imaging
+                metadata is always extracted; raises ValueError on column collisions.
             reorient: Reorient to canonical orientation (None uses config default).
             validate_dimensions: Raise if dimensions are inconsistent.
             valid_subject_ids: Optional whitelist for FK validation.
@@ -995,6 +1045,25 @@ class VolumeCollection:
         """
         if not dicom_dirs:
             raise ValueError("At least one DICOM directory is required")
+
+        # Validate user-provided obs
+        if obs is not None:
+            ensure_obs_columns(obs, require_obs_id=True, context="VolumeCollection.from_dicoms")
+            if len(obs) != len(dicom_dirs):
+                raise ValueError(
+                    f"obs length ({len(obs)}) != dicom_dirs length ({len(dicom_dirs)})"
+                )
+
+            # Vectorized subject ID alignment
+            expected_sids = np.array([sid for _, sid in dicom_dirs])
+            actual_sids = obs["obs_subject_id"].to_numpy(dtype=str)
+            mismatches = expected_sids != actual_sids
+            if mismatches.any():
+                idx = int(np.argmax(mismatches))
+                raise ValueError(
+                    f"obs_subject_id mismatch at position {idx}: "
+                    f"obs='{actual_sids[idx]}', dicom_dirs='{expected_sids[idx]}'"
+                )
 
         # Validate subject IDs if whitelist provided
         if valid_subject_ids is not None:
@@ -1051,6 +1120,20 @@ class VolumeCollection:
             "source_path": np.dtype("U512"),
         }
 
+        # Extend schema with user extra columns (check collisions first)
+        if obs is not None:
+            user_cols = set(obs.columns) - {"obs_id", "obs_subject_id"}
+            validate_no_column_collisions(
+                user_cols,
+                set(obs_schema.keys()),
+                context="VolumeCollection.from_dicoms",
+            )
+            for col in obs.columns:
+                if col in ("obs_id", "obs_subject_id"):
+                    continue
+                dtype = obs[col].to_numpy().dtype
+                obs_schema[col] = np.dtype("U64") if dtype == np.dtype("O") else dtype
+
         # Create collection
         cls._create(
             uri,
@@ -1061,12 +1144,17 @@ class VolumeCollection:
             ctx=ctx,
         )
 
+        # Determine obs_ids
+        if obs is not None:
+            obs_ids_list = obs["obs_id"].tolist()
+        else:
+            obs_ids_list = [generate_obs_id(sid, meta.modality) for _, sid, meta in metadata_list]
+
         # Write volumes in parallel
-        def write_volume(args: tuple[int, Path, str, DicomMetadata]) -> WriteResult:
-            idx, path, obs_subject_id, metadata = args
+        def write_volume(args: tuple[int, Path, str, DicomMetadata, str]) -> WriteResult:
+            idx, path, obs_subject_id, metadata, obs_id = args
             worker_ctx = ctx_for_threads(ctx)
             volume_uri = f"{uri}/volumes/{idx}"
-            obs_id = generate_obs_id(obs_subject_id, metadata.modality)
             try:
                 vol = Volume.from_dicom(volume_uri, path, ctx=worker_ctx, reorient=reorient)
                 vol.set_obs_id(obs_id)
@@ -1074,7 +1162,10 @@ class VolumeCollection:
             except Exception as e:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
-        write_args = [(idx, path, sid, meta) for idx, (path, sid, meta) in enumerate(metadata_list)]
+        write_args = [
+            (idx, path, sid, meta, obs_ids_list[idx])
+            for idx, (path, sid, meta) in enumerate(metadata_list)
+        ]
         results = _write_volumes_parallel(
             write_volume, write_args, progress, f"Writing {name or 'volumes'}"
         )
@@ -1084,17 +1175,23 @@ class VolumeCollection:
             for result in results:
                 vol_grp.add(result.uri, name=str(result.index))
 
-        # Build obs DataFrame rows
+        # Build obs DataFrame rows (imaging metadata)
         obs_rows: list[dict] = []
-        for path, obs_subject_id, metadata in metadata_list:
-            obs_id = generate_obs_id(obs_subject_id, metadata.modality)
-            obs_rows.append(metadata.to_obs_dict(obs_id, obs_subject_id))
-
-        obs_df = pd.DataFrame(obs_rows)
+        for i, (path, obs_subject_id, metadata) in enumerate(metadata_list):
+            obs_rows.append(metadata.to_obs_dict(obs_ids_list[i], obs_subject_id))
+        imaging_df = pd.DataFrame(obs_rows)
 
         # Handle None values for optional fields
         for col in ["kvp", "exposure", "repetition_time", "echo_time", "magnetic_field_strength"]:
-            obs_df[col] = obs_df[col].fillna(np.nan)
+            if col in imaging_df.columns:
+                imaging_df[col] = imaging_df[col].fillna(np.nan)
+
+        # Merge user extra columns
+        if obs is not None:
+            user_extra = obs.drop(columns=["obs_id", "obs_subject_id"]).reset_index(drop=True)
+            obs_df = pd.concat([imaging_df, user_extra], axis=1)
+        else:
+            obs_df = imaging_df
 
         # Write obs data
         write_obs_dataframe(f"{uri}/obs", obs_df, ctx=effective_ctx)
@@ -1168,9 +1265,15 @@ class VolumeCollection:
 
         obs_schema = None
         if obs_data is not None:
-            from radiobject.utils import build_obs_meta_schema
-
-            obs_schema = build_obs_meta_schema(obs_data)
+            # Build obs schema — skip index columns (obs_subject_id, obs_id)
+            obs_schema = {}
+            for col in obs_data.columns:
+                if col in ("obs_subject_id", "obs_id"):
+                    continue
+                dtype = obs_data[col].to_numpy().dtype
+                if dtype == np.dtype("O"):
+                    dtype = np.dtype("U64")
+                obs_schema[col] = dtype
 
         cls._create(
             uri,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import Iterator
 from functools import cached_property
@@ -22,7 +23,15 @@ from radiobject.imaging_metadata import (
 )
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, ctx_for_threads
-from radiobject.utils import build_obs_meta_schema, write_obs_dataframe
+from radiobject.utils import (
+    _aggregate_obs_ids,
+    build_obs_ids_mapping,
+    build_obs_meta_schema,
+    create_and_write_obs_meta,
+    ensure_obs_columns,
+    merge_obs_ids,
+    write_obs_dataframe,
+)
 from radiobject.volume import Volume
 from radiobject.volume_collection import (
     VolumeCollection,
@@ -438,16 +447,17 @@ class RadiObject:
                 raise ValueError(
                     f"obs_meta required for new subjects: {sorted(new_subject_ids)[:5]}"
                 )
-            if "obs_subject_id" not in obs_meta.columns:
-                raise ValueError("obs_meta must contain 'obs_subject_id' column")
+            ensure_obs_columns(obs_meta, context="RadiObject.append")
             obs_meta_ids = set(obs_meta["obs_subject_id"])
             missing = new_subject_ids - obs_meta_ids
             if missing:
                 raise ValueError(f"obs_meta missing entries for: {sorted(missing)[:5]}")
-            obs_meta = obs_meta[obs_meta["obs_subject_id"].isin(new_subject_ids)]
+            obs_meta = obs_meta[obs_meta["obs_subject_id"].isin(new_subject_ids)].copy()
 
-        # Append obs_meta for new subjects
+        # Append obs_meta for new subjects (inject obs_ids placeholder)
         if obs_meta is not None and len(obs_meta) > 0:
+            if "obs_ids" not in obs_meta.columns:
+                obs_meta["obs_ids"] = "[]"
             obs_meta_uri = f"{uri}/obs_meta"
             existing_columns = set(self._root.obs_meta.columns)
             write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx, columns=existing_columns)
@@ -461,6 +471,19 @@ class RadiObject:
             self._append_niftis(niftis, reorient, effective_ctx, progress)
         else:
             self._append_dicoms(dicom_dirs, reorient, effective_ctx, progress)
+
+        # Update obs_ids in obs_meta for affected subjects
+        obs_meta_uri = f"{uri}/obs_meta"
+        all_collections = [self.collection(name) for name in self.collection_names]
+        obs_ids_map = build_obs_ids_mapping(all_collections)
+        affected_subjects = obs_ids_map[obs_ids_map["obs_subject_id"].isin(input_subject_ids)]
+        if len(affected_subjects) > 0:
+            write_obs_dataframe(
+                obs_meta_uri,
+                affected_subjects,
+                ctx=effective_ctx,
+                columns={"obs_ids"},
+            )
 
         # Invalidate cached properties
         for prop in ("_index", "_metadata", "collection_names"):
@@ -528,20 +551,27 @@ class RadiObject:
         if new_subject_ids:
             obs_meta_uri = f"{uri}/obs_meta"
             new_ids = sorted(new_subject_ids)
-            obs_subject_ids_arr = np.array(new_ids)
-            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-                arr[obs_subject_ids_arr, obs_subject_ids_arr] = {}
+            new_meta = pd.DataFrame({"obs_subject_id": new_ids, "obs_ids": ["[]"] * len(new_ids)})
+            write_obs_dataframe(obs_meta_uri, new_meta, ctx=effective_ctx)
+
+        # Update obs_ids for all subjects in the new collection
+        obs_meta_uri = f"{uri}/obs_meta"
+        # Invalidate cached props first to get fresh collection_names
+        for prop in ("_index", "_metadata", "collection_names", "all_obs_ids"):
+            if prop in self.__dict__:
+                del self.__dict__[prop]
+
+        all_collections = [self.collection(n) for n in self.collection_names]
+        obs_ids_map = build_obs_ids_mapping(all_collections)
+        affected = obs_ids_map[obs_ids_map["obs_subject_id"].isin(vc_subject_ids)]
+        if len(affected) > 0:
+            write_obs_dataframe(obs_meta_uri, affected, ctx=effective_ctx, columns={"obs_ids"})
 
         # Update group metadata
         new_subject_count = len(existing_subject_ids | vc_subject_ids)
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["n_collections"] = self.n_collections + 1
+            grp.meta["n_collections"] = self.n_collections
             grp.meta["subject_count"] = new_subject_count
-
-        # Invalidate cached properties
-        for prop in ("_index", "_metadata", "collection_names", "all_obs_ids"):
-            if prop in self.__dict__:
-                del self.__dict__[prop]
 
     def validate(self) -> None:
         """Validate internal consistency of the RadiObject and all collections."""
@@ -586,6 +616,24 @@ class RadiObject:
                         f"'{seen_obs_ids[obs_id]}' and '{name}'"
                     )
                 seen_obs_ids[obs_id] = name
+
+        # Validate obs_ids column matches actual collections
+        if "obs_ids" in obs_meta_data.columns:
+            expected = build_obs_ids_mapping(
+                [self.collection(name) for name in self.collection_names]
+            )
+            for _, row in expected.iterrows():
+                sid = row["obs_subject_id"]
+                expected_ids = json.loads(row["obs_ids"])
+                stored_row = obs_meta_data[obs_meta_data["obs_subject_id"] == sid]
+                if len(stored_row) == 0:
+                    continue
+                stored_ids = json.loads(stored_row.iloc[0]["obs_ids"])
+                if sorted(expected_ids) != sorted(stored_ids):
+                    raise ValueError(
+                        f"obs_ids mismatch for subject '{sid}': "
+                        f"stored={stored_ids}, expected={expected_ids}"
+                    )
 
     @property
     def _root(self) -> RadiObject:
@@ -687,8 +735,14 @@ class RadiObject:
 
         subject_ids = set(obs_meta_df["obs_subject_id"])
 
+        # Drop source obs_ids — will recompute from written collections
+        meta_to_write = obs_meta_df.drop(columns=["obs_ids"], errors="ignore")
+
+        # Collect obs_id→subject mappings for obs_ids recomputation
+        written_pairs: list[tuple[str, str]] = []
+
         with RadiObjectWriter(uri, obs_meta_schema=obs_meta_schema, ctx=ctx) as writer:
-            writer.write_obs_meta(obs_meta_df)
+            writer.write_obs_meta(meta_to_write)
 
             for coll_name in self.collection_names:
                 src_collection = self.collection(coll_name)
@@ -698,15 +752,8 @@ class RadiObject:
                 if len(filtered_obs) == 0:
                     continue
 
-                # Extract obs schema
-                obs_schema: dict[str, np.dtype] = {}
-                for col in src_collection.obs.columns:
-                    if col in ("obs_id", "obs_subject_id"):
-                        continue
-                    obs_schema[col] = src_collection.obs.dtypes[col]
-
                 with writer.add_collection(
-                    coll_name, src_collection.shape, obs_schema
+                    coll_name, src_collection.shape, _extract_obs_schema(src_collection.obs)
                 ) as coll_writer:
                     for _, row in filtered_obs.iterrows():
                         obs_id = row["obs_id"]
@@ -720,8 +767,20 @@ class RadiObject:
                             obs_subject_id=row["obs_subject_id"],
                             **attrs,
                         )
+                        written_pairs.append((row["obs_subject_id"], obs_id))
 
-        return RadiObject(uri, ctx=ctx)
+        # Recompute obs_ids from actually-written volumes
+        dst = RadiObject(uri, ctx=ctx)
+        if written_pairs:
+            pairs_df = pd.DataFrame(written_pairs, columns=["obs_subject_id", "obs_id"])
+            obs_ids_map = _aggregate_obs_ids(pairs_df)
+            write_obs_dataframe(
+                f"{uri}/obs_meta",
+                obs_ids_map,
+                ctx=ctx,
+                columns={"obs_ids"},
+            )
+        return dst
 
     def _append_niftis(
         self,
@@ -861,7 +920,7 @@ class RadiObject:
             images: Dict mapping collection names to NIfTI sources. Sources can be
                 a glob pattern, directory path, or pre-resolved list of (path, subject_id).
             validate_alignment: If True, verify all collections have same subject IDs.
-            obs_meta: Subject-level metadata. Must contain obs_subject_id column.
+            obs_meta: Subject-level metadata keyed by obs_subject_id (one row per subject).
             reorient: Reorient to canonical orientation (None uses config default).
             ctx: TileDB context.
             progress: Show tqdm progress bar.
@@ -924,8 +983,7 @@ class RadiObject:
 
         # Validate FK constraint if obs_meta provided
         if obs_meta is not None:
-            if "obs_subject_id" not in obs_meta.columns:
-                raise ValueError("obs_meta must contain 'obs_subject_id' column")
+            ensure_obs_columns(obs_meta, context="RadiObject.from_niftis")
             obs_meta_subject_ids = set(obs_meta["obs_subject_id"])
             missing = all_subject_ids - obs_meta_subject_ids
             if missing:
@@ -934,12 +992,7 @@ class RadiObject:
                 )
         else:
             sorted_ids = sorted(all_subject_ids)
-            obs_meta = pd.DataFrame(
-                {
-                    "obs_subject_id": sorted_ids,
-                    "obs_id": sorted_ids,
-                }
-            )
+            obs_meta = pd.DataFrame({"obs_subject_id": sorted_ids})
 
         if not groups or all(len(nifti_list) == 0 for nifti_list in groups.values()):
             raise ValueError("No NIfTI files found")
@@ -960,11 +1013,9 @@ class RadiObject:
 
         for coll_name, items in groups_iter:
             vc_uri = f"{collections_uri}/{coll_name}"
-            nifti_list = [(path, subject_id) for path, subject_id in items]
-
             vc = VolumeCollection.from_niftis(
                 uri=vc_uri,
-                niftis=nifti_list,
+                niftis=list(items),
                 reorient=reorient,
                 validate_dimensions=False,
                 name=coll_name,
@@ -976,17 +1027,13 @@ class RadiObject:
             with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
                 grp.add(vc_uri, name=coll_name)
 
-        n_subjects = len(obs_meta)
-        obs_meta_schema = build_obs_meta_schema(obs_meta)
-
-        obs_meta_uri = f"{uri}/obs_meta"
-        Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
-        write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx)
+        obs_meta = merge_obs_ids(obs_meta, collections)
+        create_and_write_obs_meta(uri, obs_meta, ctx=ctx)
 
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_collections"] = len(collections)
-            grp.meta["subject_count"] = n_subjects
-            grp.add(obs_meta_uri, name="obs_meta")
+            grp.meta["subject_count"] = len(obs_meta)
+            grp.add(f"{uri}/obs_meta", name="obs_meta")
             grp.add(collections_uri, name="collections")
 
         return cls(uri, ctx=ctx)
@@ -1011,7 +1058,7 @@ class RadiObject:
         Args:
             uri: Target URI for RadiObject.
             dicom_dirs: List of (dicom_dir, obs_subject_id) tuples.
-            obs_meta: Subject-level metadata. Must contain obs_subject_id column.
+            obs_meta: Subject-level metadata keyed by obs_subject_id (one row per subject).
             reorient: Reorient to canonical orientation (None uses config default).
             ctx: TileDB context.
             progress: Show tqdm progress bar during volume writes.
@@ -1035,8 +1082,7 @@ class RadiObject:
         all_subject_ids = {sid for _, sid in dicom_dirs}
 
         if obs_meta is not None:
-            if "obs_subject_id" not in obs_meta.columns:
-                raise ValueError("obs_meta must contain 'obs_subject_id' column")
+            ensure_obs_columns(obs_meta, context="RadiObject.from_dicoms")
             obs_meta_subject_ids = set(obs_meta["obs_subject_id"])
             missing = all_subject_ids - obs_meta_subject_ids
             if missing:
@@ -1045,12 +1091,7 @@ class RadiObject:
                 )
         else:
             sorted_ids = sorted(all_subject_ids)
-            obs_meta = pd.DataFrame(
-                {
-                    "obs_subject_id": sorted_ids,
-                    "obs_id": sorted_ids,
-                }
-            )
+            obs_meta = pd.DataFrame({"obs_subject_id": sorted_ids})
 
         file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
         for dicom_dir, obs_subject_id in dicom_dirs:
@@ -1091,11 +1132,9 @@ class RadiObject:
             used_names.add(coll_name)
 
             vc_uri = f"{collections_uri}/{coll_name}"
-            dicom_list = [(path, subject_id) for path, subject_id in items]
-
             vc = VolumeCollection.from_dicoms(
                 uri=vc_uri,
-                dicom_dirs=dicom_list,
+                dicom_dirs=list(items),
                 reorient=reorient,
                 validate_dimensions=True,
                 name=coll_name,
@@ -1107,17 +1146,13 @@ class RadiObject:
             with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
                 grp.add(vc_uri, name=coll_name)
 
-        n_subjects = len(obs_meta)
-        obs_meta_schema = build_obs_meta_schema(obs_meta)
-
-        obs_meta_uri = f"{uri}/obs_meta"
-        Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
-        write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx)
+        obs_meta = merge_obs_ids(obs_meta, collections)
+        create_and_write_obs_meta(uri, obs_meta, ctx=ctx)
 
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_collections"] = len(collections)
-            grp.meta["subject_count"] = n_subjects
-            grp.add(obs_meta_uri, name="obs_meta")
+            grp.meta["subject_count"] = len(obs_meta)
+            grp.add(f"{uri}/obs_meta", name="obs_meta")
             grp.add(collections_uri, name="collections")
 
         return cls(uri, ctx=ctx)
@@ -1138,7 +1173,8 @@ class RadiObject:
         Args:
             uri: Target URI for RadiObject.
             collections: Dict mapping collection names to VolumeCollection objects or URIs.
-            obs_meta: Optional subject-level metadata. If None, derived from collections.
+            obs_meta: Subject-level metadata keyed by obs_subject_id (one row per subject).
+                If None, derived from collections.
             ctx: TileDB context.
 
         Examples:
@@ -1210,33 +1246,24 @@ class RadiObject:
                 grp.add(new_uri, name=name)
 
         # Derive obs_meta if not provided
-        if obs_meta is None:
+        if obs_meta is not None:
+            ensure_obs_columns(obs_meta, context="RadiObject.from_collections")
+        else:
             all_subject_ids: set[str] = set()
             for vc in resolved.values():
                 obs_df = vc.obs.read()
                 all_subject_ids.update(obs_df["obs_subject_id"].tolist())
             sorted_ids = sorted(all_subject_ids)
-            obs_meta = pd.DataFrame(
-                {
-                    "obs_subject_id": sorted_ids,
-                    "obs_id": sorted_ids,
-                }
-            )
+            obs_meta = pd.DataFrame({"obs_subject_id": sorted_ids})
 
-        # Build obs_meta schema
-        n_subjects = len(obs_meta)
-        obs_meta_schema = build_obs_meta_schema(obs_meta)
-
-        # Create obs_meta
-        obs_meta_uri = f"{uri}/obs_meta"
-        Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
-        write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx)
+        obs_meta = merge_obs_ids(obs_meta, resolved)
+        create_and_write_obs_meta(uri, obs_meta, ctx=ctx)
 
         # Link obs_meta to root and set metadata
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            grp.add(obs_meta_uri, name="obs_meta")
+            grp.add(f"{uri}/obs_meta", name="obs_meta")
             grp.meta["n_collections"] = len(resolved)
-            grp.meta["subject_count"] = n_subjects
+            grp.meta["subject_count"] = len(obs_meta)
 
         return cls(uri, ctx=ctx)
 
@@ -1254,7 +1281,12 @@ class RadiObject:
         tiledb.Group.create(uri, ctx=effective_ctx)
 
         obs_meta_uri = f"{uri}/obs_meta"
-        Dataframe.create(obs_meta_uri, schema=obs_meta_schema or {}, ctx=ctx)
+        Dataframe.create(
+            obs_meta_uri,
+            schema=obs_meta_schema or {},
+            ctx=ctx,
+            index_columns=("obs_subject_id",),
+        )
 
         collections_uri = f"{uri}/collections"
         tiledb.Group.create(collections_uri, ctx=effective_ctx)
@@ -1281,8 +1313,10 @@ class RadiObject:
 
         effective_ctx = ctx if ctx else get_tiledb_ctx()
 
-        n_subjects = len(obs_meta) if obs_meta is not None else 0
+        if obs_meta is not None:
+            obs_meta = merge_obs_ids(obs_meta, collections)
 
+        n_subjects = len(obs_meta) if obs_meta is not None else 0
         obs_meta_schema = build_obs_meta_schema(obs_meta) if obs_meta is not None else None
 
         cls._create(uri, obs_meta_schema=obs_meta_schema, n_subjects=n_subjects, ctx=ctx)

@@ -212,7 +212,10 @@ class RadiObjectWriter:
         ctx: tiledb.Ctx | None = None,
     ):
         self.uri = uri
-        self.obs_meta_schema = obs_meta_schema or {}
+        schema = dict(obs_meta_schema or {})
+        # System-managed column — always present in obs_meta
+        schema.setdefault("obs_ids", np.dtype("U2048"))
+        self.obs_meta_schema = schema
         self._ctx = ctx
         self._collection_names: list[str] = []
         self._subject_count = 0
@@ -230,9 +233,14 @@ class RadiObjectWriter:
         # Create main group
         tiledb.Group.create(self.uri, ctx=effective_ctx)
 
-        # Create obs_meta dataframe
+        # Create obs_meta dataframe with single-dim index
         obs_meta_uri = f"{self.uri}/obs_meta"
-        Dataframe.create(obs_meta_uri, schema=self.obs_meta_schema, ctx=self._ctx)
+        Dataframe.create(
+            obs_meta_uri,
+            schema=self.obs_meta_schema,
+            ctx=self._ctx,
+            index_columns=("obs_subject_id",),
+        )
 
         # Create collections group
         collections_uri = f"{self.uri}/collections"
@@ -273,7 +281,7 @@ class RadiObjectWriter:
         """Write subject-level metadata.
 
         Args:
-            df: DataFrame with obs_subject_id column and optional obs_id column
+            df: DataFrame with obs_subject_id column.
         """
         if not self._initialized:
             raise RuntimeError("RadiObjectWriter not initialized. Use as context manager.")
@@ -284,15 +292,13 @@ class RadiObjectWriter:
         obs_meta_uri = f"{self.uri}/obs_meta"
 
         obs_subject_ids = df["obs_subject_id"].astype(str).to_numpy()
-        obs_ids = df["obs_id"].astype(str).to_numpy() if "obs_id" in df.columns else obs_subject_ids
 
         with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {
-                col: df[col].to_numpy()
-                for col in df.columns
-                if col not in ("obs_subject_id", "obs_id")
-            }
-            arr[obs_subject_ids, obs_ids] = attr_data
+            attr_data = {col: df[col].to_numpy() for col in df.columns if col != "obs_subject_id"}
+            # Inject default for system-managed obs_ids if missing
+            if "obs_ids" not in attr_data:
+                attr_data["obs_ids"] = np.array(["[]"] * len(obs_subject_ids))
+            arr[obs_subject_ids] = attr_data
 
         self._subject_count = len(df)
 

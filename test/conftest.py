@@ -408,7 +408,6 @@ def _create_radi_object(
 
     subject_ids = [entry["sample_id"] for entry in manifest[:3]]
     obs_meta_df = pd.DataFrame({"obs_subject_id": subject_ids})
-
     return RadiObject._from_volume_collections(
         uri,
         collections=collections,

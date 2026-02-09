@@ -12,9 +12,9 @@ RadiObject (TileDB Group)
 │   │                                                                        │
 │   │  DIMENSIONS (Indexes):                                                 │
 │   │    dim[0]: obs_subject_id  (ascii)  <- Primary subject identifier      │
-│   │    dim[1]: obs_id          (ascii)  <- Observation identifier          │
 │   │                                                                        │
 │   │  ATTRIBUTES (Data):                                                    │
+│   │    obs_ids            (U2048)  <- JSON list of volume obs_ids (system) │
 │   │    User-defined columns (age, sex, diagnosis, labels, etc.)            │
 │   └────────────────────────────────────────────────────────────────────────┘
 │
@@ -57,14 +57,14 @@ RadiObject (TileDB Group)
 │  RadiObject.obs_meta                     VolumeCollection.obs                │
 │  ┌────────────────────┐                  ┌─────────────────────┐             │
 │  │ obs_subject_id (D) │<────────────────>│ obs_subject_id (D)  │  FK         │
-│  │ obs_id         (D) │                  │ obs_id          (D) │             │
+│  │ obs_ids        (A) │                  │ obs_id          (D) │             │
 │  │ age            (A) │                  │ series_type     (A) │             │
 │  │ sex            (A) │                  │ voxel_spacing   (A) │             │
 │  │ tumor_grade    (A) │                  │ dimensions      (A) │             │
 │  └────────────────────┘                  └─────────────────────┘             │
 │         │                                          │                         │
 │         │ 1:N relationship                         │ 1:1 relationship        │
-│         │ (one subject, many obs)                  │                         │
+│         │ (one subject, many volumes)              │                         │
 │         v                                          v                         │
 │  ┌──────────────────────────────────────────────────────────────┐           │
 │  │                        Volume (Dense Array)                   │           │
@@ -82,7 +82,7 @@ RadiObject (TileDB Group)
 | Component | TileDB Type | Dimensions (Indexes) | Attributes (Data) |
 |-----------|-------------|----------------------|-------------------|
 | **RadiObject** | Group | — | metadata: subject_count, n_collections |
-| **obs_meta** | Sparse Array | `obs_subject_id`, `obs_id` | User-defined (age, labels, etc.) |
+| **obs_meta** | Sparse Array | `obs_subject_id` | obs_ids (system), user-defined (age, labels, etc.) |
 | **VolumeCollection** | Group | — | metadata: n_volumes, name, [shape]? |
 | **obs** | Sparse Array | `obs_subject_id`, `obs_id` | series_type, voxel_spacing, dimensions, etc. |
 | **Volume** | Dense Array | `x`, `y`, `z` [, `t`] | `voxels` (intensity values) |

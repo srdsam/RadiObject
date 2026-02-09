@@ -23,12 +23,14 @@ RadiObject-specific terminology. For general medical imaging terms, see the [DIC
 | **RadiObject** | Top-level TileDB Group organizing subject metadata (ObsMeta) and multiple VolumeCollections. Filtering returns views (`is_view=True`). |
 | **is_view** | Boolean property indicating whether a RadiObject/VolumeCollection is a filtered view |
 | **obs_subject_id** | Unique string identifier for a subject. Primary key in `obs_meta`, foreign key in `obs` |
-| **ObsMeta** | Subject-level observational metadata Dataframe, indexed by obs_subject_id |
+| **ObsMeta** | Subject-level observational metadata. Single-dimension TileDB sparse array keyed by obs_subject_id only. Contains system-managed `obs_ids` column (JSON list of volume obs_ids per subject). |
 | **VolumeCollection** | TileDB Group organizing multiple Volumes with consistent X/Y/Z dimensions. Filtering returns views. |
 | **Volume** | Single 3D or 4D radiology acquisition backed by TileDB dense array |
 | **obs_id** | Unique string identifier for a Volume, unique across entire RadiObject |
 | **obs** | Volume-level observation dataframe containing per-volume metadata |
-| **Dataframe** | TileDB-backed 2D heterogeneous array for tabular data |
+| **Dataframe** | TileDB-backed sparse array with configurable index dimensions for tabular data |
+| **INDEX_COLUMNS** | Default dimension tuple `(obs_subject_id, obs_id)` for VolumeCollection.obs. obs_meta uses `(obs_subject_id,)` only. |
+| **obs_ids** | System-managed obs_meta attribute: JSON-serialized sorted list of volume obs_ids linked to each subject |
 
 ---
 
