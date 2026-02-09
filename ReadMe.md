@@ -29,37 +29,42 @@ pip install radiobject
 ## Quick Start
 
 ```python
-from radiobject import RadiObject, configure, WriteConfig, ReadConfig, TileConfig
+import numpy as np
+from radiobject import (
+    RadiObject, VolumeCollection, Volume,
+    configure, WriteConfig, ReadConfig, TileConfig,
+    SliceOrientation, CompressionConfig, Compressor,
+)
 
 # Configure how volumes are written (important for performance!)
 configure(write=WriteConfig(
-    tile=TileConfig(orientation=SliceOrientation.AXIAL), # Can be ISOTROPIC for 3D patch extraction...
+    tile=TileConfig(orientation=SliceOrientation.AXIAL),
     compression=CompressionConfig(algorithm=Compressor.ZSTD, level=3),
 ))
 
-# Create from NIfTI files using images dict (recommended)
+# Create RadiObject (read NIfTI/DICOM; write TileDB)
 radi = RadiObject.from_niftis(
     uri="./my-dataset",
     images={
-        "CT": "./imagesTr/*.nii.gz",      # Glob pattern
-        "seg": "./labelsTr",               # Directory path
+        "CT": "./imagesTr/*.nii.gz",  # Glob pattern
+        "seg": "./labelsTr",          # Directory path
     },
-    validate_alignment=True,               # Ensure matching subjects across collections
-    obs_meta=metadata_df,                  # Optional subject-level metadata
+    validate_alignment=True,          # Ensure matching subjects across collections
+    obs_meta=metadata_df,             # Optional subject-level metadata
 )
 
 # Access data (pandas-like)
-vol = radi.CT.iloc[0]            # First CT volume
-data = vol[100:200, :, :]        # Partial read (only loads needed tiles)
+vol: Volume = radi.CT.iloc[0]          # First CT volume
+data: np.ndarray = vol[100:200, :, :]  # Or vol.axial(155) works for partial read
 
 # Transform data (polars-like)
-CT_resampled = radi.CT.map(resample).write(name="CT_resampled") # Eagerly OR .lazy().map()
-radi.add_collection(name="CT_resampled", vc=CT_resampled)       # Add new collection to RadiObject
+ct_resampled: VolumeCollection = radi.CT.map(resample).write(name="CT_resampled")
+radi.add_collection(name="CT_resampled", vc=ct_resampled)
 
 # Filter data (returns views)
-subset = radi.filter("age > 40")                         # Query expression
-subset = radi.head(10)                                   # First 10 subjects
-subset.materialize("./subset_with_resampled_CT")         # Write to storage
+subset: RadiObject = radi.filter("age > 40")   # Query expression
+subset = radi.head(10)                         # First 10 subjects
+subset.write("./subset_with_resampled_CT")
 ```
 
 Works with local paths or S3 URIs (`s3://bucket/dataset`).
@@ -71,7 +76,7 @@ This enables **200-660x faster** partial reads. [See benchmarks →](docs/refere
 
 ![Benchmark overview](benchmarks/results/figures/benchmark_hero.png)
 
-*N.B. Missing comparison with [Zarr](https://github.com/zarr-developers/zarr-python) or NumPy files* 
+*N.B. Missing comparison with [Zarr](https://github.com/zarr-developers/zarr-python)* 
 
 ## Sample Data
 

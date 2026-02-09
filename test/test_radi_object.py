@@ -353,45 +353,45 @@ class TestRadiObjectFiltering:
         assert filtered.collection_names == ("T1w",)
 
 
-class TestRadiObjectMaterialization:
-    """Tests for RadiObject view materialize()."""
+class TestRadiObjectWrite:
+    """Tests for RadiObject view write()."""
 
-    def test_materialize_basic(
+    def test_write_basic(
         self,
         temp_dir: Path,
         populated_radi_object: RadiObject,
     ):
-        """Materialize full view as new RadiObject."""
+        """Write full view as new RadiObject."""
         view = populated_radi_object.iloc[:]
-        new_uri = str(temp_dir / "materialized_radi")
-        new_radi = view.materialize(new_uri)
+        new_uri = str(temp_dir / "written_radi")
+        new_radi = view.write(new_uri)
 
         assert len(new_radi) == 3
         assert new_radi.n_collections == 4
 
-    def test_materialize_filtered_subjects(
+    def test_write_filtered_subjects(
         self,
         temp_dir: Path,
         populated_radi_object: RadiObject,
     ):
-        """Materialize view with filtered subjects."""
+        """Write view with filtered subjects."""
         view = populated_radi_object.iloc[[0, 2]]
-        new_uri = str(temp_dir / "materialized_filtered")
-        new_radi = view.materialize(new_uri)
+        new_uri = str(temp_dir / "written_filtered")
+        new_radi = view.write(new_uri)
 
         assert len(new_radi) == 2
         expected_ids = [populated_radi_object.obs_subject_ids[i] for i in [0, 2]]
         assert new_radi.obs_subject_ids == expected_ids
 
-    def test_materialize_filtered_collections(
+    def test_write_filtered_collections(
         self,
         temp_dir: Path,
         populated_radi_object: RadiObject,
     ):
-        """Materialize view with filtered collections."""
+        """Write view with filtered collections."""
         view = populated_radi_object.select_collections(["T1w"])
-        new_uri = str(temp_dir / "materialized_one_collection")
-        new_radi = view.materialize(new_uri)
+        new_uri = str(temp_dir / "written_one_collection")
+        new_radi = view.write(new_uri)
 
         assert new_radi.n_collections == 1
         assert "T1w" in new_radi.collection_names
@@ -571,17 +571,17 @@ class TestS3Integration:
         view = s3_populated_radi_object.loc[subject_ids[1]]
         assert view.obs_subject_ids == [subject_ids[1]]
 
-    def test_view_materialization(
+    def test_view_write(
         self,
         s3_test_base_uri: str,
         s3_populated_radi_object: RadiObject,
         s3_tiledb_ctx: tiledb.Ctx,
     ):
-        """Verify view materialization works on S3."""
+        """Verify view write works on S3."""
         subject_ids = s3_populated_radi_object.obs_subject_ids
         view = s3_populated_radi_object.iloc[[0, 2]]
-        new_uri = f"{s3_test_base_uri}/materialized_radi"
-        new_radi = view.materialize(new_uri, ctx=s3_tiledb_ctx)
+        new_uri = f"{s3_test_base_uri}/written_radi"
+        new_radi = view.write(new_uri, ctx=s3_tiledb_ctx)
 
         assert len(new_radi) == 2
         assert new_radi.obs_subject_ids == [subject_ids[0], subject_ids[2]]

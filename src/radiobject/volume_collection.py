@@ -26,6 +26,7 @@ from radiobject.imaging_metadata import (
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, ctx_for_threads, map_on_threads
 from radiobject.query import EagerQuery
+from radiobject.utils import write_obs_dataframe
 from radiobject.volume import Volume
 
 if TYPE_CHECKING:
@@ -73,9 +74,9 @@ def _generate_adjacent_uri(
     name: str | None = None,
     transform_fn: TransformFn | None = None,
 ) -> str:
-    """Generate a URI adjacent to the source for materialization.
+    """Generate a URI adjacent to the source for write output.
 
-    Naming priority: explicit name > transform __name__ > '_materialized' suffix.
+    Naming priority: explicit name > transform __name__ > '_written' suffix.
     """
     parent = source_uri.rsplit("/", 1)[0]
 
@@ -89,7 +90,7 @@ def _generate_adjacent_uri(
         if fn_name and fn_name != "<lambda>":
             return f"{parent}/{source_name}_{fn_name}"
 
-    return f"{parent}/{source_name}_materialized"
+    return f"{parent}/{source_name}_written"
 
 
 class _ILocIndexer:
@@ -241,7 +242,7 @@ class VolumeCollection:
             return self._uri
         if self._source is not None:
             return self._source.uri
-        raise ValueError("VolumeCollection view has no URI. Call materialize(uri) first.")
+        raise ValueError("VolumeCollection view has no URI. Call write(uri) first.")
 
     @property
     def is_view(self) -> bool:
@@ -399,7 +400,7 @@ class VolumeCollection:
             all_results.extend(batch_results)
         return EagerQuery(all_results, obs_df, source=self._root)
 
-    def materialize(
+    def write(
         self,
         uri: str | None = None,
         name: str | None = None,
@@ -422,7 +423,7 @@ class VolumeCollection:
 
         obs_ids = self._effective_obs_ids
         if not obs_ids:
-            raise ValueError("No volumes to materialize")
+            raise ValueError("No volumes to write")
 
         # Get obs DataFrame for this view
         obs_df = self.obs.read()
@@ -538,7 +539,7 @@ class VolumeCollection:
         """Append new volumes atomically.
 
         Volume data and obs metadata are written together to maintain consistency.
-        Cannot be called on views - use `materialize()` first.
+        Cannot be called on views - use `write()` first.
 
         Args:
             niftis: List of (nifti_path, obs_subject_id) tuples.
@@ -646,7 +647,7 @@ class VolumeCollection:
     def _check_not_view(self, operation: str) -> None:
         """Raise if this is a view (views are immutable)."""
         if self.is_view:
-            raise TypeError(f"Cannot {operation} on a view. Call materialize(uri) first.")
+            raise TypeError(f"Cannot {operation} on a view. Call write(uri) first.")
 
     def _create_view(self, volume_ids: frozenset[str]) -> VolumeCollection:
         """Create a view with the given volume IDs, intersecting with current filter."""
@@ -744,19 +745,8 @@ class VolumeCollection:
             obs_rows.append(metadata.to_obs_dict(obs_id, obs_subject_id, series_type))
 
         obs_df = pd.DataFrame(obs_rows)
-        obs_uri = f"{self.uri}/obs"
-        obs_subject_ids = obs_df["obs_subject_id"].astype(str).to_numpy()
-        obs_ids = obs_df["obs_id"].astype(str).to_numpy()
-
-        # Only write attributes that exist in the target schema
         existing_columns = set(self.obs.columns)
-        with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {
-                col: obs_df[col].to_numpy()
-                for col in obs_df.columns
-                if col not in ("obs_subject_id", "obs_id") and col in existing_columns
-            }
-            arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(f"{self.uri}/obs", obs_df, ctx=effective_ctx, columns=existing_columns)
 
         # Update n_volumes metadata
         new_count = start_index + len(niftis)
@@ -834,19 +824,8 @@ class VolumeCollection:
             if col in obs_df.columns:
                 obs_df[col] = obs_df[col].fillna(np.nan)
 
-        obs_uri = f"{self.uri}/obs"
-        obs_subject_ids = obs_df["obs_subject_id"].astype(str).to_numpy()
-        obs_ids = obs_df["obs_id"].astype(str).to_numpy()
-
-        # Only write attributes that exist in the target schema
         existing_columns = set(self.obs.columns)
-        with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {
-                col: obs_df[col].to_numpy()
-                for col in obs_df.columns
-                if col not in ("obs_subject_id", "obs_id") and col in existing_columns
-            }
-            arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(f"{self.uri}/obs", obs_df, ctx=effective_ctx, columns=existing_columns)
 
         # Update n_volumes metadata
         new_count = start_index + len(dicom_dirs)
@@ -983,16 +962,7 @@ class VolumeCollection:
         obs_df = pd.DataFrame(obs_rows)
 
         # Write obs data
-        obs_uri = f"{uri}/obs"
-        obs_subject_ids = obs_df["obs_subject_id"].astype(str).to_numpy()
-        obs_ids = obs_df["obs_id"].astype(str).to_numpy()
-        with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {
-                col: obs_df[col].to_numpy()
-                for col in obs_df.columns
-                if col not in ("obs_subject_id", "obs_id")
-            }
-            arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(f"{uri}/obs", obs_df, ctx=effective_ctx)
 
         return cls(uri, ctx=ctx)
 
@@ -1127,16 +1097,7 @@ class VolumeCollection:
             obs_df[col] = obs_df[col].fillna(np.nan)
 
         # Write obs data
-        obs_uri = f"{uri}/obs"
-        obs_subject_ids = obs_df["obs_subject_id"].astype(str).to_numpy()
-        obs_ids = obs_df["obs_id"].astype(str).to_numpy()
-        with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {
-                col: obs_df[col].to_numpy()
-                for col in obs_df.columns
-                if col not in ("obs_subject_id", "obs_id")
-            }
-            arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(f"{uri}/obs", obs_df, ctx=effective_ctx)
 
         return cls(uri, ctx=ctx)
 
@@ -1207,14 +1168,9 @@ class VolumeCollection:
 
         obs_schema = None
         if obs_data is not None:
-            obs_schema = {}
-            for col in obs_data.columns:
-                if col in ("obs_id", "obs_subject_id"):
-                    continue
-                dtype = obs_data[col].to_numpy().dtype
-                if dtype == np.dtype("O"):
-                    dtype = np.dtype("U64")
-                obs_schema[col] = dtype
+            from radiobject.utils import build_obs_meta_schema
+
+            obs_schema = build_obs_meta_schema(obs_data)
 
         cls._create(
             uri,
@@ -1249,19 +1205,19 @@ class VolumeCollection:
             for result in results:
                 vol_grp.add(result.uri, name=str(result.index))
 
-        obs_ids = np.array([obs_id for obs_id, _ in volumes])
+        obs_ids_list = [obs_id for obs_id, _ in volumes]
         if obs_data is not None and "obs_subject_id" in obs_data.columns:
-            obs_subject_ids = obs_data["obs_subject_id"].astype(str).to_numpy()
+            obs_write_df = obs_data.copy()
         else:
-            obs_subject_ids = obs_ids.copy()
+            obs_write_df = pd.DataFrame(
+                {
+                    "obs_subject_id": obs_ids_list,
+                    "obs_id": obs_ids_list,
+                }
+            )
+        if "obs_id" not in obs_write_df.columns:
+            obs_write_df["obs_id"] = obs_ids_list
 
-        obs_uri = f"{uri}/obs"
-        with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {}
-            if obs_data is not None:
-                for col in obs_data.columns:
-                    if col not in ("obs_id", "obs_subject_id"):
-                        attr_data[col] = obs_data[col].to_numpy()
-            arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(f"{uri}/obs", obs_write_df, ctx=effective_ctx)
 
         return cls(uri, ctx=ctx)

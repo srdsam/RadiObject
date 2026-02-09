@@ -22,6 +22,7 @@ from radiobject.imaging_metadata import (
 )
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, ctx_for_threads
+from radiobject.utils import build_obs_meta_schema, write_obs_dataframe
 from radiobject.volume import Volume
 from radiobject.volume_collection import (
     VolumeCollection,
@@ -94,7 +95,7 @@ class RadiObject:
     (filtered subset referencing a source RadiObject). Views are created by
     filtering operations and read data from their source with filters applied.
 
-    Views are immutable. To persist a view, use `materialize(uri)`.
+    Views are immutable. To persist a view, use `write(uri)`.
 
     Examples:
         Attached (has URI):
@@ -318,10 +319,9 @@ class RadiObject:
                 raise KeyError(f"Collection '{name}' not found")
         return self._create_view(collection_names=frozenset(names))
 
-    def materialize(
+    def write(
         self,
         uri: str,
-        streaming: bool = True,
         ctx: tiledb.Ctx | None = None,
     ) -> RadiObject:
         """Write this RadiObject (or view) to storage.
@@ -331,7 +331,6 @@ class RadiObject:
 
         Args:
             uri: Target URI for the new RadiObject
-            streaming: Use streaming writer for memory efficiency (default: True)
             ctx: TileDB context
 
         Returns:
@@ -343,25 +342,14 @@ class RadiObject:
         else:
             filtered_obs_meta = self.obs_meta.read()
 
-        # Build obs_meta schema
-        obs_meta_schema: dict[str, np.dtype] = {}
-        for col in filtered_obs_meta.columns:
-            if col in ("obs_subject_id", "obs_id"):
-                continue
-            dtype = filtered_obs_meta[col].to_numpy().dtype
-            if dtype == np.dtype("O"):
-                dtype = np.dtype("U64")
-            obs_meta_schema[col] = dtype
-
-        if streaming:
-            return self._materialize_streaming(uri, filtered_obs_meta, obs_meta_schema, ctx)
-        return self._materialize_batch(uri, filtered_obs_meta, obs_meta_schema, ctx)
+        obs_meta_schema = build_obs_meta_schema(filtered_obs_meta)
+        return self._write_streaming(uri, filtered_obs_meta, obs_meta_schema, ctx)
 
     def copy(self) -> RadiObject:
         """Create an independent in-memory copy, detached from the view chain.
 
         Useful when you want to break the reference to the source RadiObject.
-        Note: This does NOT persist data. Call materialize(uri) to write to storage.
+        Note: This does NOT persist data. Call write(uri) to write to storage.
         """
         if not self.is_view:
             # For attached RadiObject, just return self (already independent)
@@ -461,20 +449,8 @@ class RadiObject:
         # Append obs_meta for new subjects
         if obs_meta is not None and len(obs_meta) > 0:
             obs_meta_uri = f"{uri}/obs_meta"
-            obs_subject_ids_arr = obs_meta["obs_subject_id"].astype(str).to_numpy()
-            obs_ids_arr = (
-                obs_meta["obs_id"].astype(str).to_numpy()
-                if "obs_id" in obs_meta.columns
-                else obs_subject_ids_arr
-            )
             existing_columns = set(self._root.obs_meta.columns)
-            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-                attr_data = {
-                    col: obs_meta[col].to_numpy()
-                    for col in obs_meta.columns
-                    if col not in ("obs_subject_id", "obs_id") and col in existing_columns
-                }
-                arr[obs_subject_ids_arr, obs_ids_arr] = attr_data
+            write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx, columns=existing_columns)
 
             new_count = len(self) + len(obs_meta)
             with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
@@ -683,7 +659,7 @@ class RadiObject:
         """Raise if attempting to modify a view."""
         if self.is_view:
             raise ValueError(
-                f"Cannot {operation} on a view. Call materialize(uri) first to create "
+                f"Cannot {operation} on a view. Call write(uri) first to create "
                 "an attached RadiObject."
             )
 
@@ -699,14 +675,14 @@ class RadiObject:
                 raise KeyError(f"obs_subject_id '{sid}' not found")
         return self._create_view(subject_ids=frozenset(obs_subject_ids))
 
-    def _materialize_streaming(
+    def _write_streaming(
         self,
         uri: str,
         obs_meta_df: pd.DataFrame,
         obs_meta_schema: dict[str, np.dtype],
         ctx: tiledb.Ctx | None,
     ) -> RadiObject:
-        """Materialize view to storage using streaming writer."""
+        """Write view to storage using streaming writer."""
         from radiobject.writers import RadiObjectWriter
 
         subject_ids = set(obs_meta_df["obs_subject_id"])
@@ -744,63 +720,6 @@ class RadiObject:
                             obs_subject_id=row["obs_subject_id"],
                             **attrs,
                         )
-
-        return RadiObject(uri, ctx=ctx)
-
-    def _materialize_batch(
-        self,
-        uri: str,
-        obs_meta_df: pd.DataFrame,
-        obs_meta_schema: dict[str, np.dtype],
-        ctx: tiledb.Ctx | None,
-    ) -> RadiObject:
-        """Materialize view to storage using batch writer."""
-        effective_ctx = ctx if ctx else self._effective_ctx()
-        subject_ids = list(obs_meta_df["obs_subject_id"])
-
-        RadiObject._create(
-            uri,
-            obs_meta_schema=obs_meta_schema,
-            n_subjects=len(subject_ids),
-            ctx=ctx,
-        )
-
-        # Write obs_meta
-        obs_meta_uri = f"{uri}/obs_meta"
-        obs_subject_ids_arr = obs_meta_df["obs_subject_id"].astype(str).to_numpy()
-        obs_ids_arr = (
-            obs_meta_df["obs_id"].astype(str).to_numpy()
-            if "obs_id" in obs_meta_df.columns
-            else obs_subject_ids_arr
-        )
-        with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-            attr_data = {
-                col: obs_meta_df[col].to_numpy()
-                for col in obs_meta_df.columns
-                if col not in ("obs_subject_id", "obs_id")
-            }
-            arr[obs_subject_ids_arr, obs_ids_arr] = attr_data
-
-        # Copy collections
-        collections_uri = f"{uri}/collections"
-        for coll_name in self.collection_names:
-            src_collection = self.collection(coll_name)
-            new_vc_uri = f"{collections_uri}/{coll_name}"
-
-            _copy_filtered_volume_collection(
-                src_collection,
-                new_vc_uri,
-                obs_subject_ids=subject_ids,
-                name=coll_name,
-                ctx=ctx,
-            )
-
-            with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
-                grp.add(new_vc_uri, name=coll_name)
-
-        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["n_collections"] = len(self.collection_names)
-            grp.meta["subject_count"] = len(subject_ids)
 
         return RadiObject(uri, ctx=ctx)
 
@@ -1058,31 +977,11 @@ class RadiObject:
                 grp.add(vc_uri, name=coll_name)
 
         n_subjects = len(obs_meta)
-        obs_meta_schema: dict[str, np.dtype] = {}
-        for col in obs_meta.columns:
-            if col in ("obs_subject_id", "obs_id"):
-                continue
-            dtype = obs_meta[col].to_numpy().dtype
-            if dtype == np.dtype("O"):
-                dtype = np.dtype("U64")
-            obs_meta_schema[col] = dtype
+        obs_meta_schema = build_obs_meta_schema(obs_meta)
 
         obs_meta_uri = f"{uri}/obs_meta"
         Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
-
-        if len(obs_meta) > 0:
-            obs_subject_ids = obs_meta["obs_subject_id"].astype(str).to_numpy()
-            obs_ids = (
-                obs_meta["obs_id"].astype(str).to_numpy()
-                if "obs_id" in obs_meta.columns
-                else obs_subject_ids
-            )
-            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-                attr_data = {}
-                for col in obs_meta.columns:
-                    if col not in ("obs_subject_id", "obs_id"):
-                        attr_data[col] = obs_meta[col].to_numpy()
-                arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx)
 
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_collections"] = len(collections)
@@ -1209,31 +1108,11 @@ class RadiObject:
                 grp.add(vc_uri, name=coll_name)
 
         n_subjects = len(obs_meta)
-        obs_meta_schema: dict[str, np.dtype] = {}
-        for col in obs_meta.columns:
-            if col in ("obs_subject_id", "obs_id"):
-                continue
-            dtype = obs_meta[col].to_numpy().dtype
-            if dtype == np.dtype("O"):
-                dtype = np.dtype("U64")
-            obs_meta_schema[col] = dtype
+        obs_meta_schema = build_obs_meta_schema(obs_meta)
 
         obs_meta_uri = f"{uri}/obs_meta"
         Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
-
-        if len(obs_meta) > 0:
-            obs_subject_ids = obs_meta["obs_subject_id"].astype(str).to_numpy()
-            obs_ids = (
-                obs_meta["obs_id"].astype(str).to_numpy()
-                if "obs_id" in obs_meta.columns
-                else obs_subject_ids
-            )
-            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-                attr_data = {}
-                for col in obs_meta.columns:
-                    if col not in ("obs_subject_id", "obs_id"):
-                        attr_data[col] = obs_meta[col].to_numpy()
-                arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx)
 
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_collections"] = len(collections)
@@ -1304,10 +1183,10 @@ class RadiObject:
             else:
                 to_copy[name] = vc
 
-        # Check if collections group already exists (from materialize)
+        # Check if collections group already exists (from write)
         collections_group_exists = tiledb.object_type(collections_uri, ctx=effective_ctx) == "group"
 
-        # Create root group (may already exist as directory from materialize)
+        # Create root group (may already exist as directory from write)
         if tiledb.object_type(uri, ctx=effective_ctx) != "group":
             tiledb.Group.create(uri, ctx=effective_ctx)
 
@@ -1346,33 +1225,12 @@ class RadiObject:
 
         # Build obs_meta schema
         n_subjects = len(obs_meta)
-        obs_meta_schema: dict[str, np.dtype] = {}
-        for col in obs_meta.columns:
-            if col in ("obs_subject_id", "obs_id"):
-                continue
-            dtype = obs_meta[col].to_numpy().dtype
-            if dtype == np.dtype("O"):
-                dtype = np.dtype("U64")
-            obs_meta_schema[col] = dtype
+        obs_meta_schema = build_obs_meta_schema(obs_meta)
 
         # Create obs_meta
         obs_meta_uri = f"{uri}/obs_meta"
         Dataframe.create(obs_meta_uri, schema=obs_meta_schema, ctx=ctx)
-
-        if len(obs_meta) > 0:
-            obs_subject_ids = obs_meta["obs_subject_id"].astype(str).to_numpy()
-            obs_ids = (
-                obs_meta["obs_id"].astype(str).to_numpy()
-                if "obs_id" in obs_meta.columns
-                else obs_subject_ids
-            )
-            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-                attr_data = {
-                    col: obs_meta[col].to_numpy()
-                    for col in obs_meta.columns
-                    if col not in ("obs_subject_id", "obs_id")
-                }
-                arr[obs_subject_ids, obs_ids] = attr_data
+        write_obs_dataframe(obs_meta_uri, obs_meta, ctx=effective_ctx)
 
         # Link obs_meta to root and set metadata
         with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
@@ -1425,33 +1283,12 @@ class RadiObject:
 
         n_subjects = len(obs_meta) if obs_meta is not None else 0
 
-        obs_meta_schema = None
-        if obs_meta is not None:
-            obs_meta_schema = {}
-            for col in obs_meta.columns:
-                if col in ("obs_subject_id", "obs_id"):
-                    continue
-                dtype = obs_meta[col].to_numpy().dtype
-                if dtype == np.dtype("O"):
-                    dtype = np.dtype("U64")
-                obs_meta_schema[col] = dtype
+        obs_meta_schema = build_obs_meta_schema(obs_meta) if obs_meta is not None else None
 
         cls._create(uri, obs_meta_schema=obs_meta_schema, n_subjects=n_subjects, ctx=ctx)
 
         if obs_meta is not None and len(obs_meta) > 0:
-            obs_meta_uri = f"{uri}/obs_meta"
-            obs_subject_ids = obs_meta["obs_subject_id"].astype(str).to_numpy()
-            obs_ids = (
-                obs_meta["obs_id"].astype(str).to_numpy()
-                if "obs_id" in obs_meta.columns
-                else obs_subject_ids
-            )
-            with tiledb.open(obs_meta_uri, "w", ctx=effective_ctx) as arr:
-                attr_data = {}
-                for col in obs_meta.columns:
-                    if col not in ("obs_subject_id", "obs_id"):
-                        attr_data[col] = obs_meta[col].to_numpy()
-                arr[obs_subject_ids, obs_ids] = attr_data
+            write_obs_dataframe(f"{uri}/obs_meta", obs_meta, ctx=effective_ctx)
 
         collections_uri = f"{uri}/collections"
         for coll_name, vc in collections.items():
@@ -1483,118 +1320,71 @@ def _copy_volume_collection(
     src: VolumeCollection,
     dst_uri: str,
     name: str | None = None,
+    obs_subject_ids: list[str] | None = None,
     ctx: tiledb.Ctx | None = None,
 ) -> None:
-    """Copy a VolumeCollection to a new URI."""
+    """Copy a VolumeCollection to a new URI, optionally filtering by subject IDs."""
     effective_ctx = ctx if ctx else get_tiledb_ctx()
 
     collection_name = name if name is not None else src.name
+
+    obs_df = src.obs.read()
+    if obs_subject_ids is not None:
+        subject_id_set = set(obs_subject_ids)
+        obs_df = obs_df[obs_df["obs_subject_id"].isin(subject_id_set)].reset_index(drop=True)
+        if len(obs_df) == 0:
+            raise ValueError("No volumes match the specified obs_subject_ids")
 
     VolumeCollection._create(
         dst_uri,
         shape=src.shape,
         obs_schema=_extract_obs_schema(src.obs),
-        n_volumes=len(src),
+        n_volumes=len(obs_df),
         name=collection_name,
         ctx=ctx,
     )
 
-    obs_df = src.obs.read()
-    obs_uri = f"{dst_uri}/obs"
-    obs_subject_ids = obs_df["obs_subject_id"].astype(str).to_numpy()
-    obs_ids = obs_df["obs_id"].astype(str).to_numpy()
-    with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-        attr_data = {
-            col: obs_df[col].to_numpy()
-            for col in obs_df.columns
-            if col not in ("obs_subject_id", "obs_id")
-        }
-        arr[obs_subject_ids, obs_ids] = attr_data
+    write_obs_dataframe(f"{dst_uri}/obs", obs_df, ctx=effective_ctx)
 
-    def write_volume(args: tuple[int, str, Volume]) -> WriteResult:
-        idx, obs_id, vol = args
-        worker_ctx = ctx_for_threads(ctx)
-        new_vol_uri = f"{dst_uri}/volumes/{idx}"
-        try:
-            data = vol.to_numpy()
-            new_vol = Volume.from_numpy(new_vol_uri, data, ctx=worker_ctx)
-            new_vol.set_obs_id(obs_id)
-            return WriteResult(idx, new_vol_uri, obs_id, success=True)
-        except Exception as e:
-            return WriteResult(idx, new_vol_uri, obs_id, success=False, error=e)
+    if obs_subject_ids is not None:
+        selected_obs_ids = set(obs_df["obs_id"])
+        selected_indices = [i for i, oid in enumerate(src.obs_ids) if oid in selected_obs_ids]
 
-    write_args = [(idx, obs_id, src.iloc[idx]) for idx, obs_id in enumerate(src.obs_ids)]
+        def write_volume(args: tuple[int, int, str]) -> WriteResult:
+            new_idx, orig_idx, obs_id = args
+            worker_ctx = ctx_for_threads(ctx)
+            new_vol_uri = f"{dst_uri}/volumes/{new_idx}"
+            try:
+                vol = src.iloc[orig_idx]
+                data = vol.to_numpy()
+                new_vol = Volume.from_numpy(new_vol_uri, data, ctx=worker_ctx)
+                new_vol.set_obs_id(obs_id)
+                return WriteResult(new_idx, new_vol_uri, obs_id, success=True)
+            except Exception as e:
+                return WriteResult(new_idx, new_vol_uri, obs_id, success=False, error=e)
+
+        write_args = [
+            (new_idx, orig_idx, src.obs_ids[orig_idx])
+            for new_idx, orig_idx in enumerate(selected_indices)
+        ]
+    else:
+
+        def write_volume(args: tuple[int, str, Volume]) -> WriteResult:
+            idx, obs_id, vol = args
+            worker_ctx = ctx_for_threads(ctx)
+            new_vol_uri = f"{dst_uri}/volumes/{idx}"
+            try:
+                data = vol.to_numpy()
+                new_vol = Volume.from_numpy(new_vol_uri, data, ctx=worker_ctx)
+                new_vol.set_obs_id(obs_id)
+                return WriteResult(idx, new_vol_uri, obs_id, success=True)
+            except Exception as e:
+                return WriteResult(idx, new_vol_uri, obs_id, success=False, error=e)
+
+        write_args = [(idx, obs_id, src.iloc[idx]) for idx, obs_id in enumerate(src.obs_ids)]
+
     results = _write_volumes_parallel(
         write_volume, write_args, progress=False, desc="Copying volumes"
-    )
-
-    with tiledb.Group(f"{dst_uri}/volumes", "w", ctx=effective_ctx) as vol_grp:
-        for result in results:
-            vol_grp.add(result.uri, name=str(result.index))
-
-
-def _copy_filtered_volume_collection(
-    src: VolumeCollection,
-    dst_uri: str,
-    obs_subject_ids: list[str],
-    name: str | None = None,
-    ctx: tiledb.Ctx | None = None,
-) -> None:
-    """Copy a VolumeCollection, filtering to volumes matching obs_subject_ids."""
-    effective_ctx = ctx if ctx else get_tiledb_ctx()
-
-    collection_name = name if name is not None else src.name
-
-    obs_df = src.obs.read()
-    subject_id_set = set(obs_subject_ids)
-
-    filtered_obs = obs_df[obs_df["obs_subject_id"].isin(subject_id_set)].reset_index(drop=True)
-
-    if len(filtered_obs) == 0:
-        raise ValueError("No volumes match the specified obs_subject_ids")
-
-    VolumeCollection._create(
-        dst_uri,
-        shape=src.shape,
-        obs_schema=_extract_obs_schema(src.obs),
-        n_volumes=len(filtered_obs),
-        name=collection_name,
-        ctx=ctx,
-    )
-
-    obs_uri = f"{dst_uri}/obs"
-    obs_subject_ids_arr = filtered_obs["obs_subject_id"].astype(str).to_numpy()
-    obs_ids_arr = filtered_obs["obs_id"].astype(str).to_numpy()
-    with tiledb.open(obs_uri, "w", ctx=effective_ctx) as arr:
-        attr_data = {
-            col: filtered_obs[col].to_numpy()
-            for col in filtered_obs.columns
-            if col not in ("obs_subject_id", "obs_id")
-        }
-        arr[obs_subject_ids_arr, obs_ids_arr] = attr_data
-
-    selected_obs_ids = set(filtered_obs["obs_id"])
-    selected_indices = [i for i, oid in enumerate(src.obs_ids) if oid in selected_obs_ids]
-
-    def write_volume(args: tuple[int, int, str]) -> WriteResult:
-        new_idx, orig_idx, obs_id = args
-        worker_ctx = ctx_for_threads(ctx)
-        new_vol_uri = f"{dst_uri}/volumes/{new_idx}"
-        try:
-            vol = src.iloc[orig_idx]
-            data = vol.to_numpy()
-            new_vol = Volume.from_numpy(new_vol_uri, data, ctx=worker_ctx)
-            new_vol.set_obs_id(obs_id)
-            return WriteResult(new_idx, new_vol_uri, obs_id, success=True)
-        except Exception as e:
-            return WriteResult(new_idx, new_vol_uri, obs_id, success=False, error=e)
-
-    write_args = [
-        (new_idx, orig_idx, src.obs_ids[orig_idx])
-        for new_idx, orig_idx in enumerate(selected_indices)
-    ]
-    results = _write_volumes_parallel(
-        write_volume, write_args, progress=False, desc="Filtering volumes"
     )
 
     with tiledb.Group(f"{dst_uri}/volumes", "w", ctx=effective_ctx) as vol_grp:

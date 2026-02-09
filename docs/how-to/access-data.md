@@ -212,7 +212,7 @@ Views can be exported to new storage:
 
 ```python
 subset = radi.filter("split == 'train'")
-subset.materialize("s3://bucket/subset")
+subset.write("s3://bucket/subset")
 
 radi_subset = RadiObject("s3://bucket/subset")
 ```

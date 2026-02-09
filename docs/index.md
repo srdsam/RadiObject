@@ -31,7 +31,7 @@ slc = vol.axial(64)               # Single axial slice
 
 # Filter and export
 subset = radi.filter("age > 40")  # Query expression on obs_meta
-subset.head(10).materialize("./subset")  # or use lazy().write() for transforms
+subset.head(10).write("./subset")
 ```
 
 Works with local paths or S3 URIs (`s3://bucket/dataset`).

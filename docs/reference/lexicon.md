@@ -77,6 +77,7 @@ RadiObject-specific terminology. For general medical imaging terms, see the [DIC
 | **write_volume()** | Write single volume data to VolumeCollectionWriter |
 | **write_batch()** | Write multiple volumes at once |
 | **add_collection()** | Add new collection to RadiObjectWriter, returns VolumeCollectionWriter |
+| **write()** | Persist a RadiObject or VolumeCollection (including views) to storage |
 
 ---
 
