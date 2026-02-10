@@ -209,7 +209,6 @@ class TestForegroundSampling:
             mask=segmentation_collections["mask"],
             config=config,
             foreground_sampling=True,
-            foreground_threshold=0.001,  # Low threshold for test data
         )
         sample = dataset[0]
         assert "image" in sample
@@ -219,48 +218,43 @@ class TestForegroundSampling:
 class TestTransforms:
     """Tests for transform application."""
 
-    def test_image_transform_applied(
-        self, segmentation_collections: dict[str, VolumeCollection]
-    ) -> None:
-        """Test image_transform is applied to image only."""
-        transform_called = {"image": False, "mask": False}
+    def test_transform_applied(self, segmentation_collections: dict[str, VolumeCollection]) -> None:
+        """Test transform is applied to sample dict."""
+        transform_called = False
 
-        def image_transform(data: dict[str, Any]) -> dict[str, Any]:
-            transform_called["image"] = True
+        def transform(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal transform_called
+            transform_called = True
             assert "image" in data
+            assert "mask" in data
             return data
 
         dataset = SegmentationDataset(
             image=segmentation_collections["image"],
             mask=segmentation_collections["mask"],
-            image_transform=image_transform,
+            transform=transform,
         )
         _ = dataset[0]
-        assert transform_called["image"]
+        assert transform_called
 
-    def test_spatial_transform_applied(
+    def test_transform_receives_both_keys(
         self, segmentation_collections: dict[str, VolumeCollection]
     ) -> None:
-        """Test spatial_transform is applied before image_transform."""
-        call_order: list[str] = []
+        """Test transform receives both image and mask keys."""
+        received_keys: list[str] = []
 
-        def spatial_transform(data: dict[str, Any]) -> dict[str, Any]:
-            call_order.append("spatial")
-            return data
-
-        def image_transform(data: dict[str, Any]) -> dict[str, Any]:
-            call_order.append("image")
+        def transform(data: dict[str, Any]) -> dict[str, Any]:
+            received_keys.extend(data.keys())
             return data
 
         dataset = SegmentationDataset(
             image=segmentation_collections["image"],
             mask=segmentation_collections["mask"],
-            spatial_transform=spatial_transform,
-            image_transform=image_transform,
+            transform=transform,
         )
         _ = dataset[0]
-        # Spatial should be called first, then image
-        assert call_order == ["spatial", "image"]
+        assert "image" in received_keys
+        assert "mask" in received_keys
 
 
 class TestCreateSegmentationDataloader:
@@ -304,7 +298,6 @@ class TestCreateSegmentationDataloader:
             batch_size=2,
             patch_size=(32, 32, 32),
             foreground_sampling=True,
-            foreground_threshold=0.001,
             num_workers=0,
         )
         batch = next(iter(loader))
@@ -431,7 +424,6 @@ class TestViewBasedTraining:
             mask=mask_view,
             config=config,
             foreground_sampling=True,
-            foreground_threshold=0.001,
         )
 
         # Should not crash and produce valid samples
@@ -606,7 +598,6 @@ class TestHeterogeneousPatchMode:
             mask=heterogeneous_collections["mask"],
             config=config,
             foreground_sampling=True,
-            foreground_threshold=0.001,
         )
         sample = dataset[0]
         assert sample["image"].shape == (1, 16, 16, 8)

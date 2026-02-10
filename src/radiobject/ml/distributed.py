@@ -1,4 +1,10 @@
-"""Distributed training utilities for DDP."""
+"""Distributed training utilities for DDP.
+
+Scope: data partitioning only. Wraps VolumeCollectionDataset with
+DistributedSampler so each rank sees a disjoint subset of volumes.
+Process group init (init_process_group) and model wrapping (DDP) are
+the caller's responsibility.
+"""
 
 from __future__ import annotations
 

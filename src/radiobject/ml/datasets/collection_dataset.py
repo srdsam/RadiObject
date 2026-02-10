@@ -1,4 +1,10 @@
-"""VolumeCollectionDataset - primary PyTorch Dataset for VolumeCollection(s)."""
+"""VolumeCollectionDataset — primary PyTorch Dataset for VolumeCollection(s).
+
+Stacks multiple VolumeCollections along the channel dimension, producing
+tensors shaped ``(C, X, Y, Z)`` where C = number of collections. This
+channel-stacking design maps directly to MONAI's expected input format for
+multi-modal networks (e.g., T1w + FLAIR as a 2-channel input).
+"""
 
 from __future__ import annotations
 
@@ -10,7 +16,7 @@ import torch
 from torch.utils.data import Dataset
 
 from radiobject._types import LabelSource
-from radiobject.ml.config import DatasetConfig, LoadingMode
+from radiobject.ml.config import SLICE_METHODS, DatasetConfig, LoadingMode, slice_dim_index
 from radiobject.ml.utils.labels import load_labels
 from radiobject.ml.utils.validation import validate_collection_alignment, validate_uniform_shapes
 
@@ -84,7 +90,8 @@ class VolumeCollectionDataset(Dataset):
         if self._config.loading_mode == LoadingMode.PATCH:
             self._length = self._n_volumes * self._config.patches_per_volume
         elif self._config.loading_mode == LoadingMode.SLICE_2D:
-            self._length = self._n_volumes * self._volume_shape[2]
+            dim_idx = slice_dim_index(self._config.slice_orientation)
+            self._length = self._n_volumes * self._volume_shape[dim_idx]
         else:
             self._length = self._n_volumes
 
@@ -160,10 +167,13 @@ class VolumeCollectionDataset(Dataset):
 
     def _get_slice_item(self, idx: int) -> dict[str, Any]:
         """Load a 2D slice from the volume."""
-        volume_idx = idx // self._volume_shape[2]
-        slice_idx = idx % self._volume_shape[2]
+        dim_idx = slice_dim_index(self._config.slice_orientation)
+        n_slices = self._volume_shape[dim_idx]
+        volume_idx = idx // n_slices
+        slice_idx = idx % n_slices
 
-        slices = [coll.iloc[volume_idx].axial(slice_idx) for coll in self._collections]
+        slice_fn = SLICE_METHODS[self._config.slice_orientation]
+        slices = [slice_fn(coll.iloc[volume_idx], slice_idx) for coll in self._collections]
 
         stacked = np.stack(slices, axis=0)
         result: dict[str, Any] = {

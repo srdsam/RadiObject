@@ -184,18 +184,15 @@ def create_segmentation_dataloader(
     num_workers: int = 4,
     pin_memory: bool = True,
     persistent_workers: bool = True,
-    image_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-    spatial_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     foreground_sampling: bool = False,
-    foreground_threshold: float = 0.01,
-    foreground_max_retries: int = 10,
     patches_per_volume: int = 1,
 ) -> DataLoader:
     """Create a DataLoader for segmentation training with separate image/mask handling.
 
     Unlike create_training_dataloader which stacks collections as channels, this
-    returns separate "image" and "mask" tensors. This is cleaner for segmentation
-    workflows where different transforms need to be applied to images vs masks.
+    returns separate "image" and "mask" tensors — the standard interface for
+    segmentation workflows.
 
     Args:
         image: VolumeCollection containing input images (CT, MRI, etc.).
@@ -205,14 +202,14 @@ def create_segmentation_dataloader(
         num_workers: DataLoader worker processes.
         pin_memory: Pin tensors to CUDA memory.
         persistent_workers: Keep workers alive between epochs.
-        image_transform: Transform applied only to "image" key (e.g., normalization).
-        spatial_transform: Transform applied to both "image" and "mask" keys
-            (e.g., random flips, rotations).
+        transform: Transform function applied to each sample dict.
+            MONAI dict transforms work directly — use key selection to
+            control which tensors are affected (e.g., ``RandFlipd(keys=["image", "mask"])``
+            for spatial transforms, ``NormalizeIntensityd(keys="image")`` for
+            image-only transforms).
         foreground_sampling: If True, bias patch sampling toward regions with
-            foreground (non-zero mask values).
-        foreground_threshold: Minimum fraction of foreground voxels in patch
-            when foreground_sampling is enabled.
-        foreground_max_retries: Maximum random attempts before accepting any patch.
+            foreground (non-zero mask values). Foreground coordinates are
+            pre-computed once at init (no extra I/O during training).
         patches_per_volume: Number of patches to extract per volume per epoch.
 
     Returns:
@@ -230,11 +227,8 @@ def create_segmentation_dataloader(
         image=image,
         mask=mask,
         config=config,
-        image_transform=image_transform,
-        spatial_transform=spatial_transform,
+        transform=transform,
         foreground_sampling=foreground_sampling,
-        foreground_threshold=foreground_threshold,
-        foreground_max_retries=foreground_max_retries,
     )
 
     effective_workers = num_workers if num_workers > 0 else 0

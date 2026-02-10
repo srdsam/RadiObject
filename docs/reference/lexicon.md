@@ -63,6 +63,7 @@ RadiObject-specific terminology. For general medical imaging terms, see the [DIC
 | **map()** | Apply transform to each volume. On VolumeCollection returns EagerQuery (eager); on LazyQuery defers execution |
 | **write()** | Persist query results to new VolumeCollection |
 | **to_list()** | Extract raw results from EagerQuery |
+| **to_dataframe()** | Summarize EagerQuery as a DataFrame with obs metadata and a `result` summary column. Accepts optional `columns` to override obs column selection |
 | **iter_volumes()** | LazyQuery streaming iterator yielding Volume objects |
 | **to_numpy_stack()** | Load all matching volumes as stacked array `(N, X, Y, Z)` |
 | **TransformFn** | Type alias: `Callable[[np.ndarray, pd.Series], TransformResult]` — receives `(volume, obs_row)` |

@@ -65,11 +65,15 @@ class TestPatchDataset:
         assert "patch_idx" in sample
         assert "patch_start" in sample
 
-    def test_patch_within_bounds(self, ml_dataset_patch: VolumeCollectionDataset) -> None:
+    def test_patch_within_bounds(
+        self, ml_dataset_patch: VolumeCollectionDataset, populated_radi_object_module
+    ) -> None:
         """Test patch start position is within volume bounds."""
         sample = ml_dataset_patch[0]
         start = sample["patch_start"]
-        vol_shape = ml_dataset_patch.volume_shape
+        # volume_shape is None in PATCH mode (heterogeneous support),
+        # so get the actual shape from the source collection
+        vol_shape = populated_radi_object_module.collection("flair").shape
         patch_size = (64, 64, 64)
         for i in range(3):
             assert start[i] >= 0

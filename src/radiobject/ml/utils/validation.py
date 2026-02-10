@@ -1,4 +1,8 @@
-"""Validation utilities for ML datasets."""
+"""Validation utilities for ML datasets.
+
+All functions read metadata only (TileDB schema / obs DataFrame) —
+no voxel data is loaded, so validation is fast even for large collections.
+"""
 
 from __future__ import annotations
 
@@ -108,8 +112,7 @@ def collect_volume_shapes(
         for d in range(3):
             if s[d] < patch_size[d]:
                 raise ValueError(
-                    f"Volume {i} shape {s} is smaller than patch_size "
-                    f"{patch_size} in dimension {d}"
+                    f"Volume {i} shape {s} is smaller than patch_size {patch_size} in dimension {d}"
                 )
         shapes.append((s[0], s[1], s[2]))
 

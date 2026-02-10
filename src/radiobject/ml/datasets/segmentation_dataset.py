@@ -1,4 +1,11 @@
-"""SegmentationDataset - specialized dataset for image/mask segmentation training."""
+"""SegmentationDataset — specialized dataset for image/mask segmentation training.
+
+Keeps image and mask as separate dict keys rather than channel-stacking,
+enabling per-key transforms (e.g., normalize image only, flip both).
+When ``foreground_sampling=True``, all mask volumes are loaded once at init
+to cache nonzero voxel coordinates — this trades init-time memory for
+zero extra I/O during training.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +16,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from radiobject.ml.config import DatasetConfig, LoadingMode
+from radiobject.ml.config import SLICE_METHODS, DatasetConfig, LoadingMode, slice_dim_index
 from radiobject.ml.utils.validation import (
     collect_volume_shapes,
     validate_collection_alignment,
@@ -28,18 +35,12 @@ class SegmentationDataset(Dataset):
         image: VolumeCollection,
         mask: VolumeCollection,
         config: DatasetConfig | None = None,
-        image_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-        spatial_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         foreground_sampling: bool = False,
-        foreground_threshold: float = 0.01,
-        foreground_max_retries: int = 10,
     ):
         self._config = config or DatasetConfig()
-        self._image_transform = image_transform
-        self._spatial_transform = spatial_transform
+        self._transform = transform
         self._foreground_sampling = foreground_sampling
-        self._foreground_threshold = foreground_threshold
-        self._foreground_max_retries = foreground_max_retries
 
         self._image = image
         self._mask = mask
@@ -72,7 +73,8 @@ class SegmentationDataset(Dataset):
         if self._config.loading_mode == LoadingMode.PATCH:
             self._length = self._n_volumes * self._config.patches_per_volume
         elif self._config.loading_mode == LoadingMode.SLICE_2D:
-            self._length = self._n_volumes * self._volume_shape[2]
+            dim_idx = slice_dim_index(self._config.slice_orientation)
+            self._length = self._n_volumes * self._volume_shape[dim_idx]
         else:
             self._length = self._n_volumes
 
@@ -180,48 +182,16 @@ class SegmentationDataset(Dataset):
 
         return tuple(int(s) for s in start)  # type: ignore[return-value]
 
-    def _sample_foreground_patch(
-        self,
-        volume_idx: int,
-        max_start: tuple[int, ...],
-        patch_size: tuple[int, int, int],
-        seed: int,
-    ) -> tuple[int, int, int]:
-        """Sample a patch position biased toward foreground regions (legacy fallback)."""
-        rng = np.random.default_rng(seed=None)
-        mask_vol = self._mask.iloc[volume_idx]
-
-        best_start: tuple[int, int, int] | None = None
-        best_fg: float = 0.0
-
-        for _attempt in range(self._foreground_max_retries):
-            start = tuple(
-                rng.integers(0, max_start[i] + 1) if max_start[i] > 0 else 0 for i in range(3)
-            )
-
-            mask_patch = mask_vol.slice(
-                slice(start[0], start[0] + patch_size[0]),
-                slice(start[1], start[1] + patch_size[1]),
-                slice(start[2], start[2] + patch_size[2]),
-            )
-            foreground_ratio = np.count_nonzero(mask_patch) / mask_patch.size
-
-            if foreground_ratio >= self._foreground_threshold:
-                return start  # type: ignore[return-value]
-
-            if foreground_ratio > best_fg:
-                best_fg = foreground_ratio
-                best_start = start  # type: ignore[assignment]
-
-        return best_start if best_start is not None else start  # type: ignore[return-value]
-
     def _get_slice_item(self, idx: int) -> dict[str, Any]:
         """Load a 2D slice from image and mask."""
-        volume_idx = idx // self._volume_shape[2]
-        slice_idx = idx % self._volume_shape[2]
+        dim_idx = slice_dim_index(self._config.slice_orientation)
+        n_slices = self._volume_shape[dim_idx]
+        volume_idx = idx // n_slices
+        slice_idx = idx % n_slices
 
-        image_data = self._image.iloc[volume_idx].axial(slice_idx)
-        mask_data = self._mask.iloc[volume_idx].axial(slice_idx)
+        slice_fn = SLICE_METHODS[self._config.slice_orientation]
+        image_data = slice_fn(self._image.iloc[volume_idx], slice_idx)
+        mask_data = slice_fn(self._mask.iloc[volume_idx], slice_idx)
 
         result: dict[str, Any] = {
             "image": torch.from_numpy(image_data).unsqueeze(0),
@@ -235,13 +205,9 @@ class SegmentationDataset(Dataset):
         return self._apply_transforms(result)
 
     def _apply_transforms(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Apply spatial and image transforms to sample dict."""
-        if self._spatial_transform is not None:
-            result = self._spatial_transform(result)
-
-        if self._image_transform is not None:
-            result = self._image_transform(result)
-
+        """Apply transform to sample dict."""
+        if self._transform is not None:
+            result = self._transform(result)
         return result
 
     @property

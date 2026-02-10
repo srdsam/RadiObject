@@ -2,7 +2,8 @@
 
 Classes:
     EagerQuery  — returned by VolumeCollection.map(). Holds computed results
-                  with chaining (.map), persistence (.write), and extraction (.to_list).
+                  with chaining (.map), persistence (.write), extraction (.to_list),
+                  and tabular display (.to_dataframe).
     LazyQuery   — returned by VolumeCollection.lazy(). Defers filter + transform
                   until .write() for single-pass, memory-efficient ETL.
 
@@ -93,6 +94,16 @@ def _extract_obs_attrs(obs_row: pd.Series) -> dict[str, AttrValue]:
     return {k: v for k, v in obs_row.items() if k not in _OBS_ID_COLS}
 
 
+def _summarize_result(value: object) -> str:
+    """One-line summary of a transform result for tabular display."""
+    if isinstance(value, np.ndarray):
+        shape_str = "x".join(str(d) for d in value.shape)
+        return f"{shape_str} {value.dtype}"
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
 def _apply_transform_to_volumes(
     transform_fn: TransformFn,
     collection: VolumeCollection,
@@ -122,7 +133,8 @@ class EagerQuery(Generic[T]):
     """Computed query results with pipeline methods.
 
     Holds materialized results paired with obs metadata and accumulated obs_updates,
-    enabling chained transforms via `.map()` and persistence via `.write()`.
+    enabling chained transforms via `.map()`, persistence via `.write()`,
+    and tabular display via `.to_dataframe()` / `_repr_html_()`.
 
     Transforms can return either just a value, or (value, obs_updates_dict) to
     annotate obs metadata. Updates accumulate across chained `.map()` calls and
@@ -208,6 +220,28 @@ class EagerQuery(Generic[T]):
     def to_list(self) -> list[tuple[T, pd.Series]]:
         """Extract results paired with merged obs rows."""
         return list(self)
+
+    def to_dataframe(self, columns: Sequence[str] | None = None) -> pd.DataFrame:
+        """Summarize results as a DataFrame with obs metadata and result column."""
+        default_cols = ["obs_id", "obs_subject_id"]
+        extra_keys: list[str] = []
+        for updates in self._obs_updates:
+            for k in updates:
+                if k not in extra_keys and k not in default_cols:
+                    extra_keys.append(k)
+
+        obs_cols = columns if columns is not None else default_cols + extra_keys
+
+        rows: list[dict] = []
+        for i, (result, obs_row) in enumerate(self):
+            row = {c: obs_row.get(c, None) for c in obs_cols}
+            row["result"] = _summarize_result(result)
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+    def _repr_html_(self) -> str:
+        """Rich HTML rendering for Jupyter notebooks."""
+        return self.to_dataframe()._repr_html_()
 
     def __iter__(self) -> Iterator[tuple[T, pd.Series]]:
         for i in range(len(self._results)):
