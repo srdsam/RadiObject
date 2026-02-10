@@ -81,4 +81,5 @@ nav:
 
   - Explanation:
       - Architecture: explanation/architecture.md
+      - Machine Learning: explanation/ml-architecture.md
       - Performance Analysis: explanation/performance.md
