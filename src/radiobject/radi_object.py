@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 from collections.abc import Iterator
 from functools import cached_property
 from pathlib import Path
@@ -16,11 +15,6 @@ import tiledb
 
 from radiobject.ctx import get_tiledb_ctx
 from radiobject.dataframe import Dataframe
-from radiobject.imaging_metadata import (
-    extract_dicom_metadata,
-    extract_nifti_metadata,
-    infer_series_type,
-)
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, ctx_for_threads
 from radiobject.utils import (
@@ -415,28 +409,35 @@ class RadiObject:
 
     def append(
         self,
-        niftis: Sequence[tuple[str | Path, str]] | None = None,
-        dicom_dirs: Sequence[tuple[str | Path, str]] | None = None,
+        images: dict[str, str | Path | Sequence[tuple[str | Path, str]]],
         obs_meta: pd.DataFrame | None = None,
         reorient: bool | None = None,
+        format_hint: dict[str, str] | None = None,
         progress: bool = False,
     ) -> None:
         """Append new subjects and their volumes atomically."""
+        from radiobject.ingest import ImageFormat, resolve_image_source
+
         self._check_not_view("append")
 
-        if niftis is None and dicom_dirs is None:
-            raise ValueError("Must provide either niftis or dicom_dirs")
-        if niftis is not None and dicom_dirs is not None:
-            raise ValueError("Cannot provide both niftis and dicom_dirs")
+        if not images:
+            raise ValueError("images dict cannot be empty")
+
+        # Resolve each collection source
+        hint_map = format_hint or {}
+        groups: dict[str, tuple[list[tuple[Path, str]], ImageFormat]] = {}
+        for coll_name, source in images.items():
+            hint = ImageFormat(hint_map[coll_name]) if coll_name in hint_map else None
+            items, fmt = resolve_image_source(source, format_hint=hint)
+            groups[coll_name] = (items, fmt)
 
         effective_ctx = self._effective_ctx()
         uri = self._effective_uri()
 
         # Collect all subject IDs from input
-        if niftis is not None:
-            input_subject_ids = {sid for _, sid in niftis}
-        else:
-            input_subject_ids = {sid for _, sid in dicom_dirs}
+        input_subject_ids: set[str] = set()
+        for items, _ in groups.values():
+            input_subject_ids.update(sid for _, sid in items)
 
         existing_subject_ids = set(self.obs_subject_ids)
         new_subject_ids = input_subject_ids - existing_subject_ids
@@ -466,14 +467,52 @@ class RadiObject:
             with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
                 grp.meta["subject_count"] = new_count
 
-        # Process and group input files
-        if niftis is not None:
-            self._append_niftis(niftis, reorient, effective_ctx, progress)
-        else:
-            self._append_dicoms(dicom_dirs, reorient, effective_ctx, progress)
+        # Process each collection
+        collections_uri = f"{uri}/collections"
+        existing_collections = set(self.collection_names)
+
+        for coll_name, (items, fmt) in groups.items():
+            if coll_name in existing_collections:
+                vc = self.collection(coll_name)
+                if fmt == ImageFormat.NIFTI:
+                    vc.append(niftis=items, reorient=reorient, progress=progress)
+                else:
+                    vc.append(dicom_dirs=items, reorient=reorient, progress=progress)
+            else:
+                vc_uri = f"{collections_uri}/{coll_name}"
+                if fmt == ImageFormat.NIFTI:
+                    VolumeCollection.from_niftis(
+                        uri=vc_uri,
+                        niftis=list(items),
+                        reorient=reorient,
+                        validate_dimensions=False,
+                        name=coll_name,
+                        ctx=self._ctx,
+                        progress=progress,
+                    )
+                else:
+                    VolumeCollection.from_dicoms(
+                        uri=vc_uri,
+                        dicom_dirs=list(items),
+                        reorient=reorient,
+                        validate_dimensions=True,
+                        name=coll_name,
+                        ctx=self._ctx,
+                        progress=progress,
+                    )
+                with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
+                    grp.add(vc_uri, name=coll_name)
+                with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
+                    grp.meta["n_collections"] = self.n_collections + 1
+                existing_collections.add(coll_name)
 
         # Update obs_ids in obs_meta for affected subjects
         obs_meta_uri = f"{uri}/obs_meta"
+        # Invalidate first so collection_names is fresh
+        for prop in ("_index", "_metadata", "collection_names"):
+            if prop in self.__dict__:
+                del self.__dict__[prop]
+
         all_collections = [self.collection(name) for name in self.collection_names]
         obs_ids_map = build_obs_ids_mapping(all_collections)
         affected_subjects = obs_ids_map[obs_ids_map["obs_subject_id"].isin(input_subject_ids)]
@@ -484,11 +523,6 @@ class RadiObject:
                 ctx=effective_ctx,
                 columns={"obs_ids"},
             )
-
-        # Invalidate cached properties
-        for prop in ("_index", "_metadata", "collection_names"):
-            if prop in self.__dict__:
-                del self.__dict__[prop]
 
     def rename_collection(self, old_name: str, new_name: str) -> None:
         """Rename a collection."""
@@ -779,153 +813,37 @@ class RadiObject:
 
         return RadiObject(uri, ctx=ctx)
 
-    def _append_niftis(
-        self,
-        niftis: Sequence[tuple[str | Path, str]],
-        reorient: bool | None,
-        effective_ctx: tiledb.Ctx,
-        progress: bool = False,
-    ) -> None:
-        """Internal: append NIfTI files to existing collections or create new ones."""
-        uri = self._effective_uri()
-        file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
-        for nifti_path, obs_subject_id in niftis:
-            path = Path(nifti_path)
-            if not path.exists():
-                raise FileNotFoundError(f"NIfTI file not found: {path}")
-            metadata = extract_nifti_metadata(path)
-            series_type = infer_series_type(path)
-            file_info.append((path, obs_subject_id, metadata.spatial_dimensions, series_type))
-
-        groups: dict[tuple[tuple[int, int, int], str], list[tuple[Path, str]]] = defaultdict(list)
-        for path, subject_id, shape, series_type in file_info:
-            groups[(shape, series_type)].append((path, subject_id))
-
-        collections_uri = f"{uri}/collections"
-        existing_collections = set(self.collection_names)
-
-        groups_iter = groups.items()
-        if progress:
-            from tqdm.auto import tqdm
-
-            groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
-
-        for (shape, series_type), items in groups_iter:
-            collection_name = series_type
-            if collection_name in existing_collections:
-                vc = self.collection(collection_name)
-                if vc.shape != shape:
-                    collection_name = f"{series_type}_{shape[0]}x{shape[1]}x{shape[2]}"
-
-            if collection_name in existing_collections:
-                vc = self.collection(collection_name)
-                vc.append(niftis=items, reorient=reorient, progress=progress)
-            else:
-                vc_uri = f"{collections_uri}/{collection_name}"
-                VolumeCollection.from_niftis(
-                    uri=vc_uri,
-                    niftis=items,
-                    reorient=reorient,
-                    validate_dimensions=True,
-                    name=collection_name,
-                    ctx=self._ctx,
-                    progress=progress,
-                )
-                with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
-                    grp.add(vc_uri, name=collection_name)
-                with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-                    grp.meta["n_collections"] = self.n_collections + 1
-                existing_collections.add(collection_name)
-
-    def _append_dicoms(
-        self,
-        dicom_dirs: Sequence[tuple[str | Path, str]],
-        reorient: bool | None,
-        effective_ctx: tiledb.Ctx,
-        progress: bool = False,
-    ) -> None:
-        """Internal: append DICOM series to existing collections or create new ones."""
-        uri = self._effective_uri()
-        file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
-        for dicom_dir, obs_subject_id in dicom_dirs:
-            path = Path(dicom_dir)
-            if not path.exists():
-                raise FileNotFoundError(f"DICOM directory not found: {path}")
-            metadata = extract_dicom_metadata(path)
-            dims = metadata.dimensions
-            shape = (dims[1], dims[0], dims[2])
-            file_info.append((path, obs_subject_id, shape, metadata.modality))
-
-        groups: dict[tuple[tuple[int, int, int], str], list[tuple[Path, str]]] = defaultdict(list)
-        for path, subject_id, shape, modality in file_info:
-            groups[(shape, modality)].append((path, subject_id))
-
-        collections_uri = f"{uri}/collections"
-        existing_collections = set(self.collection_names)
-
-        groups_iter = groups.items()
-        if progress:
-            from tqdm.auto import tqdm
-
-            groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
-
-        for (shape, modality), items in groups_iter:
-            collection_name = modality
-            if collection_name in existing_collections:
-                vc = self.collection(collection_name)
-                if vc.shape != shape:
-                    collection_name = f"{modality}_{shape[0]}x{shape[1]}x{shape[2]}"
-
-            if collection_name in existing_collections:
-                vc = self.collection(collection_name)
-                vc.append(dicom_dirs=items, reorient=reorient, progress=progress)
-            else:
-                vc_uri = f"{collections_uri}/{collection_name}"
-                VolumeCollection.from_dicoms(
-                    uri=vc_uri,
-                    dicom_dirs=items,
-                    reorient=reorient,
-                    validate_dimensions=True,
-                    name=collection_name,
-                    ctx=self._ctx,
-                    progress=progress,
-                )
-                with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
-                    grp.add(vc_uri, name=collection_name)
-                with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-                    grp.meta["n_collections"] = self.n_collections + 1
-                existing_collections.add(collection_name)
-
     @classmethod
-    def from_niftis(
+    def from_images(
         cls,
         uri: str,
         images: dict[str, str | Path | Sequence[tuple[str | Path, str]]],
         validate_alignment: bool = False,
         obs_meta: pd.DataFrame | None = None,
         reorient: bool | None = None,
+        format_hint: dict[str, str] | None = None,
         ctx: tiledb.Ctx | None = None,
         progress: bool = False,
     ) -> RadiObject:
-        """Create RadiObject from NIfTI files with raw data storage.
+        """Create RadiObject from NIfTI or DICOM images with auto-format detection.
 
-        Ingestion stores volumes in their original dimensions without any
-        preprocessing. Use `.map()` or `.lazy().map()` on individual collections for post-hoc transformations.
+        Each collection's format is auto-detected (or set via format_hint).
 
         Args:
             uri: Target URI for RadiObject.
-            images: Dict mapping collection names to NIfTI sources. Sources can be
+            images: Dict mapping collection names to image sources. Sources can be
                 a glob pattern, directory path, or pre-resolved list of (path, subject_id).
             validate_alignment: If True, verify all collections have same subject IDs.
             obs_meta: Subject-level metadata keyed by obs_subject_id (one row per subject).
             reorient: Reorient to canonical orientation (None uses config default).
+            format_hint: Dict mapping collection names to format strings ("nifti" or "dicom").
             ctx: TileDB context.
             progress: Show tqdm progress bar.
 
         Examples:
-            Using images dict with glob patterns:
+            NIfTI with glob patterns:
 
-                radi = RadiObject.from_niftis(
+                radi = RadiObject.from_images(
                     uri="./dataset",
                     images={
                         "CT": "./imagesTr/*.nii.gz",
@@ -933,29 +851,38 @@ class RadiObject:
                     },
                 )
 
-            Using images dict with directories:
+            DICOM with pre-resolved tuples:
 
-                radi = RadiObject.from_niftis(
-                    uri="./dataset",
-                    images={"CT": "./imagesTr", "seg": "./labelsTr"},
+                radi = RadiObject.from_images(
+                    uri="./ct_study",
+                    images={
+                        "CT_head": [(Path("/dicom/sub01/head"), "sub-01")],
+                    },
+                )
+
+            Mixed format with explicit hints:
+
+                radi = RadiObject.from_images(
+                    uri="./study",
+                    images={"CT": "/dicom_dir/", "seg": "/labels/*.nii.gz"},
+                    format_hint={"CT": "dicom"},
                 )
         """
-        from radiobject.ingest import resolve_nifti_source
+        from radiobject.ingest import ImageFormat, resolve_image_source
 
         if not images:
             raise ValueError("images dict cannot be empty")
 
-        # --- SINGLE CODE PATH: Resolve images dict ---
-
-        groups: dict[str, list[tuple[Path, str]]] = {}
+        hint_map = format_hint or {}
+        groups: dict[str, tuple[list[tuple[Path, str]], ImageFormat]] = {}
         for coll_name, source in images.items():
-            groups[coll_name] = resolve_nifti_source(source)
+            hint = ImageFormat(hint_map[coll_name]) if coll_name in hint_map else None
+            items, fmt = resolve_image_source(source, format_hint=hint)
+            groups[coll_name] = (items, fmt)
 
         # Optional alignment validation
         if validate_alignment and len(groups) > 1:
-            subject_sets = {
-                name: {sid for _, sid in nifti_list} for name, nifti_list in groups.items()
-            }
+            subject_sets = {name: {sid for _, sid in items} for name, (items, _) in groups.items()}
             first_name, first_set = next(iter(subject_sets.items()))
             for name, sid_set in subject_sets.items():
                 if sid_set != first_set:
@@ -967,32 +894,34 @@ class RadiObject:
                         f"missing in '{name}': {sorted(missing_in_other)[:3]}"
                     )
 
-        # Validate all files exist
-        for coll_name, nifti_list in groups.items():
-            for path, _ in nifti_list:
+        # Validate files/directories exist
+        for coll_name, (item_list, fmt) in groups.items():
+            for path, _ in item_list:
                 if not path.exists():
-                    raise FileNotFoundError(f"NIfTI file not found: {path}")
+                    if fmt == ImageFormat.DICOM:
+                        raise FileNotFoundError(f"DICOM directory not found: {path}")
+                    else:
+                        raise FileNotFoundError(f"NIfTI file not found: {path}")
 
         # Collect all subject IDs
         all_subject_ids: set[str] = set()
-        for nifti_list in groups.values():
-            all_subject_ids.update(sid for _, sid in nifti_list)
+        for item_list, _ in groups.values():
+            all_subject_ids.update(sid for _, sid in item_list)
 
-        # Validate FK constraint if obs_meta provided
         if obs_meta is not None:
-            ensure_obs_columns(obs_meta, context="RadiObject.from_niftis")
+            ensure_obs_columns(obs_meta, context="RadiObject.from_images")
             obs_meta_subject_ids = set(obs_meta["obs_subject_id"])
             missing = all_subject_ids - obs_meta_subject_ids
             if missing:
                 raise ValueError(
-                    f"obs_subject_ids in niftis not found in obs_meta: {sorted(missing)[:5]}"
+                    f"obs_subject_ids in images not found in obs_meta: {sorted(missing)[:5]}"
                 )
         else:
             sorted_ids = sorted(all_subject_ids)
             obs_meta = pd.DataFrame({"obs_subject_id": sorted_ids})
 
-        if not groups or all(len(nifti_list) == 0 for nifti_list in groups.values()):
-            raise ValueError("No NIfTI files found")
+        if all(len(items) == 0 for items, _ in groups.values()):
+            raise ValueError("No image files found")
 
         effective_ctx = ctx if ctx else get_tiledb_ctx()
 
@@ -1008,136 +937,28 @@ class RadiObject:
 
             groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
 
-        for coll_name, items in groups_iter:
+        for coll_name, (items, fmt) in groups_iter:
             vc_uri = f"{collections_uri}/{coll_name}"
-            vc = VolumeCollection.from_niftis(
-                uri=vc_uri,
-                niftis=list(items),
-                reorient=reorient,
-                validate_dimensions=False,
-                name=coll_name,
-                ctx=ctx,
-                progress=progress,
-            )
-            collections[coll_name] = vc
-
-            with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:
-                grp.add(vc_uri, name=coll_name)
-
-        obs_meta = merge_obs_ids(obs_meta, collections)
-        create_and_write_obs_meta(uri, obs_meta, ctx=ctx)
-
-        with tiledb.Group(uri, "w", ctx=effective_ctx) as grp:
-            grp.meta["n_collections"] = len(collections)
-            grp.meta["subject_count"] = len(obs_meta)
-            grp.add(f"{uri}/obs_meta", name="obs_meta")
-            grp.add(collections_uri, name="collections")
-
-        return cls(uri, ctx=ctx)
-
-    @classmethod
-    def from_dicoms(
-        cls,
-        uri: str,
-        dicom_dirs: Sequence[tuple[str | Path, str]],
-        obs_meta: pd.DataFrame | None = None,
-        reorient: bool | None = None,
-        ctx: tiledb.Ctx | None = None,
-        progress: bool = False,
-    ) -> RadiObject:
-        """Create RadiObject from DICOM series with automatic grouping.
-
-        Files are automatically grouped into VolumeCollections by:
-
-        1. Dimensions (rows, columns, n_slices)
-        2. Modality tag (CT, MR) + SeriesDescription
-
-        Args:
-            uri: Target URI for RadiObject.
-            dicom_dirs: List of (dicom_dir, obs_subject_id) tuples.
-            obs_meta: Subject-level metadata keyed by obs_subject_id (one row per subject).
-            reorient: Reorient to canonical orientation (None uses config default).
-            ctx: TileDB context.
-            progress: Show tqdm progress bar during volume writes.
-
-        Example:
-            Create from multiple DICOM directories:
-
-                radi = RadiObject.from_dicoms(
-                    uri="/storage/ct_study",
-                    dicom_dirs=[
-                        ("/dicom/sub01/CT_HEAD", "sub-01"),
-                        ("/dicom/sub01/CT_CHEST", "sub-01"),
-                        ("/dicom/sub02/CT_HEAD", "sub-02"),
-                    ],
-                    obs_meta=obs_meta_df,
+            if fmt == ImageFormat.NIFTI:
+                vc = VolumeCollection.from_niftis(
+                    uri=vc_uri,
+                    niftis=list(items),
+                    reorient=reorient,
+                    validate_dimensions=False,
+                    name=coll_name,
+                    ctx=ctx,
+                    progress=progress,
                 )
-        """
-        if not dicom_dirs:
-            raise ValueError("At least one DICOM directory is required")
-
-        all_subject_ids = {sid for _, sid in dicom_dirs}
-
-        if obs_meta is not None:
-            ensure_obs_columns(obs_meta, context="RadiObject.from_dicoms")
-            obs_meta_subject_ids = set(obs_meta["obs_subject_id"])
-            missing = all_subject_ids - obs_meta_subject_ids
-            if missing:
-                raise ValueError(
-                    f"obs_subject_ids in dicom_dirs not found in obs_meta: {sorted(missing)[:5]}"
+            else:
+                vc = VolumeCollection.from_dicoms(
+                    uri=vc_uri,
+                    dicom_dirs=list(items),
+                    reorient=reorient,
+                    validate_dimensions=True,
+                    name=coll_name,
+                    ctx=ctx,
+                    progress=progress,
                 )
-        else:
-            sorted_ids = sorted(all_subject_ids)
-            obs_meta = pd.DataFrame({"obs_subject_id": sorted_ids})
-
-        file_info: list[tuple[Path, str, tuple[int, int, int], str]] = []
-        for dicom_dir, obs_subject_id in dicom_dirs:
-            path = Path(dicom_dir)
-            if not path.exists():
-                raise FileNotFoundError(f"DICOM directory not found: {path}")
-
-            metadata = extract_dicom_metadata(path)
-            dims = metadata.dimensions
-            shape = (dims[1], dims[0], dims[2])
-            group_key = metadata.modality
-            file_info.append((path, obs_subject_id, shape, group_key))
-
-        groups: dict[tuple[tuple[int, int, int], str], list[tuple[Path, str]]] = defaultdict(list)
-        for path, subject_id, shape, group_key in file_info:
-            key = (shape, group_key)
-            groups[key].append((path, subject_id))
-
-        effective_ctx = ctx if ctx else get_tiledb_ctx()
-
-        tiledb.Group.create(uri, ctx=effective_ctx)
-        collections_uri = f"{uri}/collections"
-        tiledb.Group.create(collections_uri, ctx=effective_ctx)
-
-        collections: dict[str, VolumeCollection] = {}
-        used_names: set[str] = set()
-
-        groups_iter = groups.items()
-        if progress:
-            from tqdm.auto import tqdm
-
-            groups_iter = tqdm(groups_iter, desc="Collections", unit="coll")
-
-        for (shape, modality), items in groups_iter:
-            coll_name = modality
-            if coll_name in used_names:
-                coll_name = f"{modality}_{shape[0]}x{shape[1]}x{shape[2]}"
-            used_names.add(coll_name)
-
-            vc_uri = f"{collections_uri}/{coll_name}"
-            vc = VolumeCollection.from_dicoms(
-                uri=vc_uri,
-                dicom_dirs=list(items),
-                reorient=reorient,
-                validate_dimensions=True,
-                name=coll_name,
-                ctx=ctx,
-                progress=progress,
-            )
             collections[coll_name] = vc
 
             with tiledb.Group(collections_uri, "w", ctx=effective_ctx) as grp:

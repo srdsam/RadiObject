@@ -45,7 +45,7 @@ configure(write=WriteConfig(
 ))
 
 # Create RadiObject (read NIfTI/DICOM; write TileDB)
-radi = RadiObject.from_niftis(
+radi = RadiObject.from_images(
     uri="./my-dataset",
     images={
         "CT": "./imagesTr/*.nii.gz",  # Glob pattern
@@ -88,7 +88,7 @@ Download sample datasets for tutorials and testing:
 # Install download dependencies
 pip install radiobject[download]
 
-# Download BraTS brain tumor data (for tutorials 00-04)
+# Download BraTS brain tumor data (for tutorials 00-02)
 python scripts/download_dataset.py msd-brain-tumour
 
 # List all available datasets
@@ -121,10 +121,10 @@ Download datasets for tutorials and tests:
 ```bash
 pip install radiobject[download]
 
-# BraTS brain tumour (tutorials 00-04, ~1.5 GB)
+# BraTS brain tumour (tutorials 00-02, ~1.5 GB)
 python scripts/download_dataset.py msd-brain-tumour
 
-# MSD Lung tumour (tutorials 05-06, ~8.5 GB)
+# MSD Lung tumour (tutorials 03-04, ~8.5 GB)
 python scripts/download_dataset.py msd-lung
 
 # All test datasets
@@ -155,7 +155,7 @@ Notebooks default to S3 URIs. To run locally, change the URI variable at the top
 BRATS_URI = "./data/brats_radiobject"
 ```
 
-Then run `00_ingest_brats.ipynb` to ingest data, followed by notebooks 01-04. For MSD Lung (notebooks 05-06), change `MSD_LUNG_URI` similarly.
+Then run `00_ingest_brats.ipynb` to ingest data, followed by notebooks 01-02. For MSD Lung (notebooks 03-04), change `MSD_LUNG_URI` similarly.
 
 ## License
 

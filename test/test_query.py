@@ -179,16 +179,18 @@ class TestEagerQuery:
         assert len(result) == len(populated_collection)
 
     def test_eager_to_list(self, populated_collection: VolumeCollection):
-        """EagerQuery.to_list() returns list of results."""
-        results = populated_collection.map(lambda v, obs: v.mean()).to_list()
-        assert len(results) == len(populated_collection)
+        """EagerQuery.to_list() returns list of (result, obs_row) tuples."""
+        pairs = populated_collection.map(lambda v, obs: v.mean()).to_list()
+        assert len(pairs) == len(populated_collection)
+        results = [r for r, _ in pairs]
         assert all(isinstance(r, (float, np.floating)) for r in results)
 
     def test_eager_chained_map(self, populated_collection: VolumeCollection):
         """EagerQuery.map() chains transforms."""
         original_data = populated_collection.iloc[0].to_numpy()
-        results = populated_collection.map(lambda v, obs: v * 2).map(lambda v, obs: v + 1).to_list()
-        np.testing.assert_array_almost_equal(results[0], original_data * 2 + 1)
+        pairs = populated_collection.map(lambda v, obs: v * 2).map(lambda v, obs: v + 1).to_list()
+        result, _ = pairs[0]
+        np.testing.assert_array_almost_equal(result, original_data * 2 + 1)
 
     def test_eager_write(self, temp_dir: Path, populated_collection: VolumeCollection):
         """EagerQuery.write() persists results to a new VolumeCollection."""
@@ -235,16 +237,17 @@ class TestEagerQuery:
         assert "step2" in obs_df.columns
 
     def test_eager_iter(self, populated_collection: VolumeCollection):
-        """EagerQuery supports iteration."""
+        """EagerQuery supports iteration yielding (result, obs_row) tuples."""
         eq = populated_collection.map(lambda v, obs: v.shape)
-        shapes = list(eq)
+        shapes = [r for r, _ in eq]
         assert len(shapes) == len(populated_collection)
 
     def test_eager_getitem(self, populated_collection: VolumeCollection):
-        """EagerQuery supports indexing."""
+        """EagerQuery supports indexing returning (result, obs_row)."""
         eq = populated_collection.map(lambda v, obs: v.mean())
-        val = eq[0]
+        val, obs = eq[0]
         assert isinstance(val, (float, np.floating))
+        assert isinstance(obs, pd.Series)
 
 
 class TestEagerMapBatches:

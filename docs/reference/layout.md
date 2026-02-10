@@ -76,12 +76,10 @@ RadiObject/
 ├── notebooks/
 │   ├── README.md                   # Tutorial setup guide
 │   ├── 00_ingest_brats.ipynb
-│   ├── 01_radi_object.ipynb
-│   ├── 02_volume_collection.ipynb
-│   ├── 03_volume.ipynb
-│   ├── 04_configuration.ipynb
-│   ├── 05_ingest_msd.ipynb
-│   └── 06_ml_training.ipynb
+│   ├── 01_explore_data.ipynb
+│   ├── 02_configuration.ipynb
+│   ├── 03_ingest_msd.ipynb
+│   └── 04_ml_training.ipynb
 ├── scripts/
 │   └── download_dataset.py         # Unified dataset download script
 ├── src/
@@ -130,7 +128,7 @@ RadiObject/
     │   └── __init__.py
     ├── test_append.py
     ├── test_dataframe.py
-    ├── test_from_niftis.py
+    ├── test_from_images.py
     ├── test_imaging_metadata.py
     ├── test_indexing.py
     ├── test_ingest.py

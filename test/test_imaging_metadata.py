@@ -1,7 +1,7 @@
 """Tests for radiobject.imaging_metadata module.
 
 Note: infer_series_type, extract_nifti_metadata, and NiftiMetadata are covered
-in test_from_niftis.py. This file tests DicomMetadata and spatial unit parsing.
+in test_from_images.py. This file tests DicomMetadata and spatial unit parsing.
 """
 
 from __future__ import annotations

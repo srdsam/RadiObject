@@ -134,12 +134,12 @@ class TestDiscoverNiftiPairs:
 
 
 class TestRawIngestion:
-    """Tests for RadiObject.from_niftis with raw data storage."""
+    """Tests for RadiObject.from_images() with raw data storage."""
 
     def test_from_images_dict_with_directory(self, temp_dir: Path, nifti_dir: Path) -> None:
         uri = str(temp_dir / "radi_from_dir")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={"lung_ct": nifti_dir},
         )
@@ -150,7 +150,7 @@ class TestRawIngestion:
     def test_explicit_collection_name(self, temp_dir: Path, nifti_dir: Path) -> None:
         uri = str(temp_dir / "radi_named")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={"lung_ct": nifti_dir},
         )
@@ -161,7 +161,7 @@ class TestRawIngestion:
     def test_heterogeneous_shapes_allowed(self, temp_dir: Path, mixed_shape_niftis: Path) -> None:
         uri = str(temp_dir / "radi_mixed")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={"mixed": mixed_shape_niftis},
         )
@@ -175,7 +175,7 @@ class TestRawIngestion:
     def test_uniform_collection_has_shape(self, temp_dir: Path, nifti_dir: Path) -> None:
         uri = str(temp_dir / "radi_uniform")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={"ct": nifti_dir},
         )
@@ -189,7 +189,7 @@ class TestRawIngestion:
         uri = str(temp_dir / "radi_no_input")
 
         with pytest.raises(TypeError):
-            RadiObject.from_niftis(uri=uri)
+            RadiObject.from_images(uri=uri)
 
     def test_images_dict_with_tuples(
         self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
@@ -197,7 +197,7 @@ class TestRawIngestion:
         """Verify images dict with pre-resolved tuples works."""
         uri = str(temp_dir / "radi_images")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
         )
@@ -217,7 +217,7 @@ class TestObsIdUniqueness:
     ) -> None:
         uri = str(temp_dir / "radi_obs_ids")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
         )
@@ -233,7 +233,7 @@ class TestObsIdUniqueness:
     ) -> None:
         uri = str(temp_dir / "radi_get_vol")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
         )
@@ -251,7 +251,7 @@ class TestObsIdUniqueness:
     ) -> None:
         uri = str(temp_dir / "radi_not_found")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
         )
@@ -271,7 +271,7 @@ class TestRenameCollection:
     ) -> None:
         uri = str(temp_dir / "radi_rename")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
         )
@@ -287,7 +287,7 @@ class TestRenameCollection:
     ) -> None:
         uri = str(temp_dir / "radi_rename_err")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
         )
@@ -300,7 +300,7 @@ class TestRenameCollection:
     ) -> None:
         uri = str(temp_dir / "radi_rename_dup")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
         )

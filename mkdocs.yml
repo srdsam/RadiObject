@@ -49,12 +49,10 @@ nav:
   - Tutorials:
       - tutorials/index.md
       - "1. Ingest BraTS Data": notebooks/00_ingest_brats.ipynb
-      - "2. RadiObject API": notebooks/01_radi_object.ipynb
-      - "3. VolumeCollection": notebooks/02_volume_collection.ipynb
-      - "4. Volume Operations": notebooks/03_volume.ipynb
-      - "5. Storage Config": notebooks/04_configuration.ipynb
-      - "6. Multi-Collection Ingestion": notebooks/05_ingest_msd.ipynb
-      - "7. ML Training": notebooks/06_ml_training.ipynb
+      - "2. Explore Data": notebooks/01_explore_data.ipynb
+      - "3. Configuration": notebooks/02_configuration.ipynb
+      - "4. Multi-Collection Ingestion": notebooks/03_ingest_msd.ipynb
+      - "5. ML Training": notebooks/04_ml_training.ipynb
 
   - How-to Guides:
       - how-to/index.md

@@ -43,7 +43,7 @@ from radiobject import RadiObject
 radi = RadiObject("s3://your-bucket/your-dataset")
 
 # Write to S3
-RadiObject.from_niftis(
+RadiObject.from_images(
     "s3://your-bucket/new-dataset",
     images={"CT": "./local/images"},
     obs_meta=df,

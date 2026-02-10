@@ -187,7 +187,7 @@ class TestRadiObjectAppendBasic:
         )
 
         populated_radi_object.append(
-            niftis=[(new_nifti_path, "sub-NEW")],
+            images={"T1w": [(new_nifti_path, "sub-NEW")]},
             obs_meta=obs_meta,
         )
 
@@ -216,14 +216,13 @@ class TestRadiObjectAppendExistingSubjects:
         if data.ndim == 4:
             data = data[..., 0]
 
-        # Use a new modality name that won't exist yet
         new_nifti_path = temp_dir / f"{existing_subject_id}_DWI.nii.gz"
         new_img = nib.Nifti1Image(data, img.affine)
         nib.save(new_img, new_nifti_path)
 
         # Append without obs_meta (subject already exists)
         populated_radi_object.append(
-            niftis=[(new_nifti_path, existing_subject_id)],
+            images={"DWI": [(new_nifti_path, existing_subject_id)]},
         )
 
         # Subject count should not change
@@ -252,7 +251,7 @@ class TestRadiObjectAppendValidation:
 
         with pytest.raises(ValueError, match="obs_meta required"):
             populated_radi_object.append(
-                niftis=[(new_nifti_path, "sub-NOMETA")],
+                images={"T1w": [(new_nifti_path, "sub-NOMETA")]},
             )
 
     def test_append_obs_meta_missing_subject_raises(
@@ -281,7 +280,7 @@ class TestRadiObjectAppendValidation:
 
         with pytest.raises(ValueError, match="missing entries"):
             populated_radi_object.append(
-                niftis=[(new_nifti_path, "sub-MISSING")],
+                images={"T1w": [(new_nifti_path, "sub-MISSING")]},
                 obs_meta=obs_meta,
             )
 
@@ -311,17 +310,17 @@ class TestRadiObjectAppendValidation:
 
         with pytest.raises(ValueError, match="obs_subject_id"):
             populated_radi_object.append(
-                niftis=[(new_nifti_path, "sub-BADCOL")],
+                images={"T1w": [(new_nifti_path, "sub-BADCOL")]},
                 obs_meta=bad_obs_meta,
             )
 
-    def test_append_requires_niftis_or_dicoms(
+    def test_append_empty_images_raises(
         self,
         populated_radi_object: RadiObject,
     ):
-        """append() requires either niftis or dicom_dirs."""
-        with pytest.raises(ValueError, match="Must provide"):
-            populated_radi_object.append()
+        """append() requires non-empty images dict."""
+        with pytest.raises(ValueError, match="images dict cannot be empty"):
+            populated_radi_object.append(images={})
 
 
 class TestRadiObjectAppendNewCollection:
@@ -333,7 +332,7 @@ class TestRadiObjectAppendNewCollection:
         populated_radi_object: RadiObject,
         nifti_manifest: list[dict],
     ):
-        """append() creates new collection when series type is new."""
+        """append() creates new collection when collection name is new."""
         existing_subject_id = populated_radi_object.obs_subject_ids[0]
         initial_collections = set(populated_radi_object.collection_names)
 
@@ -344,19 +343,17 @@ class TestRadiObjectAppendNewCollection:
         if data.ndim == 4:
             data = data[..., 0]
 
-        # Use unique modality name
         new_nifti_path = temp_dir / f"{existing_subject_id}_PET.nii.gz"
         new_img = nib.Nifti1Image(data, img.affine)
         nib.save(new_img, new_nifti_path)
 
         populated_radi_object.append(
-            niftis=[(new_nifti_path, existing_subject_id)],
+            images={"PET": [(new_nifti_path, existing_subject_id)]},
         )
 
         # Should have new collection
         new_collections = set(populated_radi_object.collection_names)
-        added = new_collections - initial_collections
-        assert len(added) >= 1
+        assert "PET" in new_collections - initial_collections
 
 
 class TestAppendAtomicity:
@@ -387,7 +384,7 @@ class TestAppendAtomicity:
         )
 
         populated_radi_object.append(
-            niftis=[(new_nifti_path, "sub-ATOMIC")],
+            images={"T1w": [(new_nifti_path, "sub-ATOMIC")]},
             obs_meta=obs_meta,
         )
 
@@ -426,7 +423,7 @@ class TestAppendCacheInvalidation:
         obs_meta = pd.DataFrame({"obs_subject_id": ["sub-CACHE"]})
 
         populated_radi_object.append(
-            niftis=[(new_nifti_path, "sub-CACHE")],
+            images={"T1w": [(new_nifti_path, "sub-CACHE")]},
             obs_meta=obs_meta,
         )
 
@@ -451,13 +448,12 @@ class TestAppendCacheInvalidation:
         if data.ndim == 4:
             data = data[..., 0]
 
-        # Use a unique modality name
         new_nifti_path = temp_dir / f"{existing_subject_id}_ASL.nii.gz"
         new_img = nib.Nifti1Image(data, img.affine)
         nib.save(new_img, new_nifti_path)
 
         populated_radi_object.append(
-            niftis=[(new_nifti_path, existing_subject_id)],
+            images={"ASL": [(new_nifti_path, existing_subject_id)]},
         )
 
         # Collection names should reflect new collection

@@ -386,9 +386,12 @@ class VolumeCollection:
 
     def map_batches(self, fn: Callable, batch_size: int = 8) -> EagerQuery:
         """Apply fn to batches of (volume, obs_row) pairs. Returns EagerQuery."""
+        from radiobject._types import normalize_transform_result
+
         obs_df = self.to_obs()
         obs_ids = self._effective_obs_ids
         all_results = []
+        all_updates = []
         for i in range(0, len(obs_ids), batch_size):
             batch_ids = obs_ids[i : i + batch_size]
             batch = []
@@ -397,8 +400,11 @@ class VolumeCollection:
                 obs_row = obs_df[obs_df["obs_id"] == obs_id].iloc[0]
                 batch.append((vol.to_numpy(), obs_row))
             batch_results = fn(batch)
-            all_results.extend(batch_results)
-        return EagerQuery(all_results, obs_df, source=self._root)
+            for raw in batch_results:
+                value, updates = normalize_transform_result(raw)
+                all_results.append(value)
+                all_updates.append(updates)
+        return EagerQuery(all_results, obs_df, source=self._root, obs_updates=all_updates)
 
     def write(
         self,

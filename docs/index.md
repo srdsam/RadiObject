@@ -18,7 +18,7 @@ pip install radiobject
 from radiobject import RadiObject
 
 # Create from NIfTI files
-radi = RadiObject.from_niftis(
+radi = RadiObject.from_images(
     uri="./my-dataset",
     images={"CT": "./imagesTr/*.nii.gz", "seg": "./labelsTr"},
     obs_meta=metadata_df,

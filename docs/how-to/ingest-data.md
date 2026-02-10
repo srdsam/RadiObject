@@ -6,28 +6,28 @@ RadiObject ingests NIfTI and DICOM files into TileDB arrays for efficient storag
 
 | Method | Best For | Memory |
 |--------|----------|--------|
-| `RadiObject.from_niftis()` | Small-medium datasets (<1000 subjects) | Fits in memory |
+| `RadiObject.from_images()` | Small-medium datasets (<1000 subjects) | Fits in memory |
 | `VolumeCollectionWriter` | Large single-collection datasets | Constant |
 | `RadiObjectWriter` | Complex multi-collection builds | Controlled batches |
 
 **Decision guide:**
 
-1. **Can all data fit in memory?** Use `RadiObject.from_niftis()`
+1. **Can all data fit in memory?** Use `RadiObject.from_images()`
 2. **Single collection, too large for memory?** Use `VolumeCollectionWriter`
 3. **Multiple collections with custom logic?** Use `RadiObjectWriter`
 
-## NIfTI Ingestion
+## Creating a RadiObject
 
-The `images` dict API is the recommended way to create a RadiObject from NIfTI files:
+`from_images()` auto-detects NIfTI and DICOM sources per collection:
 
 ```python
 from radiobject import RadiObject
 
-radi = RadiObject.from_niftis(
+radi = RadiObject.from_images(
     uri="./my-dataset",
     images={
-        "CT": "./imagesTr/*.nii.gz",      # Glob pattern
-        "seg": "./labelsTr",               # Directory path
+        "CT": "./imagesTr/*.nii.gz",      # Glob pattern (NIfTI)
+        "seg": "./labelsTr",               # Directory path (NIfTI)
     },
     validate_alignment=True,               # Ensure matching subject IDs
     obs_meta=metadata_df,                  # Optional subject metadata
@@ -37,11 +37,12 @@ radi = RadiObject.from_niftis(
 
 **Source formats** (values in `images` dict):
 
-| Format | Example |
-|--------|---------|
-| Glob pattern | `"./data/*.nii.gz"` |
-| Directory | `"./data/imagesTr"` |
-| Pre-resolved list | `[(path, subject_id), ...]` |
+| Format | Auto-detected as | Example |
+|--------|-----------------|---------|
+| Glob pattern | NIfTI | `"./data/*.nii.gz"` |
+| Directory (contains `.nii`) | NIfTI | `"./data/imagesTr"` |
+| Directory (contains DICOM subdirs) | DICOM | `"./data/dicom_series"` |
+| Pre-resolved list | Inspects first path | `[(path, subject_id), ...]` |
 
 **Options:**
 
@@ -50,24 +51,35 @@ radi = RadiObject.from_niftis(
 | `validate_alignment` | Verify all collections have matching subject IDs |
 | `obs_meta` | DataFrame with subject-level metadata (must have `obs_subject_id` column) |
 | `reorient` | Reorient volumes to canonical orientation during ingestion |
+| `format_hint` | Dict mapping collection names to `"nifti"` or `"dicom"` for ambiguous sources |
 | `progress` | Show progress bar |
 
-## DICOM Ingestion
+### DICOM Sources
 
-`from_dicoms` automatically extracts metadata and groups by modality:
+DICOM directories work through the same `images` dict. Each immediate subdirectory is treated as one DICOM series:
 
 ```python
-radi = RadiObject.from_dicoms(
+radi = RadiObject.from_images(
     uri="./dicom-dataset",
-    dicom_dirs=[
-        ("./dicom/sub01/CT_HEAD", "sub-01"),
-        ("./dicom/sub02/CT_HEAD", "sub-02"),
-    ],
+    images={
+        "CT_head": [
+            ("./dicom/sub01/CT_HEAD", "sub-01"),
+            ("./dicom/sub02/CT_HEAD", "sub-02"),
+        ],
+    },
     progress=True,
 )
 ```
 
-Each tuple maps a DICOM directory to a subject ID. Collections are auto-grouped by modality and dimensions.
+For ambiguous directories, use `format_hint`:
+
+```python
+radi = RadiObject.from_images(
+    uri="./study",
+    images={"CT": "/ambiguous/directory/"},
+    format_hint={"CT": "dicom"},
+)
+```
 
 ## Streaming Writes
 
@@ -142,10 +154,12 @@ new_obs_meta = pd.DataFrame({
 })
 
 radi.append(
-    niftis=[
-        ("sub-100_T1w.nii.gz", "sub-100"),
-        ("sub-101_T1w.nii.gz", "sub-101"),
-    ],
+    images={
+        "T1w": [
+            ("sub-100_T1w.nii.gz", "sub-100"),
+            ("sub-101_T1w.nii.gz", "sub-101"),
+        ],
+    },
     obs_meta=new_obs_meta,
     progress=True,
 )
@@ -176,7 +190,7 @@ configure(write=WriteConfig(
     orientation=OrientationConfig(canonical_target="RAS", reorient_on_load=True)
 ))
 
-radi = RadiObject.from_niftis(uri, images={"CT": "./data"})
+radi = RadiObject.from_images(uri, images={"CT": "./data"})
 ```
 
 | Scenario | Recommendation |
@@ -193,7 +207,7 @@ See [Lexicon: Coordinate Systems](../reference/lexicon.md#coordinate-systems-and
 RadiObject natively supports 4D NIfTI volumes. No special configuration needed:
 
 ```python
-radi = RadiObject.from_niftis(
+radi = RadiObject.from_images(
     uri="./fmri-study",
     images={"bold": "./func/*_bold.nii.gz"},
 )
@@ -225,7 +239,7 @@ if uri_exists("s3://bucket/my-dataset"):
 from radiobject import delete_tiledb_uri
 
 delete_tiledb_uri("s3://bucket/my-dataset")
-radi = RadiObject.from_niftis("s3://bucket/my-dataset", images={"CT": "./data"})
+radi = RadiObject.from_images("s3://bucket/my-dataset", images={"CT": "./data"})
 ```
 
 ### Create from Existing VolumeCollections

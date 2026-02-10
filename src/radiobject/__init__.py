@@ -18,6 +18,7 @@ from radiobject.ctx import (
 )
 from radiobject.dataframe import Dataframe
 from radiobject.indexing import Index, align
+from radiobject.ingest import ImageFormat
 from radiobject.query import EagerQuery, LazyQuery
 from radiobject.radi_object import RadiObject
 from radiobject.stats import CacheStats, S3Stats, TileDBStats
@@ -48,6 +49,7 @@ __all__ = [
     "OrientationConfig",
     "S3Config",
     # Enums
+    "ImageFormat",
     "SliceOrientation",
     "Compressor",
     # Query classes

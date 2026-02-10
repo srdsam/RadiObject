@@ -295,7 +295,7 @@ class TestRadiObjectObsMetaValidation:
         from radiobject.radi_object import RadiObject
 
         uri = str(tmp_path / "radi_single_dim")
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
         assert radi.obs_meta.index_columns == ("obs_subject_id",)
 
     def test_from_niftis_missing_subject_id_raises(self, tmp_path, synthetic_nifti_images):
@@ -304,7 +304,7 @@ class TestRadiObjectObsMetaValidation:
         uri = str(tmp_path / "radi_no_sid")
         obs_meta = pd.DataFrame({"bad_column": ["sub-01", "sub-02"]})
         with pytest.raises(ValueError, match="obs_subject_id"):
-            RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images, obs_meta=obs_meta)
+            RadiObject.from_images(uri=uri, images=synthetic_nifti_images, obs_meta=obs_meta)
 
     def test_from_collections_validates_obs_meta(self, tmp_path, synthetic_nifti_images):
         from radiobject.radi_object import RadiObject
@@ -331,7 +331,7 @@ class TestRadiObjectObsMetaValidation:
         from radiobject.radi_object import RadiObject
 
         uri = str(tmp_path / "radi_no_obs_id")
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
         obs_meta_df = radi.obs_meta.read()
         # obs_id should NOT be a column or dimension in obs_meta
         # (obs_ids — plural — is the system-managed attribute)
@@ -346,7 +346,7 @@ class TestObsIdsAutoPopulation:
         from radiobject.radi_object import RadiObject
 
         uri = str(tmp_path / "radi_obs_ids")
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
         obs_meta_df = radi.obs_meta.read()
         assert "obs_ids" in obs_meta_df.columns
         for _, row in obs_meta_df.iterrows():
@@ -371,7 +371,7 @@ class TestObsIdsAutoPopulation:
                 images[mod].append((str(path), sid))
 
         uri = str(tmp_path / "radi_sorted_ids")
-        radi = RadiObject.from_niftis(uri=uri, images=images)
+        radi = RadiObject.from_images(uri=uri, images=images)
         obs_meta_df = radi.obs_meta.read()
         row = obs_meta_df[obs_meta_df["obs_subject_id"] == "sub-01"].iloc[0]
         obs_ids = json.loads(row["obs_ids"])

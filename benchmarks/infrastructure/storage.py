@@ -192,11 +192,9 @@ def create_tiledb_datasets(
 
         configure(tile=TileConfig(orientation=orientation))
 
-        # Create using from_niftis
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
-            image_dir=str(nifti_dir),
-            collection_name=collection_name,
+            images={collection_name: str(nifti_dir)},
         )
 
         datasets[strategy] = radi

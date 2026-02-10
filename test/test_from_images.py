@@ -1,4 +1,4 @@
-"""Integration tests for NIfTI/DICOM ingestion with metadata capture."""
+"""Integration tests for from_images() ingestion with metadata capture."""
 
 from __future__ import annotations
 
@@ -230,18 +230,18 @@ class TestVolumeCollectionFromNiftis:
             )
 
 
-# ----- RadiObject.from_niftis Tests -----
+# ----- RadiObject.from_images Tests -----
 
 
-class TestRadiObjectFromNiftis:
-    """Tests for RadiObject.from_niftis factory method with images dict."""
+class TestRadiObjectFromImages:
+    """Tests for RadiObject.from_images() factory method."""
 
     def test_creates_collections_from_images_dict(
         self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_images_dict")
 
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
         # Should have created T1w and FLAIR collections
         assert "T1w" in radi.collection_names
@@ -253,7 +253,7 @@ class TestRadiObjectFromNiftis:
     ) -> None:
         uri = str(temp_dir / "radi_volumes")
 
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
         # Each collection should have 3 volumes (one per subject)
         assert len(radi.T1w) == 3
@@ -264,7 +264,7 @@ class TestRadiObjectFromNiftis:
     ) -> None:
         uri = str(temp_dir / "radi_auto_meta")
 
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
         obs_meta = radi.obs_meta.read()
         assert len(obs_meta) == 3  # 3 subjects
@@ -282,7 +282,7 @@ class TestRadiObjectFromNiftis:
             }
         )
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
             obs_meta=obs_meta,
@@ -303,7 +303,7 @@ class TestRadiObjectFromNiftis:
             }
         )
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images=synthetic_nifti_images,
             obs_meta=obs_meta,
@@ -325,7 +325,7 @@ class TestRadiObjectFromNiftis:
         )
 
         with pytest.raises(ValueError, match="obs_subject_ids.*not found in obs_meta"):
-            RadiObject.from_niftis(
+            RadiObject.from_images(
                 uri=uri,
                 images=synthetic_nifti_images,
                 obs_meta=obs_meta,
@@ -343,7 +343,7 @@ class TestRadiObjectFromNiftis:
         )
 
         with pytest.raises(ValueError, match="obs_subject_id"):
-            RadiObject.from_niftis(
+            RadiObject.from_images(
                 uri=uri,
                 images=synthetic_nifti_images,
                 obs_meta=obs_meta,
@@ -353,14 +353,14 @@ class TestRadiObjectFromNiftis:
         uri = str(temp_dir / "radi_empty")
 
         with pytest.raises(ValueError, match="images dict cannot be empty"):
-            RadiObject.from_niftis(uri=uri, images={})
+            RadiObject.from_images(uri=uri, images={})
 
     def test_metadata_captured_in_collection_obs(
         self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_obs_meta")
 
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
         t1w_obs = radi.T1w.obs.read()
         assert "voxel_spacing" in t1w_obs.columns
@@ -379,7 +379,7 @@ class TestRadiObjectValidation:
     ) -> None:
         uri = str(temp_dir / "radi_validate")
 
-        radi = RadiObject.from_niftis(uri=uri, images=synthetic_nifti_images)
+        radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
         # Should not raise
         radi.validate()
@@ -388,7 +388,7 @@ class TestRadiObjectValidation:
 # ----- Integration with Real Data -----
 
 
-class TestFromNiftisWithRealData:
+class TestFromImagesWithRealData:
     """Integration tests using real BraTS data (if available)."""
 
     def test_from_real_nifti_4d(
@@ -471,7 +471,7 @@ class TestFromNiftis4D:
     """Tests for 4D NIfTI volume ingestion."""
 
     def test_ingest_4d_nifti_preserves_shape(self, temp_dir: Path):
-        """4D NIfTI ingested via from_niftis() preserves full shape."""
+        """4D NIfTI ingested via VolumeCollection.from_niftis() preserves full shape."""
         shape_4d = (64, 64, 32, 200)
         affine = np.eye(4)
         data = np.random.rand(*shape_4d).astype(np.float32)
@@ -547,7 +547,7 @@ class TestFromNiftis4D:
 
 
 class TestImagesDictAPI:
-    """Tests for the new images dict parameter in RadiObject.from_niftis()."""
+    """Tests for images dict parameter in RadiObject.from_images()."""
 
     def test_images_with_directories(
         self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
@@ -555,7 +555,7 @@ class TestImagesDictAPI:
         """Test images dict with directory paths."""
         uri = str(temp_dir / "radi_images_dirs")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={
                 "CT": multi_modality_dirs["images"],
@@ -574,7 +574,7 @@ class TestImagesDictAPI:
         """Test images dict with glob patterns."""
         uri = str(temp_dir / "radi_images_globs")
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={
                 "CT": str(multi_modality_dirs["images"] / "*.nii.gz"),
@@ -596,7 +596,7 @@ class TestImagesDictAPI:
         images_dir = multi_modality_dirs["images"]
         labels_dir = multi_modality_dirs["labels"]
 
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={
                 "CT": [
@@ -620,7 +620,7 @@ class TestImagesDictAPI:
         uri = str(temp_dir / "radi_empty_images")
 
         with pytest.raises(ValueError, match="images dict cannot be empty"):
-            RadiObject.from_niftis(uri=uri, images={})
+            RadiObject.from_images(uri=uri, images={})
 
     def test_validate_alignment_passes(
         self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
@@ -629,7 +629,7 @@ class TestImagesDictAPI:
         uri = str(temp_dir / "radi_align_pass")
 
         # Should not raise - subjects are aligned
-        radi = RadiObject.from_niftis(
+        radi = RadiObject.from_images(
             uri=uri,
             images={
                 "CT": multi_modality_dirs["images"],
@@ -653,7 +653,7 @@ class TestImagesDictAPI:
         uri = str(temp_dir / "radi_align_fail")
 
         with pytest.raises(ValueError, match="Subject ID mismatch"):
-            RadiObject.from_niftis(
+            RadiObject.from_images(
                 uri=uri,
                 images={
                     "CT": multi_modality_dirs["images"],

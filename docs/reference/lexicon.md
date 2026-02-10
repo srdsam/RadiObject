@@ -88,9 +88,10 @@ RadiObject-specific terminology. For general medical imaging terms, see the [DIC
 
 | Term | Definition |
 |------|------------|
-| **from_niftis** | Factory method for bulk NIfTI ingestion via `images` dict |
-| **from_dicoms** | Factory method for bulk DICOM ingestion with auto metadata extraction |
-| **images** | `from_niftis` param: dict mapping collection names to NIfTI sources |
+| **from_images** | Factory method for bulk ingestion (NIfTI and DICOM) via `images` dict with auto format detection |
+| **images** | `from_images` param: dict mapping collection names to image sources (glob, directory, or pre-resolved tuples) |
+| **ImageFormat** | Enum (`NIFTI`, `DICOM`) representing detected or hinted image format |
+| **format_hint** | Optional dict mapping collection names to format strings (`"nifti"` or `"dicom"`) for ambiguous sources |
 | **validate_alignment** | Verify all collections have matching subject IDs |
 | **series_type** | BIDS-aligned identifier for imaging sequence type (T1w, T2w, FLAIR, bold, dwi, CT) |
 | **append()** | Atomic method to add new subjects to existing RadiObject or VolumeCollection |

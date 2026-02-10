@@ -161,6 +161,13 @@ class EagerQuery(Generic[T]):
             new_updates.append({**prev_updates, **updates})
         return EagerQuery(new_results, self._obs_df, self._source, new_updates)
 
+    def _merged_obs(self, idx: int) -> pd.Series:
+        """Return obs row at idx with accumulated updates merged in."""
+        row = self._obs_df.iloc[idx].copy()
+        for k, v in self._obs_updates[idx].items():
+            row[k] = v
+        return row
+
     def write(
         self,
         uri: str,
@@ -198,18 +205,19 @@ class EagerQuery(Generic[T]):
 
         return VolumeCollection(uri, ctx=ctx)
 
-    def to_list(self) -> list[T]:
-        """Extract raw results."""
-        return list(self._results)
+    def to_list(self) -> list[tuple[T, pd.Series]]:
+        """Extract results paired with merged obs rows."""
+        return list(self)
 
-    def __iter__(self) -> Iterator[T]:
-        return iter(self._results)
+    def __iter__(self) -> Iterator[tuple[T, pd.Series]]:
+        for i in range(len(self._results)):
+            yield self._results[i], self._merged_obs(i)
 
     def __len__(self) -> int:
         return len(self._results)
 
-    def __getitem__(self, idx: int) -> T:
-        return self._results[idx]
+    def __getitem__(self, idx: int) -> tuple[T, pd.Series]:
+        return self._results[idx], self._merged_obs(idx)
 
     def __repr__(self) -> str:
         return f"EagerQuery({len(self._results)} results)"
