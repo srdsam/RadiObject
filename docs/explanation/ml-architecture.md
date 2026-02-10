@@ -86,7 +86,7 @@ MONAI dict transforms use `keys` to select which tensors to modify, so users con
 
 ## Distributed Training
 
-`create_distributed_dataloader` wraps `VolumeCollectionDataset` with PyTorch's `DistributedSampler` for DDP. It handles **data partitioning only** — process group initialization and model wrapping are the user's responsibility.
+`create_distributed_dataloader` wraps `VolumeCollectionDataset` with PyTorch's `DistributedSampler` for DDP. It handles **data partitioning only** — process group initialization and model wrapping are the user's responsibility. `SegmentationDataset` does not have distributed support; users needing distributed segmentation training should manage the `DistributedSampler` manually.
 
 ```python
 loader = create_distributed_dataloader(collections, rank=rank, world_size=world_size)
@@ -105,10 +105,10 @@ PyTorch DataLoader forks worker processes. Each forked process needs its own Til
 |---|---|
 | Random patch access (TileDB sub-array reads) | Streaming / sequential access patterns |
 | Medical imaging volumes (3D/4D dense arrays) | Sparse data (point clouds, meshes) |
-| MONAI dict-transform ecosystem | Custom transform protocols |
+| MONAI dict-transforms + TorchIO (via compat layer) | Custom transform protocols |
 | Single-node + DDP training | Model-parallel or pipeline-parallel |
 | Foreground-biased sampling (pre-computed) | Online hard-example mining |
 
 ## RNG Design
 
-Patch sampling uses `np.random.default_rng(seed=None)` — unseeded, so each call produces a different patch. Combined with DataLoader shuffling and `persistent_workers`, this ensures diversity across epochs. For distributed training, `DistributedSampler.set_epoch()` re-seeds the sampler each epoch.
+Patch sampling RNG differs by dataset: `SegmentationDataset` uses `np.random.default_rng(seed=None)` (unseeded, so each call produces a different patch), while `VolumeCollectionDataset` uses `np.random.default_rng(seed=idx)` (deterministic per index for reproducibility). Combined with DataLoader shuffling and `persistent_workers`, this ensures diversity across epochs. For distributed training, `DistributedSampler.set_epoch()` re-seeds the sampler each epoch.
