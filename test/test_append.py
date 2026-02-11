@@ -9,11 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from radiobject.data import get_dataset_path
 from radiobject.radi_object import RadiObject
 from radiobject.volume_collection import VolumeCollection
-
-DATA_DIR = get_dataset_path("msd-brain-tumour")
 
 
 class TestVolumeCollectionAppendNiftis:
@@ -21,53 +18,31 @@ class TestVolumeCollectionAppendNiftis:
 
     def test_append_niftis_basic(
         self,
-        temp_dir: Path,
         populated_collection: VolumeCollection,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() adds new volumes to existing collection."""
         initial_count = len(populated_collection)
 
-        # Create a new NIfTI file for appending (using same data as existing)
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
+        new_nifti_path, _ = create_test_nifti("new_volume.nii.gz")
 
-        new_nifti_path = temp_dir / "new_volume.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
-
-        # Append the new volume
         populated_collection.append(
             niftis=[(new_nifti_path, "sub-NEW")],
         )
 
-        # Verify
         assert len(populated_collection) == initial_count + 1
 
     def test_append_updates_metadata(
         self,
-        temp_dir: Path,
         populated_collection: VolumeCollection,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() updates n_volumes metadata."""
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
-
-        new_nifti_path = temp_dir / "metadata_test.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
+        new_nifti_path, _ = create_test_nifti("metadata_test.nii.gz")
 
         initial_count = len(populated_collection)
         populated_collection.append(niftis=[(new_nifti_path, "sub-META")])
 
-        # Re-read to verify metadata updated
         reopened = VolumeCollection(populated_collection.uri)
         assert len(reopened) == initial_count + 1
 
@@ -81,7 +56,7 @@ class TestVolumeCollectionAppendValidation:
         populated_collection: VolumeCollection,
     ):
         """append() raises ValueError for dimension mismatch."""
-        wrong_shape = (64, 64, 32)  # Different from collection shape
+        wrong_shape = (64, 64, 32)
         data = np.random.randn(*wrong_shape).astype(np.float32)
 
         new_nifti_path = temp_dir / "wrong_shape.nii.gz"
@@ -91,22 +66,13 @@ class TestVolumeCollectionAppendValidation:
         with pytest.raises(ValueError, match="Dimension mismatch"):
             populated_collection.append(niftis=[(new_nifti_path, "sub-BAD")])
 
-    def test_append_duplicate_obs_id_raises(
+    def test_append_duplicate_subject_auto_indexes_acquisition(
         self,
         temp_dir: Path,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
-        """append() raises ValueError for duplicate obs_id."""
-        # Create a fresh collection from NIfTIs so we know the exact obs_id format
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-
-        # Create initial collection with one volume
-        initial_nifti = temp_dir / "sub-001_T1w.nii.gz"
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
-        nib.save(nib.Nifti1Image(data, img.affine), initial_nifti)
+        """append() auto-indexes acquisitions when subject repeats in same collection."""
+        initial_nifti, _ = create_test_nifti("sub-001_T1w.nii.gz")
 
         vc_uri = str(temp_dir / "dup_test_collection")
         vc = VolumeCollection.from_niftis(
@@ -115,13 +81,13 @@ class TestVolumeCollectionAppendValidation:
             name="T1w",
         )
 
-        # Try to append with same subject_id and same series type
-        # This should generate the same obs_id: "sub-001_T1w"
-        duplicate_nifti = temp_dir / "another_T1w.nii.gz"
-        nib.save(nib.Nifti1Image(data, img.affine), duplicate_nifti)
+        duplicate_nifti, data = create_test_nifti("another_T1w.nii.gz")
 
-        with pytest.raises(ValueError, match="already exist"):
-            vc.append(niftis=[(duplicate_nifti, "sub-001")])
+        vc.append(niftis=[(duplicate_nifti, "sub-001")])
+        assert len(vc) == 2
+        obs_ids = vc.obs_ids
+        assert "sub-001_T1w" in obs_ids
+        assert "sub-001_T1w_acq-1" in obs_ids
 
     def test_append_file_not_found_raises(
         self,
@@ -161,37 +127,21 @@ class TestRadiObjectAppendBasic:
 
     def test_append_new_subjects(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() adds new subjects and their volumes."""
         initial_subject_count = len(populated_radi_object)
 
-        # Create new NIfTI for a new subject
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
+        new_nifti_path, _ = create_test_nifti("sub-NEW_T1w.nii.gz")
 
-        new_nifti_path = temp_dir / "sub-NEW_T1w.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
-
-        # Append with new subject metadata
-        obs_meta = pd.DataFrame(
-            {
-                "obs_subject_id": ["sub-NEW"],
-            }
-        )
+        obs_meta = pd.DataFrame({"obs_subject_id": ["sub-NEW"]})
 
         populated_radi_object.append(
             images={"T1w": [(new_nifti_path, "sub-NEW")]},
             obs_meta=obs_meta,
         )
 
-        # Invalidate cache and verify
         assert len(populated_radi_object) == initial_subject_count + 1
         assert "sub-NEW" in populated_radi_object.obs_subject_ids
 
@@ -201,31 +151,19 @@ class TestRadiObjectAppendExistingSubjects:
 
     def test_append_to_existing_subjects(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() can add volumes for existing subjects without obs_meta."""
         existing_subject_id = populated_radi_object.obs_subject_ids[0]
         initial_subject_count = len(populated_radi_object)
 
-        # Create new NIfTI with different modality name
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
+        new_nifti_path, _ = create_test_nifti(f"{existing_subject_id}_DWI.nii.gz")
 
-        new_nifti_path = temp_dir / f"{existing_subject_id}_DWI.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
-
-        # Append without obs_meta (subject already exists)
         populated_radi_object.append(
             images={"DWI": [(new_nifti_path, existing_subject_id)]},
         )
 
-        # Subject count should not change
         assert len(populated_radi_object) == initial_subject_count
 
 
@@ -234,20 +172,11 @@ class TestRadiObjectAppendValidation:
 
     def test_append_new_subject_without_obs_meta_raises(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() raises when new subject lacks obs_meta."""
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
-
-        new_nifti_path = temp_dir / "sub-NOMETA_T1w.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
+        new_nifti_path, _ = create_test_nifti("sub-NOMETA_T1w.nii.gz")
 
         with pytest.raises(ValueError, match="obs_meta required"):
             populated_radi_object.append(
@@ -256,27 +185,13 @@ class TestRadiObjectAppendValidation:
 
     def test_append_obs_meta_missing_subject_raises(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() raises when obs_meta doesn't include all new subjects."""
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
+        new_nifti_path, _ = create_test_nifti("sub-MISSING_T1w.nii.gz")
 
-        new_nifti_path = temp_dir / "sub-MISSING_T1w.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
-
-        # Provide obs_meta but missing the subject
-        obs_meta = pd.DataFrame(
-            {
-                "obs_subject_id": ["sub-OTHER"],
-            }
-        )
+        obs_meta = pd.DataFrame({"obs_subject_id": ["sub-OTHER"]})
 
         with pytest.raises(ValueError, match="missing entries"):
             populated_radi_object.append(
@@ -286,27 +201,13 @@ class TestRadiObjectAppendValidation:
 
     def test_append_obs_meta_missing_column_raises(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() raises when obs_meta lacks obs_subject_id column."""
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
+        new_nifti_path, _ = create_test_nifti("sub-BADCOL_T1w.nii.gz")
 
-        new_nifti_path = temp_dir / "sub-BADCOL_T1w.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
-
-        # obs_meta without required column
-        bad_obs_meta = pd.DataFrame(
-            {
-                "subject_name": ["sub-BADCOL"],  # Wrong column name
-            }
-        )
+        bad_obs_meta = pd.DataFrame({"subject_name": ["sub-BADCOL"]})
 
         with pytest.raises(ValueError, match="obs_subject_id"):
             populated_radi_object.append(
@@ -328,30 +229,19 @@ class TestRadiObjectAppendNewCollection:
 
     def test_append_creates_new_collection(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() creates new collection when collection name is new."""
         existing_subject_id = populated_radi_object.obs_subject_ids[0]
         initial_collections = set(populated_radi_object.collection_names)
 
-        # Create NIfTI with a new modality
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
-
-        new_nifti_path = temp_dir / f"{existing_subject_id}_PET.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
+        new_nifti_path, _ = create_test_nifti(f"{existing_subject_id}_PET.nii.gz")
 
         populated_radi_object.append(
             images={"PET": [(new_nifti_path, existing_subject_id)]},
         )
 
-        # Should have new collection
         new_collections = set(populated_radi_object.collection_names)
         assert "PET" in new_collections - initial_collections
 
@@ -361,38 +251,21 @@ class TestAppendAtomicity:
 
     def test_append_writes_obs_and_volumes_together(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() writes obs_meta and volumes atomically."""
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
+        new_nifti_path, _ = create_test_nifti("sub-ATOMIC_T1w.nii.gz")
 
-        new_nifti_path = temp_dir / "sub-ATOMIC_T1w.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
-
-        obs_meta = pd.DataFrame(
-            {
-                "obs_subject_id": ["sub-ATOMIC"],
-                "age": [42],
-            }
-        )
+        obs_meta = pd.DataFrame({"obs_subject_id": ["sub-ATOMIC"], "age": [42]})
 
         populated_radi_object.append(
             images={"T1w": [(new_nifti_path, "sub-ATOMIC")]},
             obs_meta=obs_meta,
         )
 
-        # Verify obs_meta was written
         full_obs_meta = populated_radi_object.obs_meta.read()
         assert "sub-ATOMIC" in full_obs_meta["obs_subject_id"].values
-
-        # Verify subject count updated
         assert "sub-ATOMIC" in populated_radi_object.obs_subject_ids
 
 
@@ -401,24 +274,14 @@ class TestAppendCacheInvalidation:
 
     def test_index_cache_invalidated(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() invalidates index cache."""
-        # Access index to populate cache
         _ = populated_radi_object.obs_subject_ids
         initial_count = len(populated_radi_object)
 
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
-
-        new_nifti_path = temp_dir / "sub-CACHE_T1w.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
+        new_nifti_path, _ = create_test_nifti("sub-CACHE_T1w.nii.gz")
 
         obs_meta = pd.DataFrame({"obs_subject_id": ["sub-CACHE"]})
 
@@ -427,35 +290,23 @@ class TestAppendCacheInvalidation:
             obs_meta=obs_meta,
         )
 
-        # Cache should be invalidated - new count should reflect append
         assert len(populated_radi_object) == initial_count + 1
         assert "sub-CACHE" in populated_radi_object.obs_subject_ids
 
     def test_collection_names_cache_invalidated(
         self,
-        temp_dir: Path,
         populated_radi_object: RadiObject,
-        nifti_manifest: list[dict],
+        create_test_nifti,
     ):
         """append() invalidates collection_names cache when new collection created."""
-        # Access collection_names to populate cache
         initial_names = populated_radi_object.collection_names
         existing_subject_id = populated_radi_object.obs_subject_ids[0]
 
-        src_path = DATA_DIR / nifti_manifest[0]["image_path"]
-        img = nib.load(src_path)
-        data = np.asarray(img.dataobj, dtype=np.float32)
-        if data.ndim == 4:
-            data = data[..., 0]
-
-        new_nifti_path = temp_dir / f"{existing_subject_id}_ASL.nii.gz"
-        new_img = nib.Nifti1Image(data, img.affine)
-        nib.save(new_img, new_nifti_path)
+        new_nifti_path, _ = create_test_nifti(f"{existing_subject_id}_ASL.nii.gz")
 
         populated_radi_object.append(
             images={"ASL": [(new_nifti_path, existing_subject_id)]},
         )
 
-        # Collection names should reflect new collection
         new_names = populated_radi_object.collection_names
         assert len(new_names) >= len(initial_names)

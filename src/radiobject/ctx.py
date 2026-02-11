@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import Self
 
 import boto3
 import tiledb
 from pydantic import BaseModel, Field, model_validator
+
+log = logging.getLogger(__name__)
 
 
 class SliceOrientation(str, Enum):
@@ -101,6 +104,11 @@ class ReadConfig(BaseModel):
         ge=64,
         description="Memory budget for TileDB operations (MB)",
     )
+    tile_cache_size_mb: int = Field(
+        default=512,
+        ge=10,
+        description="TileDB in-memory LRU tile cache size (MB)",
+    )
     concurrency: int = Field(
         default=4,
         ge=1,
@@ -151,9 +159,11 @@ class OrientationConfig(BaseModel):
     @model_validator(mode="after")
     def validate_canonical_target(self) -> Self:
         """Ensure canonical target is valid."""
+        from radiobject.exceptions import ConfigurationError
+
         valid_targets = {"RAS", "LAS", "LPS"}
         if self.canonical_target not in valid_targets:
-            raise ValueError(
+            raise ConfigurationError(
                 f"canonical_target must be one of {valid_targets}, got {self.canonical_target}"
             )
         return self
@@ -192,6 +202,7 @@ class RadiObjectConfig(BaseModel):
 
         # Memory settings from read config
         cfg["sm.memory_budget"] = str(self.read.memory_budget_mb * 1024 * 1024)
+        cfg["sm.tile_cache_size"] = str(self.read.tile_cache_size_mb * 1024 * 1024)
         cfg["sm.compute_concurrency_level"] = str(self.read.concurrency)
         cfg["sm.io_concurrency_level"] = str(self.read.concurrency)
 
@@ -220,8 +231,8 @@ class RadiObjectConfig(BaseModel):
                 cfg["vfs.s3.aws_secret_access_key"] = frozen.secret_key
                 if frozen.token:
                     cfg["vfs.s3.aws_session_token"] = frozen.token
-        except Exception:
-            pass  # AWS credentials unavailable; S3 operations will fail
+        except (boto3.exceptions.Boto3Error, Exception) as e:
+            log.warning("AWS credentials unavailable: %s. S3 operations will fail.", e)
 
     def to_tiledb_ctx(self, include_s3_credentials: bool = False) -> tiledb.Ctx:
         """Convert to TileDB Ctx object.

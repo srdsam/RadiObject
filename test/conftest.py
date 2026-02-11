@@ -507,3 +507,123 @@ def s3_populated_radi_object(
     """Pre-created RadiObject on S3."""
     uri = f"{s3_test_base_uri}/populated_radi_object"
     return _create_radi_object(uri, s3_volume_collections, nifti_manifest, ctx=s3_tiledb_ctx)
+
+
+# ----- Shared Synthetic Fixtures -----
+
+
+@pytest.fixture
+def synthetic_nifti_files(temp_dir: Path) -> list[tuple[Path, str]]:
+    """Create synthetic NIfTI files (3 subjects x 2 series types)."""
+    niftis = []
+    shape = (32, 32, 16)
+    affine = np.eye(4)
+    affine[0, 0] = 1.0
+    affine[1, 1] = 1.0
+    affine[2, 2] = 2.0
+
+    for subject_id in ["sub-01", "sub-02", "sub-03"]:
+        for series_type in ["T1w", "FLAIR"]:
+            data = np.random.rand(*shape).astype(np.float32)
+            img = nib.Nifti1Image(data, affine)
+            img.header.set_qform(affine, code=1)
+            img.header.set_sform(affine, code=1)
+
+            filename = f"{subject_id}_{series_type}.nii.gz"
+            filepath = temp_dir / filename
+            nib.save(img, filepath)
+            niftis.append((filepath, subject_id))
+
+    return niftis
+
+
+@pytest.fixture
+def synthetic_nifti_images(
+    synthetic_nifti_files: list[tuple[Path, str]],
+) -> dict[str, list[tuple[Path, str]]]:
+    """Group synthetic_nifti_files by series type into images dict format."""
+    images: dict[str, list[tuple[Path, str]]] = {"T1w": [], "FLAIR": []}
+    for path, subject_id in synthetic_nifti_files:
+        if "T1w" in path.name:
+            images["T1w"].append((path, subject_id))
+        elif "FLAIR" in path.name:
+            images["FLAIR"].append((path, subject_id))
+    return images
+
+
+@pytest.fixture
+def small_volume(temp_dir: Path) -> Volume:
+    """A small (32^3) Volume for lightweight tests."""
+    uri = str(temp_dir / "small_vol")
+    return Volume.from_numpy(uri, np.random.rand(32, 32, 32).astype(np.float32))
+
+
+def _create_test_nifti(
+    temp_dir: Path,
+    nifti_manifest: list[dict],
+    filename: str,
+    entry_index: int = 0,
+) -> tuple[Path, np.ndarray]:
+    """Load a real NIfTI from manifest and save a 3D copy to temp_dir."""
+    data_dir = _get_nifti_data_dir()
+    src_path = data_dir / nifti_manifest[entry_index]["image_path"]
+    img = nib.load(src_path)
+    data = np.asarray(img.dataobj, dtype=np.float32)
+    if data.ndim == 4:
+        data = data[..., 0]
+
+    new_path = temp_dir / filename
+    nib.save(nib.Nifti1Image(data, img.affine), new_path)
+    return new_path, data
+
+
+@pytest.fixture
+def create_test_nifti(temp_dir: Path, nifti_manifest: list[dict]):
+    """Fixture returning a factory to create test NIfTIs from manifest data."""
+
+    def _factory(filename: str, entry_index: int = 0) -> tuple[Path, np.ndarray]:
+        return _create_test_nifti(temp_dir, nifti_manifest, filename, entry_index)
+
+    return _factory
+
+
+# ----- Auto-Marker Infrastructure -----
+
+
+_DATA_FIXTURES = {
+    "nifti_manifest",
+    "dicom_manifest",
+    "sample_nifti_image",
+    "sample_nifti_label",
+    "sample_dicom_series",
+    "nifti_4d_path",
+    "nifti_3d_path",
+    "array_3d",
+    "array_4d",
+    "volumes",
+    "volumes_module",
+    "populated_collection",
+    "populated_collection_module",
+    "volume_collections",
+    "volume_collections_module",
+    "populated_radi_object",
+    "populated_radi_object_module",
+}
+
+_S3_FIXTURES = {
+    "s3_tiledb_ctx",
+    "s3_test_base_uri",
+    "s3_radi_object_uri",
+    "s3_volume_collections",
+    "s3_populated_radi_object",
+}
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Auto-apply markers based on fixture dependencies."""
+    for item in items:
+        fixturenames = set(getattr(item, "fixturenames", []))
+        if fixturenames & _DATA_FIXTURES:
+            item.add_marker(pytest.mark.requires_data)
+        if fixturenames & _S3_FIXTURES:
+            item.add_marker(pytest.mark.s3)

@@ -2,7 +2,7 @@
 
 Inspired by the [SOMA specification](https://github.com/single-cell-data/SOMA/blob/main/abstract_specification.md), RadiObject is a hierarchical composition of entities aligned on shared indexes. The hierarchy maps to [TileDB](https://docs.tiledb.com/main/) primitives (Groups and Arrays).
 
-## TileDB Structure
+## Organisation
 
 ```
 RadiObject (TileDB Group)
@@ -77,7 +77,7 @@ The standalone `align(*indexes)` function computes the intersection of multiple 
 - **Heterogeneous collections**: No shape in group metadata; each volume's shape stored in `obs.dimensions`
 - **4D volumes**: Temporal dimension (`t`) is per-volume; not tracked at collection level
 
-## Organisation
+## Shapes
 
 Radiology dimensions are irregular across datasets (different scanners, protocols, preprocessing). `VolumeCollection` groups volumes with consistent spatial (X/Y/Z) dimensions — 4D volumes with different time dimensions but the same spatial grid share a collection. `RadiObject` organizes heterogeneous collections (e.g., T1w at 1mm^3, fMRI at 3mm^3) under a unified structure.
 
@@ -160,3 +160,51 @@ def ctx_for_process(base_ctx=None) -> tiledb.Ctx:
 | DataLoader (`num_workers>0`) | `ctx_for_process()` | Creates new isolated context |
 
 For practical tuning recipes, see [ML Training: Performance Tuning](../how-to/ml-training.md#performance-tuning).
+
+## Consistency Model
+
+RadiObject writes span multiple TileDB groups and arrays (volumes, obs DataFrame, group metadata). TileDB guarantees **per-array atomicity** but does **not** provide cross-array transactions. This has practical implications:
+
+| Operation | Consistency | Notes |
+|-----------|-------------|-------|
+| `Volume.from_numpy()` | Atomic | Single dense array write |
+| `VolumeCollectionWriter` | Best-effort | Volumes written individually; obs flushed on `__exit__`. A crash mid-write leaves partial volumes without obs rows. |
+| `RadiObject.append()` | Best-effort | Modifies collections, obs_meta, and group metadata in sequence. Not transactional across these steps. |
+| `RadiObject.from_images()` | Best-effort | Creates collections sequentially; group metadata updated last. |
+
+**Implications for concurrent access:**
+
+- **Single-writer**: RadiObject is designed for single-writer, multiple-reader workflows. Concurrent writers to the same URI are not supported and may corrupt group metadata.
+- **Crash recovery**: Use `validate()` after unexpected interruptions to detect inconsistencies (orphan volumes, missing obs rows, metadata count mismatches).
+- **Idempotent re-creation**: If a write fails, delete the URI and re-create rather than attempting partial recovery.
+
+**Why not transactional?** TileDB Groups are metadata containers, not transactional databases. Cross-group atomicity would require a write-ahead log or two-phase commit, adding complexity disproportionate to the current use case (batch ETL, not OLTP).
+
+## Cache
+
+RadiObject delegates data caching to TileDB Embedded. There is no application-level data cache — Python `@cached_property` is used only for immutable schema and metadata objects.
+
+### TileDB's Caching Layers
+
+TileDB Embedded maintains two in-memory caches, both scoped to a [`tiledb.Ctx`](https://docs.tiledb.com/main/how-to/configuration):
+
+| Layer | Config Parameter | Default | Scope | Purpose |
+|-------|-----------------|---------|-------|---------|
+| **Tile cache** | [`sm.tile_cache_size`](https://docs.tiledb.com/main/how-to/configuration#storage-manager) | 512 MB (RadiObject) | Per-context, across queries | LRU cache of uncompressed tiles — avoids re-reading and re-decompressing on repeated access |
+| **VFS read-ahead** | [`vfs.read_ahead_cache_size`](https://docs.tiledb.com/main/how-to/configuration#virtual-filesystem) | 10 MB | Per-context | Cloud-only (S3/GCS/Azure). Speculatively fetches extra bytes on small reads to reduce round-trips |
+
+### Tile Cache vs Memory Budget
+
+These are distinct mechanisms:
+
+- **`sm.tile_cache_size`** (default 512 MB): LRU cache that persists uncompressed tiles across queries within the same context. Repeated reads of the same tile region hit this cache instead of disk/S3.
+- **`sm.memory_budget`** (default 1 GB): Per-query throttle that caps how much data TileDB will fetch in a single read. Prevents OOM on large subarray reads. Does not cache anything for reuse.
+
+### Context Sharing and Cache Lifetime
+
+The tile cache lives inside `tiledb.Ctx`. This is why context sharing matters:
+
+- **Threads** (`ctx_for_threads`): Workers share one context, so they share one tile cache. A tile read by thread A is available to thread B.
+- **Processes** (`ctx_for_process`): Each forked process gets an isolated context with its own empty cache. No cross-process cache sharing.
+
+See [Concurrency Model](#concurrency-model) for context injection details.

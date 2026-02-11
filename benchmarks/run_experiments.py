@@ -12,7 +12,7 @@ from config import CONFIGS, FIGURES_DIR, RESULTS_DIR, BenchmarkConfig
 
 EXPERIMENTS = [
     "01_storage_format_analysis",
-    "02_tiledb_deep_dive",
+    "02_chunked_format_deep_dive",
     "03_framework_comparison",
     "04_ml_dataloader_throughput",
     "05_call_tree_profiling",

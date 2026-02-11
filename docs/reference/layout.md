@@ -21,7 +21,7 @@ RadiObject/
 │   ├── experiments/                # Modular experiment notebooks
 │   │   ├── __init__.py
 │   │   ├── 01_storage_format_analysis.ipynb   # Format I/O costs
-│   │   ├── 02_tiledb_deep_dive.ipynb          # TileDB internals
+│   │   ├── 02_chunked_format_deep_dive.ipynb  # TileDB/Zarr chunking strategies
 │   │   ├── 03_framework_comparison.ipynb      # RadiObject vs MONAI vs TorchIO
 │   │   └── 04_ml_dataloader_throughput.ipynb  # Training throughput
 │   ├── results/                    # Output from experiments

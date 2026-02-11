@@ -83,7 +83,7 @@ class Volume:
         """Anatomical orientation information from TileDB metadata."""
         try:
             return metadata_to_orientation_info(self._metadata)
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             return None
 
     @property
@@ -91,7 +91,7 @@ class Volume:
         """Observation identifier stored in array metadata."""
         try:
             return self._metadata.get("obs_id")
-        except Exception:
+        except (KeyError, tiledb.TileDBError):
             return None
 
     def axial(self, z: int, t: int | None = None) -> np.ndarray:
@@ -214,8 +214,10 @@ class Volume:
         ctx: tiledb.Ctx | None = None,
     ) -> Volume:
         """Create an empty Volume with explicit schema."""
+        from radiobject.exceptions import ShapeError
+
         if len(shape) not in (3, 4):
-            raise ValueError(f"Shape must be 3D or 4D, got {len(shape)}D")
+            raise ShapeError(f"Shape must be 3D or 4D, got {len(shape)}D")
 
         effective_ctx = ctx if ctx else get_tiledb_ctx()
         config = get_radiobject_config()

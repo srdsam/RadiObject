@@ -78,8 +78,6 @@ This enables **200-660x faster** partial reads. [See benchmarks →](docs/refere
 
 ![Benchmark overview](benchmarks/results/figures/benchmark_hero.png)
 
-*N.B. Missing comparison with [Zarr](https://github.com/zarr-developers/zarr-python)* 
-
 ## Sample Data
 
 Download sample datasets for tutorials and testing:

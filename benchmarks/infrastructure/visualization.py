@@ -27,7 +27,7 @@ COLORBLIND_PALETTE = {
     "tiledb": "#0077BB",
     "nifti_gz": "#EE7733",
     "nifti": "#009988",
-    "zarr": "#CC3311",
+    "zarr": "#EE3377",
 }
 
 # Configure matplotlib defaults
@@ -186,7 +186,7 @@ def create_hero_chart(
     pivot.plot(kind="bar", ax=ax, width=0.8, edgecolor="black", linewidth=0.5)
 
     ax.set_ylabel("Time (ms)")
-    ax.set_title("Benchmark Comparison: RadiObject vs MONAI vs TorchIO")
+    ax.set_title("Benchmark Comparison: RadiObject vs MONAI vs TorchIO vs Zarr")
     ax.set_xlabel("")
     ax.legend(title="Backend", bbox_to_anchor=(1.02, 1), loc="upper left")
     ax.grid(axis="y", alpha=0.3, linestyle="--")

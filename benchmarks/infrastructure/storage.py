@@ -203,6 +203,115 @@ def create_tiledb_datasets(
     return datasets
 
 
+def create_zarr_array(src: Path, dst: Path, chunks: tuple[int, ...]) -> None:
+    """Convert NIfTI to a Zarr v3 array with ZSTD compression matching TileDB defaults."""
+    import zarr
+    from zarr.codecs import BloscCodec, BytesCodec
+
+    img = nib.load(str(src))
+    data = img.get_fdata().astype(np.float32)
+    # Extend chunk shape if data has more dimensions (e.g. 4D NIfTI)
+    if data.ndim > len(chunks):
+        chunks = chunks + data.shape[len(chunks) :]
+    z = zarr.open_array(
+        str(dst),
+        mode="w",
+        shape=data.shape,
+        dtype=data.dtype,
+        chunks=chunks,
+        codecs=[BytesCodec(), BloscCodec(cname="zstd", clevel=3)],
+    )
+    z[:] = data
+
+
+def prepare_zarr_formats(
+    source_niftis: list[Path],
+    output_dir: Path,
+    n_subjects: int = 20,
+) -> dict[str, Path]:
+    """Create Zarr arrays with axial and isotropic chunking from source NIfTI files."""
+    formats_created = {}
+
+    if not source_niftis:
+        print("No source NIfTI files available")
+        return formats_created
+
+    source_niftis = source_niftis[:n_subjects]
+
+    # Read first volume shape to compute chunk dims
+    img = nib.load(str(source_niftis[0]))
+    shape = img.shape
+    axial_chunks = (shape[0], shape[1], 1)
+    iso_chunks = (64, 64, 64)
+
+    def _zarr_name(src: Path) -> str:
+        return src.name.replace(".nii.gz", ".zarr").replace(".nii", ".zarr")
+
+    expected_names = {_zarr_name(src) for src in source_niftis}
+
+    def _needs_rebuild(directory: Path) -> bool:
+        if not directory.exists():
+            return True
+        existing = {p.name for p in directory.glob("*.zarr")}
+        if not expected_names.issubset(existing):
+            missing = expected_names - existing
+            print(
+                f"  Rebuilding {directory.name}: missing {len(missing)} of {len(expected_names)} arrays"
+            )
+            return True
+        return False
+
+    def _clean_stale(directory: Path) -> None:
+        """Remove arrays not in the current source set."""
+        for p in directory.glob("*.zarr"):
+            if p.name not in expected_names:
+                import shutil
+
+                shutil.rmtree(p)
+                print(f"  Removed stale: {p.name}")
+
+    # Zarr axial
+    zarr_axial_dir = output_dir / "zarr-axial"
+    if _needs_rebuild(zarr_axial_dir):
+        zarr_axial_dir.mkdir(parents=True, exist_ok=True)
+        _clean_stale(zarr_axial_dir)
+        print(f"Creating Zarr axial: {zarr_axial_dir}")
+        for src in source_niftis:
+            dst = zarr_axial_dir / _zarr_name(src)
+            if not dst.exists():
+                create_zarr_array(src, dst, axial_chunks)
+                print(f"  Created: {dst.name}")
+    else:
+        print(f"Zarr axial exists ({len(source_niftis)} arrays): {zarr_axial_dir}")
+    formats_created["zarr_axial"] = zarr_axial_dir
+
+    # Zarr isotropic
+    zarr_iso_dir = output_dir / "zarr-isotropic"
+    if _needs_rebuild(zarr_iso_dir):
+        zarr_iso_dir.mkdir(parents=True, exist_ok=True)
+        _clean_stale(zarr_iso_dir)
+        print(f"Creating Zarr isotropic: {zarr_iso_dir}")
+        for src in source_niftis:
+            dst = zarr_iso_dir / _zarr_name(src)
+            if not dst.exists():
+                create_zarr_array(src, dst, iso_chunks)
+                print(f"  Created: {dst.name}")
+    else:
+        print(f"Zarr isotropic exists ({len(source_niftis)} arrays): {zarr_iso_dir}")
+    formats_created["zarr_isotropic"] = zarr_iso_dir
+
+    return formats_created
+
+
+def upload_zarr_to_s3(local_path: Path, s3_uri: str) -> None:
+    """Upload a local Zarr directory to S3 via s3fs."""
+    import s3fs
+
+    fs = s3fs.S3FileSystem()
+    fs.put(str(local_path), s3_uri, recursive=True)
+    print(f"Uploaded {local_path} -> {s3_uri}")
+
+
 def verify_tiledb_tiling(uri: str, name: str) -> None:
     """Verify tile extents in a RadiObject."""
     import tiledb

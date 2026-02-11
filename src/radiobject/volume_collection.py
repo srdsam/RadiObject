@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 from functools import cached_property
@@ -16,6 +17,7 @@ import tiledb
 from radiobject._types import TransformFn
 from radiobject.ctx import get_tiledb_ctx
 from radiobject.dataframe import Dataframe
+from radiobject.exceptions import AlignmentError, ShapeError, StorageError, ViewError
 from radiobject.imaging_metadata import (
     DicomMetadata,
     NiftiMetadata,
@@ -28,6 +30,8 @@ from radiobject.parallel import WriteResult, ctx_for_threads, map_on_threads
 from radiobject.query import EagerQuery
 from radiobject.utils import ensure_obs_columns, validate_no_column_collisions, write_obs_dataframe
 from radiobject.volume import Volume
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from radiobject.ml.datasets.collection_dataset import VolumeCollectionDataset
@@ -50,9 +54,24 @@ def _get_volume_by_obs_id(collection: VolumeCollection, obs_id: str) -> Volume:
     return Volume(f"{root.uri}/volumes/{idx}", ctx=root._ctx)
 
 
-def generate_obs_id(obs_subject_id: str, collection_name: str) -> str:
-    """Generate a unique obs_id from subject ID and collection name."""
-    return f"{obs_subject_id}_{collection_name}"
+def generate_obs_id(
+    obs_subject_id: str,
+    collection_name: str,
+    acquisition_index: int | None = None,
+) -> str:
+    """Generate a unique obs_id from subject ID and collection name.
+
+    Args:
+        obs_subject_id: Subject identifier.
+        collection_name: Collection name (e.g. "T1w").
+        acquisition_index: Optional index for multiple acquisitions of the
+            same modality per subject. If provided, appended as ``_acq-{index}``
+            (e.g. ``sub-01_T1w_acq-1``).
+    """
+    obs_id = f"{obs_subject_id}_{collection_name}"
+    if acquisition_index is not None:
+        obs_id = f"{obs_id}_acq-{acquisition_index}"
+    return obs_id
 
 
 def _write_volumes_parallel(
@@ -65,7 +84,7 @@ def _write_volumes_parallel(
     results = map_on_threads(write_fn, write_args, progress=progress, desc=desc)
     failures = [r for r in results if not r.success]
     if failures:
-        raise RuntimeError(f"Volume write failed: {failures[0].error}")
+        raise StorageError(f"Volume write failed: {failures[0].error}")
     return results
 
 
@@ -596,28 +615,28 @@ class VolumeCollection:
         for i in range(len(self)):
             vol = self.iloc[i]
             if vol.obs_id is None:
-                raise ValueError(f"Volume at index {i} lacks required obs_id metadata")
+                raise AlignmentError(f"Volume at index {i} lacks required obs_id metadata")
             obs_ids_in_volumes.add(vol.obs_id)
 
             expected_obs_id = obs_data.iloc[i]["obs_id"]
             if vol.obs_id != expected_obs_id:
-                raise ValueError(
+                raise AlignmentError(
                     f"Position mismatch at index {i}: "
                     f"volume.obs_id={vol.obs_id}, obs.iloc[{i}]={expected_obs_id}"
                 )
 
         missing_in_obs = obs_ids_in_volumes - obs_ids_in_dataframe
         if missing_in_obs:
-            raise ValueError(f"Volumes without obs rows: {list(missing_in_obs)[:5]}")
+            raise AlignmentError(f"Volumes without obs rows: {list(missing_in_obs)[:5]}")
 
         orphan_obs = obs_ids_in_dataframe - obs_ids_in_volumes
         if orphan_obs:
-            raise ValueError(f"Obs rows without volumes: {list(orphan_obs)[:5]}")
+            raise AlignmentError(f"Obs rows without volumes: {list(orphan_obs)[:5]}")
 
         with tiledb.Group(f"{self._root.uri}/volumes", "r", ctx=self._effective_ctx()) as grp:
             actual_count = len(list(grp))
         if actual_count != self._metadata["n_volumes"]:
-            raise ValueError(
+            raise AlignmentError(
                 f"n_volumes mismatch: metadata={self._metadata['n_volumes']}, actual={actual_count}"
             )
 
@@ -654,7 +673,7 @@ class VolumeCollection:
     def _check_not_view(self, operation: str) -> None:
         """Raise if this is a view (views are immutable)."""
         if self.is_view:
-            raise TypeError(f"Cannot {operation} on a view. Call write(uri) first.")
+            raise ViewError(f"Cannot {operation} on a view. Call write(uri) first.")
 
     def _create_view(self, volume_ids: frozenset[str]) -> VolumeCollection:
         """Create a view with the given volume IDs, intersecting with current filter."""
@@ -705,27 +724,31 @@ class VolumeCollection:
 
             # Only validate spatial dimensions if collection has uniform shape requirement
             if self.is_uniform and metadata.spatial_dimensions != self.shape:
-                raise ValueError(
+                raise ShapeError(
                     f"Dimension mismatch: {path.name} has spatial shape {metadata.spatial_dimensions}, "
                     f"expected {self.shape}"
                 )
 
             metadata_list.append((path, obs_subject_id, metadata, series_type))
 
-        # Check for duplicate obs_ids
+        # Generate obs_ids, auto-indexing acquisitions when subjects repeat
         existing_obs_ids = set(self.obs_ids)
         append_name = self.name or "volume"
-        new_obs_ids = {generate_obs_id(sid, append_name) for _, sid, _, st in metadata_list}
-        duplicates = existing_obs_ids & new_obs_ids
-        if duplicates:
-            raise ValueError(f"obs_ids already exist: {sorted(duplicates)[:5]}")
+        resolved_obs_ids: list[str] = []
+        for _, obs_subject_id, _, _ in metadata_list:
+            obs_id = generate_obs_id(obs_subject_id, append_name)
+            acq_idx = 0
+            while obs_id in existing_obs_ids:
+                acq_idx += 1
+                obs_id = generate_obs_id(obs_subject_id, append_name, acquisition_index=acq_idx)
+            existing_obs_ids.add(obs_id)
+            resolved_obs_ids.append(obs_id)
 
         # Write volumes
-        def write_volume(args: tuple[int, Path, str, NiftiMetadata, str]) -> WriteResult:
-            idx, path, obs_subject_id, metadata, series_type = args
+        def write_volume(args: tuple[int, Path, str, NiftiMetadata, str, str]) -> WriteResult:
+            idx, path, obs_subject_id, metadata, series_type, obs_id = args
             worker_ctx = ctx_for_threads(self._ctx)
             volume_uri = f"{self.uri}/volumes/{idx}"
-            obs_id = generate_obs_id(obs_subject_id, append_name)
             try:
                 vol = Volume.from_nifti(volume_uri, path, ctx=worker_ctx, reorient=reorient)
                 vol.set_obs_id(obs_id)
@@ -734,9 +757,10 @@ class VolumeCollection:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
         write_args = [
-            (start_index + i, path, sid, meta, st)
+            (start_index + i, path, sid, meta, st, resolved_obs_ids[i])
             for i, (path, sid, meta, st) in enumerate(metadata_list)
         ]
+        log.info("Appending %d NIfTI volumes to '%s'", len(niftis), self.name)
         results = _write_volumes_parallel(
             write_volume, write_args, progress, f"Writing {self.name or 'volumes'}"
         )
@@ -748,9 +772,8 @@ class VolumeCollection:
 
         # Build and write obs rows
         obs_rows: list[dict] = []
-        for path, obs_subject_id, metadata, series_type in metadata_list:
-            obs_id = generate_obs_id(obs_subject_id, append_name)
-            obs_rows.append(metadata.to_obs_dict(obs_id, obs_subject_id, series_type))
+        for i, (path, obs_subject_id, metadata, series_type) in enumerate(metadata_list):
+            obs_rows.append(metadata.to_obs_dict(resolved_obs_ids[i], obs_subject_id, series_type))
 
         obs_df = pd.DataFrame(obs_rows)
         existing_columns = set(self.obs.columns)
@@ -760,6 +783,7 @@ class VolumeCollection:
         new_count = start_index + len(niftis)
         with tiledb.Group(self.uri, "w", ctx=effective_ctx) as grp:
             grp.meta["n_volumes"] = new_count
+        log.info("Appended %d volumes, total now %d", len(niftis), new_count)
 
     def _append_dicoms(
         self,
@@ -783,26 +807,30 @@ class VolumeCollection:
 
             # Only validate dimensions if collection has uniform shape requirement
             if self.is_uniform and shape != self.shape:
-                raise ValueError(
+                raise ShapeError(
                     f"Dimension mismatch: {path.name} has shape {shape}, expected {self.shape}"
                 )
 
             metadata_list.append((path, obs_subject_id, metadata))
 
-        # Check for duplicate obs_ids
+        # Generate obs_ids, auto-indexing acquisitions when subjects repeat
         existing_obs_ids = set(self.obs_ids)
         append_name = self.name or "volume"
-        new_obs_ids = {generate_obs_id(sid, append_name) for _, sid, meta in metadata_list}
-        duplicates = existing_obs_ids & new_obs_ids
-        if duplicates:
-            raise ValueError(f"obs_ids already exist: {sorted(duplicates)[:5]}")
+        resolved_obs_ids: list[str] = []
+        for _, obs_subject_id, _ in metadata_list:
+            obs_id = generate_obs_id(obs_subject_id, append_name)
+            acq_idx = 0
+            while obs_id in existing_obs_ids:
+                acq_idx += 1
+                obs_id = generate_obs_id(obs_subject_id, append_name, acquisition_index=acq_idx)
+            existing_obs_ids.add(obs_id)
+            resolved_obs_ids.append(obs_id)
 
         # Write volumes
-        def write_volume(args: tuple[int, Path, str, DicomMetadata]) -> WriteResult:
-            idx, path, obs_subject_id, metadata = args
+        def write_volume(args: tuple[int, Path, str, DicomMetadata, str]) -> WriteResult:
+            idx, path, obs_subject_id, metadata, obs_id = args
             worker_ctx = ctx_for_threads(self._ctx)
             volume_uri = f"{self.uri}/volumes/{idx}"
-            obs_id = generate_obs_id(obs_subject_id, append_name)
             try:
                 vol = Volume.from_dicom(volume_uri, path, ctx=worker_ctx, reorient=reorient)
                 vol.set_obs_id(obs_id)
@@ -811,7 +839,8 @@ class VolumeCollection:
                 return WriteResult(idx, volume_uri, obs_id, success=False, error=e)
 
         write_args = [
-            (start_index + i, path, sid, meta) for i, (path, sid, meta) in enumerate(metadata_list)
+            (start_index + i, path, sid, meta, resolved_obs_ids[i])
+            for i, (path, sid, meta) in enumerate(metadata_list)
         ]
         results = _write_volumes_parallel(
             write_volume, write_args, progress, f"Writing {self.name or 'volumes'}"
@@ -824,9 +853,8 @@ class VolumeCollection:
 
         # Build and write obs rows
         obs_rows: list[dict] = []
-        for path, obs_subject_id, metadata in metadata_list:
-            obs_id = generate_obs_id(obs_subject_id, append_name)
-            obs_rows.append(metadata.to_obs_dict(obs_id, obs_subject_id))
+        for i, (path, obs_subject_id, metadata) in enumerate(metadata_list):
+            obs_rows.append(metadata.to_obs_dict(resolved_obs_ids[i], obs_subject_id))
 
         obs_df = pd.DataFrame(obs_rows)
         for col in ["kvp", "exposure", "repetition_time", "echo_time", "magnetic_field_strength"]:
@@ -917,7 +945,7 @@ class VolumeCollection:
                 all_same_shape = True
             elif spatial_shape != first_spatial_shape:
                 if validate_dimensions:
-                    raise ValueError(
+                    raise ShapeError(
                         f"Dimension mismatch: {path.name} has spatial shape {spatial_shape}, "
                         f"expected {first_spatial_shape}"
                     )
@@ -1019,6 +1047,7 @@ class VolumeCollection:
 
         # Write obs data
         write_obs_dataframe(f"{uri}/obs", obs_df, ctx=effective_ctx)
+        log.info("Created VolumeCollection '%s' with %d volumes at %s", name, len(niftis), uri)
 
         return cls(uri, ctx=ctx)
 
@@ -1102,7 +1131,7 @@ class VolumeCollection:
                 all_same_shape = True
             elif shape != first_shape:
                 if validate_dimensions:
-                    raise ValueError(
+                    raise ShapeError(
                         f"Dimension mismatch: {path.name} has shape {shape}, expected {first_shape}"
                     )
                 all_same_shape = False
@@ -1206,6 +1235,7 @@ class VolumeCollection:
 
         # Write obs data
         write_obs_dataframe(f"{uri}/obs", obs_df, ctx=effective_ctx)
+        log.info("Created VolumeCollection '%s' with %d volumes at %s", name, len(dicom_dirs), uri)
 
         return cls(uri, ctx=ctx)
 
@@ -1268,7 +1298,7 @@ class VolumeCollection:
         first_shape = volumes[0][1].shape[:3]
         for obs_id, vol in volumes:
             if vol.shape[:3] != first_shape:
-                raise ValueError(
+                raise ShapeError(
                     f"Volume '{obs_id}' has shape {vol.shape[:3]}, expected {first_shape}"
                 )
 

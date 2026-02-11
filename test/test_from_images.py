@@ -1,4 +1,8 @@
-"""Integration tests for from_images() ingestion with metadata capture."""
+"""Integration tests for from_images() ingestion with metadata capture.
+
+Also covers DicomMetadata, spatial unit parsing, and 4D NIfTI metadata
+(consolidated from test_imaging_metadata.py).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,10 @@ import pytest
 
 from radiobject.imaging_metadata import (
     KNOWN_SERIES_TYPES,
+    DicomMetadata,
+    NiftiMetadata,
+    _get_spatial_units,
+    extract_dicom_metadata,
     extract_nifti_metadata,
     infer_series_type,
 )
@@ -22,60 +30,17 @@ from radiobject.volume_collection import VolumeCollection
 
 
 @pytest.fixture
-def synthetic_nifti_files(temp_dir: Path) -> list[tuple[Path, str]]:
-    """Create synthetic NIfTI files for testing."""
-    niftis = []
-    shape = (32, 32, 16)
-    affine = np.eye(4)
-    affine[0, 0] = 1.0  # 1mm voxel spacing
-    affine[1, 1] = 1.0
-    affine[2, 2] = 2.0  # 2mm slice thickness
-
-    for subject_id in ["sub-01", "sub-02", "sub-03"]:
-        for series_type in ["T1w", "FLAIR"]:
-            data = np.random.rand(*shape).astype(np.float32)
-            img = nib.Nifti1Image(data, affine)
-
-            # Set header fields
-            img.header.set_qform(affine, code=1)
-            img.header.set_sform(affine, code=1)
-
-            filename = f"{subject_id}_{series_type}.nii.gz"
-            filepath = temp_dir / filename
-            nib.save(img, filepath)
-            niftis.append((filepath, subject_id))
-
-    return niftis
-
-
-@pytest.fixture
-def synthetic_nifti_images(
-    synthetic_nifti_files: list[tuple[Path, str]],
-) -> dict[str, list[tuple[Path, str]]]:
-    """Convert synthetic_nifti_files to images dict format grouped by series type."""
-    images: dict[str, list[tuple[Path, str]]] = {"T1w": [], "FLAIR": []}
-    for path, subject_id in synthetic_nifti_files:
-        if "T1w" in path.name:
-            images["T1w"].append((path, subject_id))
-        elif "FLAIR" in path.name:
-            images["FLAIR"].append((path, subject_id))
-    return images
-
-
-@pytest.fixture
 def mismatched_dim_niftis(temp_dir: Path) -> list[tuple[Path, str]]:
     """Create NIfTI files with mismatched dimensions."""
     niftis = []
     affine = np.eye(4)
 
-    # First file: 32x32x16
     data1 = np.random.rand(32, 32, 16).astype(np.float32)
     img1 = nib.Nifti1Image(data1, affine)
     path1 = temp_dir / "sub-01_T1w.nii.gz"
     nib.save(img1, path1)
     niftis.append((path1, "sub-01"))
 
-    # Second file: 64x64x32 (different dimensions)
     data2 = np.random.rand(64, 64, 32).astype(np.float32)
     img2 = nib.Nifti1Image(data2, affine)
     path2 = temp_dir / "sub-02_T1w.nii.gz"
@@ -83,6 +48,203 @@ def mismatched_dim_niftis(temp_dir: Path) -> list[tuple[Path, str]]:
     niftis.append((path2, "sub-02"))
 
     return niftis
+
+
+# ----- Spatial Unit Parsing Tests -----
+
+
+class TestSpatialUnitParsing:
+    """Tests for _get_spatial_units internal function."""
+
+    def test_millimeters(self):
+        assert _get_spatial_units(2) == "mm"
+
+    def test_meters(self):
+        assert _get_spatial_units(1) == "m"
+
+    def test_micrometers(self):
+        assert _get_spatial_units(3) == "um"
+
+    def test_unknown(self):
+        assert _get_spatial_units(0) == "unknown"
+
+    def test_high_bits_masked(self):
+        """Temporal bits (high nibble) are masked out."""
+        assert _get_spatial_units(0x12) == "mm"
+
+
+# ----- NiftiMetadata Model Tests -----
+
+
+class TestNiftiMetadataModel:
+    """Tests for NiftiMetadata Pydantic model."""
+
+    _BASE = dict(
+        voxel_spacing=(1.0, 1.0, 1.0),
+        datatype=16,
+        bitpix=32,
+        scl_slope=1.0,
+        scl_inter=0.0,
+        xyzt_units=2,
+        spatial_units="mm",
+        qform_code=1,
+        sform_code=1,
+        axcodes="RAS",
+        affine_json="[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]",
+        orientation_source="nifti_sform",
+        source_path="/test.nii",
+    )
+
+    def test_to_obs_dict_serializes_tuples(self):
+        meta = NiftiMetadata(
+            **{**self._BASE, "voxel_spacing": (1.0, 1.0, 2.0), "dimensions": (64, 64, 32)}
+        )
+        obs_dict = meta.to_obs_dict("vol_001", "sub-01", "T1w")
+
+        assert obs_dict["obs_id"] == "vol_001"
+        assert obs_dict["obs_subject_id"] == "sub-01"
+        assert obs_dict["series_type"] == "T1w"
+        assert obs_dict["voxel_spacing"] == "(1.0, 1.0, 2.0)"
+        assert obs_dict["dimensions"] == "(64, 64, 32)"
+
+    def test_model_is_frozen(self):
+        meta = NiftiMetadata(**{**self._BASE, "dimensions": (32, 32, 16)})
+        with pytest.raises(Exception):
+            meta.voxel_spacing = (2.0, 2.0, 2.0)
+
+    def test_spatial_dimensions_property(self):
+        meta_3d = NiftiMetadata(**{**self._BASE, "dimensions": (64, 64, 32)})
+        meta_4d = NiftiMetadata(**{**self._BASE, "dimensions": (64, 64, 32, 200)})
+
+        assert meta_3d.spatial_dimensions == (64, 64, 32)
+        assert meta_4d.spatial_dimensions == (64, 64, 32)
+
+    def test_is_4d_property(self):
+        meta_3d = NiftiMetadata(**{**self._BASE, "dimensions": (64, 64, 32)})
+        meta_4d = NiftiMetadata(**{**self._BASE, "dimensions": (64, 64, 32, 200)})
+
+        assert meta_3d.is_4d is False
+        assert meta_4d.is_4d is True
+
+    def test_to_obs_dict_4d_dimensions(self):
+        meta = NiftiMetadata(
+            **{**self._BASE, "voxel_spacing": (1.0, 1.0, 2.0), "dimensions": (64, 64, 32, 200)}
+        )
+        obs_dict = meta.to_obs_dict("vol_001", "sub-01", "bold")
+        assert obs_dict["dimensions"] == "(64, 64, 32, 200)"
+
+
+# ----- DicomMetadata Model Tests -----
+
+
+class TestDicomMetadataModel:
+    """Tests for DicomMetadata Pydantic model."""
+
+    def test_to_obs_dict_serializes_tuples(self):
+        meta = DicomMetadata(
+            voxel_spacing=(0.5, 0.5, 1.0),
+            dimensions=(512, 512, 150),
+            modality="CT",
+            series_description="Chest CT",
+            kvp=120.0,
+            exposure=250.0,
+            repetition_time=None,
+            echo_time=None,
+            magnetic_field_strength=None,
+            axcodes="RAS",
+            affine_json="[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]",
+            orientation_source="dicom_iop",
+            source_path="/path/to/dicom",
+        )
+
+        obs_dict = meta.to_obs_dict("scan_001", "patient-01")
+
+        assert obs_dict["obs_id"] == "scan_001"
+        assert obs_dict["obs_subject_id"] == "patient-01"
+        assert obs_dict["voxel_spacing"] == "(0.5, 0.5, 1.0)"
+        assert obs_dict["dimensions"] == "(512, 512, 150)"
+        assert obs_dict["modality"] == "CT"
+
+    def test_optional_acquisition_params(self):
+        meta = DicomMetadata(
+            voxel_spacing=(1.0, 1.0, 3.0),
+            dimensions=(256, 256, 50),
+            modality="MR",
+            series_description="Brain T1",
+            kvp=None,
+            exposure=None,
+            repetition_time=2000.0,
+            echo_time=25.0,
+            magnetic_field_strength=3.0,
+            axcodes="LAS",
+            affine_json="[]",
+            orientation_source="dicom_iop",
+            source_path="/test",
+        )
+
+        assert meta.kvp is None
+        assert meta.repetition_time == 2000.0
+        assert meta.magnetic_field_strength == 3.0
+
+
+# ----- Extract DICOM Metadata Tests -----
+
+
+class TestExtractDicomMetadata:
+    """Tests for extract_dicom_metadata function."""
+
+    def test_directory_not_found_raises(self, temp_dir: Path):
+        nonexistent = temp_dir / "does_not_exist"
+        with pytest.raises(FileNotFoundError):
+            extract_dicom_metadata(nonexistent)
+
+    def test_empty_directory_raises(self, temp_dir: Path):
+        empty_dir = temp_dir / "empty_dicom"
+        empty_dir.mkdir()
+        with pytest.raises(ValueError, match="No DICOM files"):
+            extract_dicom_metadata(empty_dir)
+
+    def test_with_real_dicom(self, sample_dicom_series: Path):
+        meta = extract_dicom_metadata(sample_dicom_series)
+
+        assert meta.modality == "CT"
+        assert len(meta.voxel_spacing) == 3
+        assert len(meta.dimensions) == 3
+        assert meta.dimensions[2] > 1
+        assert len(meta.axcodes) == 3
+
+
+# ----- 4D NIfTI Metadata Tests -----
+
+
+class TestNiftiMetadata4D:
+    """Tests for 4D NIfTI metadata handling."""
+
+    def test_extract_nifti_metadata_4d(self, temp_dir: Path):
+        shape_4d = (64, 64, 32, 200)
+        affine = np.eye(4)
+        data = np.zeros(shape_4d, dtype=np.float32)
+        img = nib.Nifti1Image(data, affine)
+        img.header.set_sform(affine, code=1)
+        path = temp_dir / "sub-01_bold.nii.gz"
+        nib.save(img, path)
+
+        meta = extract_nifti_metadata(path)
+        assert meta.dimensions == (64, 64, 32, 200)
+        assert len(meta.dimensions) == 4
+
+    def test_extract_nifti_metadata_3d_no_time(self, temp_dir: Path):
+        shape_3d = (64, 64, 32)
+        affine = np.eye(4)
+        data = np.zeros(shape_3d, dtype=np.float32)
+        img = nib.Nifti1Image(data, affine)
+        img.header.set_sform(affine, code=1)
+        path = temp_dir / "sub-01_T1w.nii.gz"
+        nib.save(img, path)
+
+        meta = extract_nifti_metadata(path)
+        assert meta.dimensions == (64, 64, 32)
+        assert len(meta.dimensions) == 3
 
 
 # ----- Series Type Inference Tests -----
@@ -165,7 +327,6 @@ class TestVolumeCollectionFromNiftis:
     def test_creates_collection(
         self, temp_dir: Path, synthetic_nifti_files: list[tuple[Path, str]]
     ) -> None:
-        # Use only T1w files (same dimensions)
         t1w_files = [(p, s) for p, s in synthetic_nifti_files if "T1w" in str(p)]
         uri = str(temp_dir / "vc_from_niftis")
 
@@ -183,7 +344,6 @@ class TestVolumeCollectionFromNiftis:
         vc = VolumeCollection.from_niftis(uri=uri, niftis=t1w_files)
         obs = vc.obs.read()
 
-        # Check metadata columns exist
         assert "voxel_spacing" in obs.columns
         assert "dimensions" in obs.columns
         assert "axcodes" in obs.columns
@@ -221,12 +381,11 @@ class TestVolumeCollectionFromNiftis:
         t1w_files = [(p, s) for p, s in synthetic_nifti_files if "T1w" in str(p)]
         uri = str(temp_dir / "vc_whitelist")
 
-        # Only allow sub-01 and sub-02
         with pytest.raises(ValueError, match="Invalid obs_subject_ids"):
             VolumeCollection.from_niftis(
                 uri=uri,
                 niftis=t1w_files,
-                valid_subject_ids={"sub-01", "sub-02"},  # Missing sub-03
+                valid_subject_ids={"sub-01", "sub-02"},
             )
 
 
@@ -243,7 +402,6 @@ class TestRadiObjectFromImages:
 
         radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
-        # Should have created T1w and FLAIR collections
         assert "T1w" in radi.collection_names
         assert "FLAIR" in radi.collection_names
         assert radi.n_collections == 2
@@ -255,7 +413,6 @@ class TestRadiObjectFromImages:
 
         radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
-        # Each collection should have 3 volumes (one per subject)
         assert len(radi.T1w) == 3
         assert len(radi.FLAIR) == 3
 
@@ -267,7 +424,7 @@ class TestRadiObjectFromImages:
         radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
         obs_meta = radi.obs_meta.read()
-        assert len(obs_meta) == 3  # 3 subjects
+        assert len(obs_meta) == 3
         assert set(obs_meta["obs_subject_id"]) == {"sub-01", "sub-02", "sub-03"}
 
     def test_user_provided_obs_meta(
@@ -309,14 +466,12 @@ class TestRadiObjectFromImages:
             obs_meta=obs_meta,
         )
 
-        # Should not raise
         radi.validate()
 
     def test_fk_constraint_invalid_raises(
         self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_fk_invalid")
-        # obs_meta only has sub-01, but images include sub-02 and sub-03
         obs_meta = pd.DataFrame(
             {
                 "obs_subject_id": ["sub-01"],
@@ -335,7 +490,6 @@ class TestRadiObjectFromImages:
         self, temp_dir: Path, synthetic_nifti_images: dict[str, list[tuple[Path, str]]]
     ) -> None:
         uri = str(temp_dir / "radi_missing_col")
-        # obs_meta without obs_subject_id column
         obs_meta = pd.DataFrame(
             {
                 "patient_id": ["sub-01", "sub-02", "sub-03"],
@@ -381,7 +535,6 @@ class TestRadiObjectValidation:
 
         radi = RadiObject.from_images(uri=uri, images=synthetic_nifti_images)
 
-        # Should not raise
         radi.validate()
 
 
@@ -394,19 +547,15 @@ class TestFromImagesWithRealData:
     def test_from_real_nifti_4d(
         self, temp_dir: Path, nifti_4d_path: Path, nifti_manifest: list[dict]
     ) -> None:
-        """Test with real 4D BraTS data - extract single channel."""
-        # Load 4D data and extract first channel
         img = nib.load(nifti_4d_path)
         data_4d = np.asarray(img.dataobj, dtype=np.float32)
         data_3d = data_4d[..., 0]
 
-        # Create temp NIfTI with single channel
         affine = img.affine
         new_img = nib.Nifti1Image(data_3d, affine)
         nifti_path = temp_dir / "BRATS_001_flair.nii.gz"
         nib.save(new_img, nifti_path)
 
-        # Create VolumeCollection
         uri = str(temp_dir / "vc_real")
         vc = VolumeCollection.from_niftis(
             uri=uri,
@@ -415,9 +564,7 @@ class TestFromImagesWithRealData:
 
         assert len(vc) == 1
         obs = vc.obs.read()
-        # Dimensions are stored as a tuple-string in the obs DataFrame
         assert "dimensions" in obs.columns
-        # Verify shape is captured (stored as string representation of tuple)
         dims_str = str(obs.iloc[0]["dimensions"])
         assert str(data_3d.shape[0]) in dims_str
         assert str(data_3d.shape[1]) in dims_str
@@ -454,12 +601,10 @@ def multi_modality_dirs(temp_dir: Path) -> dict[str, Path]:
     affine = np.eye(4)
 
     for subject_id in ["sub-01", "sub-02", "sub-03"]:
-        # CT images
         data = np.random.rand(*shape).astype(np.float32)
         img = nib.Nifti1Image(data, affine)
         nib.save(img, images_dir / f"{subject_id}.nii.gz")
 
-        # Segmentation labels
         seg = np.random.randint(0, 4, shape, dtype=np.int16)
         seg_img = nib.Nifti1Image(seg, affine)
         nib.save(seg_img, labels_dir / f"{subject_id}.nii.gz")
@@ -471,7 +616,6 @@ class TestFromNiftis4D:
     """Tests for 4D NIfTI volume ingestion."""
 
     def test_ingest_4d_nifti_preserves_shape(self, temp_dir: Path):
-        """4D NIfTI ingested via VolumeCollection.from_niftis() preserves full shape."""
         shape_4d = (64, 64, 32, 200)
         affine = np.eye(4)
         data = np.random.rand(*shape_4d).astype(np.float32)
@@ -484,25 +628,22 @@ class TestFromNiftis4D:
         vc = VolumeCollection.from_niftis(uri=uri, niftis=[(path, "sub-01")])
 
         assert len(vc) == 1
-        assert vc.shape == (64, 64, 32)  # Collection shape is spatial only
+        assert vc.shape == (64, 64, 32)
         vol = vc.iloc[0]
-        assert vol.shape == (64, 64, 32, 200)  # Volume shape is full 4D
+        assert vol.shape == (64, 64, 32, 200)
 
         obs = vc.obs.read()
         assert "(64, 64, 32, 200)" in str(obs.iloc[0]["dimensions"])
 
     def test_mixed_3d_4d_same_spatial_shape(self, temp_dir: Path):
-        """3D and 4D volumes with same spatial grid coexist in one collection."""
         affine = np.eye(4)
 
-        # 3D volume
         data_3d = np.random.rand(64, 64, 32).astype(np.float32)
         img_3d = nib.Nifti1Image(data_3d, affine)
         img_3d.header.set_sform(affine, code=1)
         path_3d = temp_dir / "sub-01_bold.nii.gz"
         nib.save(img_3d, path_3d)
 
-        # 4D volume with same spatial grid
         data_4d = np.random.rand(64, 64, 32, 100).astype(np.float32)
         img_4d = nib.Nifti1Image(data_4d, affine)
         img_4d.header.set_sform(affine, code=1)
@@ -520,7 +661,6 @@ class TestFromNiftis4D:
         assert vc.shape == (64, 64, 32)
 
     def test_4d_dimension_validation_uses_spatial(self, temp_dir: Path):
-        """Two 4D volumes with same spatial dims but different time dims pass validation."""
         affine = np.eye(4)
 
         data_a = np.random.rand(64, 64, 32, 100).astype(np.float32)
@@ -552,7 +692,6 @@ class TestImagesDictAPI:
     def test_images_with_directories(
         self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
     ) -> None:
-        """Test images dict with directory paths."""
         uri = str(temp_dir / "radi_images_dirs")
 
         radi = RadiObject.from_images(
@@ -571,7 +710,6 @@ class TestImagesDictAPI:
     def test_images_with_glob_patterns(
         self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
     ) -> None:
-        """Test images dict with glob patterns."""
         uri = str(temp_dir / "radi_images_globs")
 
         radi = RadiObject.from_images(
@@ -590,7 +728,6 @@ class TestImagesDictAPI:
     def test_images_with_pre_resolved_list(
         self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
     ) -> None:
-        """Test images dict with pre-resolved (path, subject_id) tuples."""
         uri = str(temp_dir / "radi_images_list")
 
         images_dir = multi_modality_dirs["images"]
@@ -616,7 +753,6 @@ class TestImagesDictAPI:
         assert "patient-002" in radi.obs_subject_ids
 
     def test_images_empty_dict_raises(self, temp_dir: Path) -> None:
-        """Error when images dict is empty."""
         uri = str(temp_dir / "radi_empty_images")
 
         with pytest.raises(ValueError, match="images dict cannot be empty"):
@@ -625,10 +761,8 @@ class TestImagesDictAPI:
     def test_validate_alignment_passes(
         self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
     ) -> None:
-        """Alignment validation passes when subjects match."""
         uri = str(temp_dir / "radi_align_pass")
 
-        # Should not raise - subjects are aligned
         radi = RadiObject.from_images(
             uri=uri,
             images={
@@ -643,8 +777,6 @@ class TestImagesDictAPI:
     def test_validate_alignment_fails_mismatch(
         self, temp_dir: Path, multi_modality_dirs: dict[str, Path]
     ) -> None:
-        """Alignment validation fails when subjects don't match."""
-        # Add extra file to labels only
         labels_dir = multi_modality_dirs["labels"]
         extra_seg = np.random.randint(0, 4, (32, 32, 16), dtype=np.int16)
         extra_img = nib.Nifti1Image(extra_seg, np.eye(4))

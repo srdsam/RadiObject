@@ -262,35 +262,3 @@ class TestEagerMapBatches:
         result = populated_collection.map_batches(batch_fn, batch_size=2)
         assert isinstance(result, EagerQuery)
         assert len(result) == len(populated_collection)
-
-
-class TestVolumeCollectionViewMethods:
-    """Tests for VolumeCollection convenience filter methods that return views."""
-
-    def test_head_returns_view(self, populated_collection_module: VolumeCollection):
-        """head() returns a VolumeCollection view, not LazyQuery."""
-        result = populated_collection_module.head(2)
-        assert isinstance(result, VolumeCollection)
-        assert result.is_view
-        assert len(result) == 2
-
-    def test_tail_returns_view(self, populated_collection_module: VolumeCollection):
-        """tail() returns a VolumeCollection view."""
-        result = populated_collection_module.tail(1)
-        assert isinstance(result, VolumeCollection)
-        assert result.is_view
-        assert len(result) == 1
-
-    def test_sample_returns_view(self, populated_collection_module: VolumeCollection):
-        """sample() returns a VolumeCollection view."""
-        result = populated_collection_module.sample(2, seed=42)
-        assert isinstance(result, VolumeCollection)
-        assert result.is_view
-        assert len(result) == 2
-
-    def test_filter_returns_view(self, populated_radi_object_module: RadiObject):
-        """filter() returns a VolumeCollection view."""
-        vc = populated_radi_object_module.T1w
-        result = vc.head(2)
-        assert isinstance(result, VolumeCollection)
-        assert result.is_view

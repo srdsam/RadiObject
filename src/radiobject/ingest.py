@@ -8,6 +8,8 @@ from enum import Enum
 from glob import glob
 from pathlib import Path
 
+from radiobject.exceptions import IngestError
+
 
 class ImageFormat(Enum):
     """Supported medical image formats."""
@@ -61,7 +63,7 @@ def detect_format(
             return ImageFormat.NIFTI
         if first_path.is_dir():
             return ImageFormat.DICOM
-        raise ValueError(
+        raise IngestError(
             f"Cannot detect format from pre-resolved path: {first_path}. "
             "Use format_hint to specify explicitly."
         )
@@ -72,7 +74,7 @@ def detect_format(
     if any(c in source_str for c in "*?["):
         if ".nii" in source_str.lower():
             return ImageFormat.NIFTI
-        raise ValueError(
+        raise IngestError(
             f"Cannot detect format from glob pattern: {source_str}. "
             "Use format_hint to specify explicitly."
         )
@@ -102,13 +104,13 @@ def detect_format(
                 if non_hidden:
                     return ImageFormat.DICOM
 
-        raise ValueError(
+        raise IngestError(
             f"Cannot detect format from directory: {path}. "
             "No .nii/.nii.gz files found, and no DICOM subdirectories detected. "
             "Use format_hint to specify explicitly."
         )
 
-    raise ValueError(
+    raise IngestError(
         f"Cannot detect format from path: {path}. " "Use format_hint to specify explicitly."
     )
 
@@ -133,7 +135,7 @@ def discover_nifti_pairs(
         image_files = sorted(image_dir.glob(alt_pattern))
 
     if not image_files:
-        raise ValueError(f"No NIfTI files found in {image_dir} with pattern {pattern}")
+        raise IngestError(f"No NIfTI files found in {image_dir} with pattern {pattern}")
 
     label_lookup: dict[str, Path] = {}
     if label_dir is not None:
@@ -182,7 +184,7 @@ def resolve_nifti_source(
     if any(c in source_str for c in "*?["):
         matched = sorted(glob(source_str, recursive=True))
         if not matched:
-            raise ValueError(f"No files matched pattern: {source}")
+            raise IngestError(f"No files matched pattern: {source}")
         return [(Path(f), subject_id_fn(Path(f))) for f in matched]
 
     sources = discover_nifti_pairs(source)
@@ -205,7 +207,7 @@ def resolve_dicom_source(
     source_str = str(source)
 
     if any(c in source_str for c in "*?["):
-        raise ValueError(
+        raise IngestError(
             f"Glob patterns are not supported for DICOM sources: {source_str}. "
             "Provide a directory or pre-resolved list of (path, subject_id) tuples."
         )
@@ -221,7 +223,7 @@ def resolve_dicom_source(
 
     subdirs = sorted(d for d in path.iterdir() if d.is_dir())
     if not subdirs:
-        raise ValueError(
+        raise IngestError(
             f"No subdirectories found in DICOM source: {path}. "
             "Each subdirectory should contain one DICOM series."
         )

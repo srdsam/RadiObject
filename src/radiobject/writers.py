@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -12,7 +13,10 @@ import tiledb
 from radiobject._types import AttrValue
 from radiobject.ctx import get_tiledb_ctx
 from radiobject.dataframe import Dataframe
+from radiobject.exceptions import AlignmentError, SchemaError, ShapeError, StorageError
 from radiobject.volume import Volume
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from radiobject.radi_object import RadiObject
@@ -61,7 +65,7 @@ class VolumeCollectionWriter:
     def __enter__(self) -> VolumeCollectionWriter:
         """Initialize the VolumeCollection structure."""
         if self._initialized:
-            raise RuntimeError("VolumeCollectionWriter already initialized")
+            raise StorageError("VolumeCollectionWriter already initialized")
 
         effective_ctx = self._effective_ctx()
 
@@ -87,6 +91,7 @@ class VolumeCollectionWriter:
             grp.add(obs_uri, name="obs")
 
         self._initialized = True
+        log.info("Initialized VolumeCollectionWriter at %s", self.uri)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -121,6 +126,7 @@ class VolumeCollectionWriter:
             grp.meta["n_volumes"] = self._volume_count
 
         self._finalized = True
+        log.info("Finalized VolumeCollectionWriter: %d volumes written", self._volume_count)
 
     @property
     def n_written(self) -> int:
@@ -143,13 +149,13 @@ class VolumeCollectionWriter:
             **attrs: Additional obs attributes matching obs_schema
         """
         if not self._initialized:
-            raise RuntimeError("VolumeCollectionWriter not initialized. Use as context manager.")
+            raise StorageError("VolumeCollectionWriter not initialized. Use as context manager.")
         if self._finalized:
-            raise RuntimeError("VolumeCollectionWriter already finalized")
+            raise StorageError("VolumeCollectionWriter already finalized")
 
         # Only validate shape if collection requires uniform dimensions
         if self.shape is not None and data.shape[:3] != self.shape:
-            raise ValueError(
+            raise ShapeError(
                 f"Volume shape {data.shape[:3]} doesn't match collection shape {self.shape}"
             )
 
@@ -226,7 +232,7 @@ class RadiObjectWriter:
     def __enter__(self) -> RadiObjectWriter:
         """Initialize the RadiObject structure."""
         if self._initialized:
-            raise RuntimeError("RadiObjectWriter already initialized")
+            raise StorageError("RadiObjectWriter already initialized")
 
         effective_ctx = self._effective_ctx()
 
@@ -284,9 +290,9 @@ class RadiObjectWriter:
             df: DataFrame with obs_subject_id column.
         """
         if not self._initialized:
-            raise RuntimeError("RadiObjectWriter not initialized. Use as context manager.")
+            raise StorageError("RadiObjectWriter not initialized. Use as context manager.")
         if "obs_subject_id" not in df.columns:
-            raise ValueError("DataFrame must contain 'obs_subject_id' column")
+            raise SchemaError("DataFrame must contain 'obs_subject_id' column")
 
         effective_ctx = self._effective_ctx()
         obs_meta_uri = f"{self.uri}/obs_meta"
@@ -319,9 +325,9 @@ class RadiObjectWriter:
             VolumeCollectionWriter context manager for writing volumes
         """
         if not self._initialized:
-            raise RuntimeError("RadiObjectWriter not initialized. Use as context manager.")
+            raise StorageError("RadiObjectWriter not initialized. Use as context manager.")
         if self._finalized:
-            raise RuntimeError("RadiObjectWriter already finalized")
+            raise StorageError("RadiObjectWriter already finalized")
         if name in self._collection_names:
             raise ValueError(f"Collection '{name}' already added")
 
@@ -382,7 +388,7 @@ class _ManagedCollectionWriter(VolumeCollectionWriter):
     ) -> None:
         """Write a volume, checking obs_id uniqueness across all collections."""
         if obs_id in self._parent._all_obs_ids:
-            raise ValueError(
+            raise AlignmentError(
                 f"obs_id '{obs_id}' already exists in RadiObject. "
                 f"obs_id must be unique across all collections."
             )

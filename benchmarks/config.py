@@ -7,7 +7,7 @@ from pathlib import Path
 S3_REGION = "us-east-2"
 
 # AWS profile for S3 access (set None to use default credentials)
-AWS_PROFILE = "souzy-s3"
+AWS_PROFILE = None  # Set via env: eval $(aws configure export-credentials --profile <your-profile> --format env)
 
 # S3 bucket for remote benchmarks
 S3_BUCKET = "souzy-scratch"

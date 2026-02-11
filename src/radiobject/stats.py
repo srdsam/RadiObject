@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from types import TracebackType
 
 import tiledb
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,8 +85,8 @@ class TileDBStats:
         """Capture stats and disable collection."""
         try:
             self._raw_stats = tiledb.stats_dump(json=True)
-        except (IndexError, Exception):
-            # TileDB stats_dump can fail if no operations were performed
+        except (IndexError, tiledb.TileDBError):
+            log.debug("TileDB stats_dump returned no data")
             self._raw_stats = "{}"
         finally:
             tiledb.stats_disable()
@@ -101,71 +104,30 @@ class TileDBStats:
             return {}
 
     def cache_stats(self) -> CacheStats:
-        """Parse cache statistics from TileDB stats dump.
-
-        Note:
-            Counter names may vary between TileDB versions.
-            Falls back to 0 if counter not found.
-        """
+        """Parse cache statistics from TileDB stats dump."""
         counters = self._get_counters()
-
-        # TileDB 2.x counter names (may vary by version)
-        # Try multiple possible counter names for compatibility
-        cache_hits = (
-            counters.get("Context.StorageManager.Query.Reader.cache_lru_read_hits", 0)
-            or counters.get("cache_lru_read_hits", 0)
-            or counters.get("tile_cache_hits", 0)
-        )
-        cache_misses = (
-            counters.get("Context.StorageManager.Query.Reader.cache_lru_read_misses", 0)
-            or counters.get("cache_lru_read_misses", 0)
-            or counters.get("tile_cache_misses", 0)
-        )
-        tile_bytes = counters.get(
-            "Context.StorageManager.Query.Reader.num_tile_bytes_read", 0
-        ) or counters.get("num_tile_bytes_read", 0)
-        vfs_bytes = counters.get("Context.StorageManager.VFS.read_total_bytes", 0) or counters.get(
-            "vfs_read_total_bytes", 0
-        )
-
         return CacheStats(
-            cache_hits=cache_hits,
-            cache_misses=cache_misses,
-            tile_bytes_read=tile_bytes,
-            vfs_read_bytes=vfs_bytes,
+            cache_hits=counters.get(
+                "Context.subSubarray.precompute_tile_overlap.tile_overlap_cache_hit", 0
+            ),
+            cache_misses=0,
+            tile_bytes_read=counters.get("Context.Query.Reader.read_unfiltered_byte_num", 0),
+            vfs_read_bytes=counters.get("Context.VFS.read_byte_num", 0),
         )
 
     def s3_stats(self) -> S3Stats:
         """Parse S3/VFS statistics.
 
         Note:
-            These counters are only populated for S3 operations.
-            Local filesystem operations will show zeros.
+            Local filesystem operations will show zeros for S3-specific counters.
         """
         counters = self._get_counters()
-
-        read_ops = counters.get("Context.StorageManager.VFS.read_ops", 0) or counters.get(
-            "vfs_read_ops", 0
-        )
-        parallel_reads = counters.get(
-            "Context.StorageManager.VFS.read_ops_parallelized", 0
-        ) or counters.get("vfs_read_ops_parallelized", 0)
-        write_ops = counters.get("Context.StorageManager.VFS.write_ops", 0) or counters.get(
-            "vfs_write_ops", 0
-        )
-        bytes_read = counters.get("Context.StorageManager.VFS.read_total_bytes", 0) or counters.get(
-            "vfs_read_total_bytes", 0
-        )
-        bytes_written = counters.get(
-            "Context.StorageManager.VFS.write_total_bytes", 0
-        ) or counters.get("vfs_write_total_bytes", 0)
-
         return S3Stats(
-            read_ops=read_ops,
-            parallelized_reads=parallel_reads,
-            write_ops=write_ops,
-            total_bytes_read=bytes_read,
-            total_bytes_written=bytes_written,
+            read_ops=counters.get("Context.VFS.read_ops_num", 0),
+            parallelized_reads=0,
+            write_ops=counters.get("Context.VFS.write_ops_num", 0),
+            total_bytes_read=counters.get("Context.VFS.read_byte_num", 0),
+            total_bytes_written=counters.get("Context.VFS.write_byte_num", 0),
         )
 
     def all_counters(self) -> dict:
@@ -174,3 +136,15 @@ class TileDBStats:
         Useful for debugging and discovering available counter names.
         """
         return self._get_counters()
+
+    def counters(self) -> dict[str, int]:
+        """Return TileDB counters with user-friendly names (no internal prefixes)."""
+        raw = self._get_counters()
+        cleaned: dict[str, int] = {}
+        for key, value in raw.items():
+            # Strip internal TileDB path prefixes like "Context.StorageManager.Query.Reader."
+            short_key = key.rsplit(".", 1)[-1] if "." in key else key
+            # Deduplicate: prefer the qualified (longer) value when names collide
+            if short_key not in cleaned:
+                cleaned[short_key] = value
+        return cleaned

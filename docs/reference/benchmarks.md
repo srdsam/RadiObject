@@ -1,6 +1,6 @@
 # Benchmarks
 
-> RadiObject enables **200-660x faster** partial reads and native S3 access.
+> RadiObject enables **200-560x faster** partial reads and native S3 access.
 
 ![Benchmark overview](../assets/benchmarks/benchmark_hero.png)
 
@@ -14,16 +14,19 @@
 
 | framework   | scenario | tiling    | time_ms | cpu_pct | heap_mb |
 |-------------|----------|-----------|---------|---------|---------|
-| RadiObject  | local    | isotropic | 107     | 66      | 304     |
-| nibabel     | local    | -         | 32      | 34      | 608     |
-| numpy       | local    | -         | 40      | 43      | 608     |
-| nibabel     | local    | gzip      | 416     | 15      | 912     |
-| RadiObject  | local    | axial     | 796     | 67      | 304     |
-| TorchIO     | local    | -         | 713     | 21      | 304     |
-| MONAI       | local    | -         | 1078    | 10      | 608     |
-| RadiObject  | s3       | axial     | 8261    | 18      | 304     |
+| RadiObject  | local    | isotropic | 99      | 62      | 304     |
+| nibabel     | local    | -         | 33      | 31      | 608     |
+| numpy       | local    | -         | 42      | 38      | 608     |
+| nibabel     | local    | gzip      | 418     | 24      | 912     |
+| RadiObject  | local    | axial     | 705     | 40      | 304     |
+| TorchIO     | local    | -         | 716     | 38      | 304     |
+| MONAI       | local    | -         | 1028    | 26      | 608     |
+| RadiObject  | s3       | axial     | 26256   | 16      | 304     |
+| zarr        | local    | axial     | 49      | 51      | 146     |
+| zarr        | local    | isotropic | 22      | 59      | 177     |
+| zarr        | s3       | axial     | 1351    | 34      | 142     |
 
-RadiObject isotropic (107ms) is competitive with raw nibabel (32ms) while enabling random access.
+RadiObject isotropic (99ms) is competitive with raw nibabel (33ms) while enabling random access. Zarr full volume loads are fast (22-49ms local) due to lightweight metadata, but lack RadiObject's integrated metadata and caching layer.
 
 See [Performance: Why Full Volume is Slower](../explanation/performance.md#why-full-volume-is-slower-than-raw-nifti) for interpretation.
 
@@ -36,12 +39,14 @@ See [Performance: Why Full Volume is Slower](../explanation/performance.md#why-f
 | method              | scenario | tiling    | time_ms   |
 |---------------------|----------|-----------|-----------|
 | RadiObject          | local    | axial     | **3.4**   |
+| zarr                | local    | axial     | 1.4       |
 | RadiObject          | local    | isotropic | 24        |
-| RadiObject          | s3       | axial     | 158       |
-| MONAI               | local    | -         | 1053      |
+| RadiObject          | s3       | axial     | 203       |
+| zarr                | s3       | axial     | 93        |
+| MONAI               | local    | -         | 1115      |
 | TorchIO             | local    | -         | 731       |
 
-**310x faster** than MONAI, **215x faster** than TorchIO for axial slices.
+Both chunked formats achieve sub-5ms local slice extraction. Zarr's lower overhead gives a slight edge for individual slices, while RadiObject's caching benefits repeated access.
 
 See [Performance: Why Axial Tiling Gives 200-600x Speedup](../explanation/performance.md#why-axial-tiling-gives-200-600x-speedup-for-slices) for interpretation.
 
@@ -53,13 +58,15 @@ See [Performance: Why Axial Tiling Gives 200-600x Speedup](../explanation/perfor
 
 | method              | scenario | tiling    | time_ms   |
 |---------------------|----------|-----------|-----------|
-| RadiObject          | local    | isotropic | **1.6**   |
+| RadiObject          | local    | isotropic | **2.0**   |
+| zarr                | local    | isotropic | 2.9       |
 | RadiObject          | local    | axial     | 20        |
-| RadiObject          | s3       | isotropic | 142       |
-| MONAI               | local    | -         | 1022      |
-| TorchIO             | local    | -         | 722       |
+| RadiObject          | s3       | isotropic | 238       |
+| zarr                | s3       | isotropic | 63        |
+| MONAI               | local    | -         | 1106      |
+| TorchIO             | local    | -         | 739       |
 
-**639x faster** than MONAI, **451x faster** than TorchIO for isotropic 64^3 ROIs.
+**559x faster** than MONAI, **374x faster** than TorchIO for isotropic 64^3 ROIs. RadiObject and Zarr are comparable for local 3D partial reads.
 
 See [Performance: Why Isotropic is Best for 3D Patches](../explanation/performance.md#why-isotropic-is-best-for-3d-patches) for interpretation.
 
@@ -71,12 +78,14 @@ See [Performance: Why Isotropic is Best for 3D Patches](../explanation/performan
 
 ![Speedup vs TorchIO](../assets/benchmarks/speedup_vs_torchio.png)
 
-| operation | monai_ms | torchio_ms | radiobject_ms | vs_monai | vs_torchio |
-|-----------|----------|------------|---------------|----------|------------|
-| slice_2d  | 1053     | 731        | 3.4           | 310x     | 215x       |
-| roi_3d    | 1022     | 722        | 1.6           | 639x     | 451x       |
+![Speedup vs Zarr](../assets/benchmarks/speedup_vs_zarr.png)
 
-MONAI and TorchIO must load the full volume for any access pattern. RadiObject reads only the tiles needed.
+| operation | monai_ms | torchio_ms | zarr_ms | radiobject_ms | vs_monai | vs_torchio | vs_zarr |
+|-----------|----------|------------|---------|---------------|----------|------------|---------|
+| slice_2d  | 1115     | 731        | 1.4     | 3.4           | 325x     | 213x       | 0.4x    |
+| roi_3d    | 1106     | 739        | 2.9     | 2.0           | 559x     | 374x       | 1.5x    |
+
+MONAI and TorchIO must load the full volume for any access pattern. RadiObject and Zarr both read only the chunks/tiles needed. RadiObject adds integrated metadata, caching, and S3 VFS — Zarr is a raw array format.
 
 ---
 
@@ -84,14 +93,20 @@ MONAI and TorchIO must load the full volume for any access pattern. RadiObject r
 
 | framework   | operation   | scenario | tiling    | time_ms   |
 |-------------|-------------|----------|-----------|-----------|
-| RadiObject  | full_volume | local    | axial     | 796       |
-| RadiObject  | full_volume | s3       | axial     | 8261      |
+| RadiObject  | full_volume | local    | axial     | 705       |
+| RadiObject  | full_volume | s3       | axial     | 26256     |
 | RadiObject  | slice_2d    | local    | axial     | 3.4       |
-| RadiObject  | slice_2d    | s3       | axial     | 158       |
-| RadiObject  | roi_3d      | local    | isotropic | 1.6       |
-| RadiObject  | roi_3d      | s3       | isotropic | 142       |
+| RadiObject  | slice_2d    | s3       | axial     | 203       |
+| RadiObject  | roi_3d      | local    | isotropic | 2.0       |
+| RadiObject  | roi_3d      | s3       | isotropic | 238       |
+| zarr        | full_volume | local    | axial     | 49        |
+| zarr        | full_volume | s3       | axial     | 1351      |
+| zarr        | slice_2d    | local    | axial     | 1.4       |
+| zarr        | slice_2d    | s3       | axial     | 93        |
+| zarr        | roi_3d      | local    | isotropic | 2.9       |
+| zarr        | roi_3d      | s3       | isotropic | 63        |
 
-Partial reads on S3 (142-158ms) are **52-58x faster** than full volume S3 reads (8261ms).
+Partial reads on S3 (203-238ms) are **110-130x faster** than full volume S3 reads (26256ms). Zarr S3 reads via fsspec are faster for individual operations but lack TileDB's VFS-level parallelism for batch access.
 
 See [Performance: Why S3 is ~14x Slower](../explanation/performance.md#why-s3-is-14x-slower-for-full-volumes) for interpretation.
 
@@ -104,12 +119,14 @@ See [Performance: Why S3 is ~14x Slower](../explanation/performance.md#why-s3-is
 | format          | size_gb | compression | partial_read |
 |-----------------|---------|-------------|--------------|
 | NIfTI (.nii.gz) | 2.1     | 2.84x       | No           |
-| NIfTI (.nii)    | 6.7     | 0.91x       | No           |
-| NumPy (.npy)    | 13.4    | 0.46x       | No           |
-| TileDB (axial)  | 6.2     | 0.98x       | Yes          |
-| TileDB (iso)    | 5.7     | 1.06x       | Yes          |
+| NIfTI (.nii)    | 6.5     | 0.91x       | No           |
+| NumPy (.npy)    | 13.0    | 0.46x       | No           |
+| TileDB (axial)  | 6.1     | 0.98x       | Yes          |
+| TileDB (iso)    | 5.6     | 1.06x       | Yes          |
+| Zarr (axial)    | 0.2     | 35.8x       | Yes          |
+| Zarr (iso)      | 0.2     | 35.9x       | Yes          |
 
-TileDB uses ~3x more space than gzipped NIfTI, but enables partial reads that are 200-660x faster.
+TileDB uses ~3x more space than gzipped NIfTI, but enables partial reads that are 200-560x faster. Zarr achieves high compression (36x) on sparse medical imaging data (MSD brain tumour) due to low per-chunk overhead with ZSTD.
 
 ---
 
@@ -119,12 +136,23 @@ TileDB uses ~3x more space than gzipped NIfTI, but enables partial reads that ar
 
 | access_pattern | axial_ms | isotropic_ms | best_choice |
 |----------------|----------|--------------|-------------|
-| axial_slice    | **3.1**  | 24           | Axial       |
-| coronal_slice  | 86       | **15**       | Isotropic   |
-| sagittal_slice | 85       | **12**       | Isotropic   |
-| roi_32         | 10       | **1.5**      | Isotropic   |
+| axial_slice    | **3.8**  | 24           | Axial       |
+| coronal_slice  | 85       | **15**       | Isotropic   |
+| sagittal_slice | 83       | **12**       | Isotropic   |
+| roi_32         | 10       | **1.6**      | Isotropic   |
 | roi_64         | 20       | **1.5**      | Isotropic   |
-| roi_128        | 52       | **4.4**      | Isotropic   |
+| roi_128        | 51       | **4.4**      | Isotropic   |
+
+**Zarr Chunking:**
+
+| access_pattern | zarr_axial_ms | zarr_isotropic_ms |
+|----------------|---------------|-------------------|
+| axial_slice    | 1.3           | 7.4               |
+| coronal_slice  | 29            | 6.2               |
+| sagittal_slice | 28            | 6.4               |
+| roi_32         | 6.0           | 2.8               |
+| roi_64         | 12            | 2.9               |
+| roi_128        | 31            | 6.2               |
 
 See [Performance: Tiling Strategy Guide](../explanation/performance.md#tiling-strategy-guide).
 
@@ -147,11 +175,13 @@ Partial reads use minimal memory because only the requested tiles are loaded.
 
 | framework   | ms_per_batch | samples_per_sec | notes                   |
 |-------------|--------------|-----------------|-------------------------|
-| RadiObject  | 34           | 118             | isotropic, local        |
-| TorchIO     | 3086         | 1.3             | local, full volume load |
-| RadiObject  | 6254         | 0.6             | isotropic, S3           |
+| RadiObject  | 31           | 128             | isotropic, local        |
+| zarr        | 29           | 138             | isotropic, local        |
+| TorchIO     | 3306         | 1.2             | local, full volume load |
+| zarr        | 4423         | 0.9             | isotropic, S3           |
+| RadiObject  | 31434        | 0.1             | isotropic, S3           |
 
-RadiObject is **91x faster** than TorchIO for local patch-based training (batch_size=4, patch_size=64^3).
+Zarr and RadiObject achieve comparable local throughput (~128-138 samples/sec). Both are **100x faster** than TorchIO for patch-based training (batch_size=4, patch_size=64^3). On S3, Zarr's fsspec issues async chunk requests more efficiently (0.9 vs 0.1 samples/sec).
 
 ### Patch-Based I/O Reduction
 
@@ -177,14 +207,17 @@ See [Performance: Why Multi-Worker DataLoaders Slow Down](../explanation/perform
 
 ---
 
-## Cache Hit Rates
+## Cache Hit Rates (TileDB)
 
-| access_pattern                | hit_rate |
-|-------------------------------|----------|
-| Sequential (shared context)   | 85-95%   |
-| Random (shared context)       | 60-75%   |
-| Repeated slices (same volume) | 90-99%   |
-| Isolated contexts             | 0%       |
+TileDB maintains a built-in LRU tile cache within its context object. Zarr v3 has **no built-in chunk cache** — it relies on OS page cache for local reads and has no caching for S3. This is a key TileDB advantage for workloads with repeated or overlapping access patterns.
+
+| access_pattern                | tiledb_hit_rate | zarr  |
+|-------------------------------|-----------------|-------|
+| Sequential (shared context)   | 85-95%          | OS page cache only |
+| Random (shared context)       | 60-75%          | OS page cache only |
+| Repeated slices (same volume) | 90-99%          | OS page cache only |
+| S3 repeated access            | 85-95%          | No cache (re-fetches) |
+| Isolated contexts             | 0%              | 0%    |
 
 ---
 
@@ -230,7 +263,8 @@ The benchmarks compare **I/O performance only**. Use RadiObject for data loading
 ## Running Benchmarks
 
 ```bash
-eval $(aws configure export-credentials --profile souzy-s3 --format env)
+# Export AWS credentials for S3 benchmarks (use your own profile)
+eval $(aws configure export-credentials --profile <your-profile> --format env)
 python benchmarks/run_experiments.py --all
 ```
 

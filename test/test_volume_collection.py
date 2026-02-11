@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from radiobject.indexing import Index
+from radiobject.radi_object import RadiObject
 from radiobject.volume import Volume
 from radiobject.volume_collection import VolumeCollection
 
@@ -274,10 +275,6 @@ class TestVolumeCollectionProperties:
         """Shape property returns (X, Y, Z)."""
         assert len(populated_collection_module.shape) == 3
 
-    def test_n_volumes_property(self, populated_collection_module: VolumeCollection):
-        """n_volumes returns volume count."""
-        assert len(populated_collection_module) == 3
-
     def test_len(self, populated_collection_module: VolumeCollection):
         """len(collection) returns volume count."""
         assert len(populated_collection_module) == 3
@@ -423,3 +420,35 @@ class TestVolumeCollectionGroupbySubject:
             assert not all_obs_ids & view_ids
             all_obs_ids |= view_ids
         assert all_obs_ids == set(populated_collection_module.obs_ids)
+
+
+class TestVolumeCollectionViewMethods:
+    """Tests for VolumeCollection convenience filter methods that return views."""
+
+    def test_head_returns_view(self, populated_collection_module: VolumeCollection):
+        """head() returns a VolumeCollection view, not LazyQuery."""
+        result = populated_collection_module.head(2)
+        assert isinstance(result, VolumeCollection)
+        assert result.is_view
+        assert len(result) == 2
+
+    def test_tail_returns_view(self, populated_collection_module: VolumeCollection):
+        """tail() returns a VolumeCollection view."""
+        result = populated_collection_module.tail(1)
+        assert isinstance(result, VolumeCollection)
+        assert result.is_view
+        assert len(result) == 1
+
+    def test_sample_returns_view(self, populated_collection_module: VolumeCollection):
+        """sample() returns a VolumeCollection view."""
+        result = populated_collection_module.sample(2, seed=42)
+        assert isinstance(result, VolumeCollection)
+        assert result.is_view
+        assert len(result) == 2
+
+    def test_filter_returns_view(self, populated_radi_object_module: RadiObject):
+        """filter() returns a VolumeCollection view."""
+        vc = populated_radi_object_module.T1w
+        result = vc.head(2)
+        assert isinstance(result, VolumeCollection)
+        assert result.is_view

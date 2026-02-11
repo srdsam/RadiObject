@@ -17,6 +17,16 @@ from radiobject.ctx import (
     reset_radiobject_config,
 )
 from radiobject.dataframe import Dataframe
+from radiobject.exceptions import (
+    AlignmentError,
+    ConfigurationError,
+    IngestError,
+    RadiObjectError,
+    SchemaError,
+    ShapeError,
+    StorageError,
+    ViewError,
+)
 from radiobject.indexing import Index, align
 from radiobject.ingest import ImageFormat
 from radiobject.query import EagerQuery, LazyQuery
@@ -67,4 +77,13 @@ __all__ = [
     # Utilities
     "uri_exists",
     "delete_tiledb_uri",
+    # Exceptions
+    "RadiObjectError",
+    "ShapeError",
+    "AlignmentError",
+    "StorageError",
+    "ConfigurationError",
+    "SchemaError",
+    "IngestError",
+    "ViewError",
 ]

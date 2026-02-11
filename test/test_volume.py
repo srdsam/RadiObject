@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-import time
 from pathlib import Path
 
 import nibabel as nib
@@ -19,8 +17,6 @@ from radiobject import (
     configure,
     reset_radiobject_config,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class TestVolumeConstruction:
@@ -244,76 +240,3 @@ class TestVolumeCustomContext:
 
         assert vol._ctx is custom_tiledb_ctx
         np.testing.assert_array_almost_equal(vol.to_numpy(), array_3d)
-
-
-class TestVolumePerformance:
-    """Performance tests with timing output. Run with --log-cli-level=INFO to see throughput."""
-
-    def test_write_throughput_3d(self, temp_dir: Path) -> None:
-        shape = (128, 128, 64)
-        data = np.random.rand(*shape).astype(np.float32)
-        size_mb = data.nbytes / (1024 * 1024)
-        uri = str(temp_dir / "perf_write_3d")
-
-        start = time.perf_counter()
-        Volume.from_numpy(uri, data)
-        duration = time.perf_counter() - start
-
-        throughput = size_mb / duration
-        logger.info("Write 3D: %.2f MB in %.3fs (%.2f MB/s)", size_mb, duration, throughput)
-        assert duration < 30
-
-    def test_read_throughput_3d(self, temp_dir: Path) -> None:
-        shape = (128, 128, 64)
-        data = np.random.rand(*shape).astype(np.float32)
-        size_mb = data.nbytes / (1024 * 1024)
-        uri = str(temp_dir / "perf_read_3d")
-        Volume.from_numpy(uri, data)
-        vol = Volume(uri)
-
-        start = time.perf_counter()
-        _ = vol.to_numpy()
-        duration = time.perf_counter() - start
-
-        throughput = size_mb / duration
-        logger.info("Read 3D: %.2f MB in %.3fs (%.2f MB/s)", size_mb, duration, throughput)
-        assert duration < 30
-
-    def test_axial_slice_throughput(self, temp_dir: Path) -> None:
-        shape = (128, 128, 64)
-        data = np.random.rand(*shape).astype(np.float32)
-        uri = str(temp_dir / "perf_slice")
-        Volume.from_numpy(uri, data)
-        vol = Volume(uri)
-        slice_count = 64
-        slice_size_mb = (128 * 128 * 4) / (1024 * 1024)
-
-        start = time.perf_counter()
-        for z in range(slice_count):
-            _ = vol.axial(z)
-        duration = time.perf_counter() - start
-
-        total_mb = slice_size_mb * slice_count
-        throughput = total_mb / duration
-        logger.info(
-            "Axial slices (%dx): %.2f MB in %.3fs (%.2f MB/s)",
-            slice_count,
-            total_mb,
-            duration,
-            throughput,
-        )
-        assert duration < 60
-
-    def test_write_throughput_4d(self, temp_dir: Path) -> None:
-        shape = (128, 128, 64, 4)
-        data = np.random.rand(*shape).astype(np.float32)
-        size_mb = data.nbytes / (1024 * 1024)
-        uri = str(temp_dir / "perf_write_4d")
-
-        start = time.perf_counter()
-        Volume.from_numpy(uri, data)
-        duration = time.perf_counter() - start
-
-        throughput = size_mb / duration
-        logger.info("Write 4D: %.2f MB in %.3fs (%.2f MB/s)", size_mb, duration, throughput)
-        assert duration < 60

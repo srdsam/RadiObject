@@ -6,7 +6,6 @@ Run with: pytest test/test_performance_regression.py -v -m slow
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import TYPE_CHECKING
 
@@ -18,8 +17,6 @@ from radiobject.volume import Volume
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 
 # Mark all tests in this module as slow
@@ -53,15 +50,7 @@ class TestSliceExtractionPerformance:
             times.append(elapsed * 1000)  # Convert to ms
 
         avg_ms = sum(times) / len(times)
-        max_ms = max(times)
 
-        logger.info(
-            "Axial slice: avg=%.1fms, max=%.1fms (threshold: 50ms)",
-            avg_ms,
-            max_ms,
-        )
-
-        # Threshold assertion
         assert avg_ms < 50, f"Axial slice too slow: {avg_ms:.1f}ms avg (threshold: 50ms)"
 
     def test_roi_extraction_under_threshold(self, temp_dir: "Path", array_3d: np.ndarray) -> None:
@@ -99,8 +88,6 @@ class TestSliceExtractionPerformance:
 
         avg_ms = sum(times) / len(times)
 
-        logger.info("64^3 ROI: avg=%.1fms (threshold: 100ms)", avg_ms)
-
         assert avg_ms < 100, f"ROI extraction too slow: {avg_ms:.1f}ms avg (threshold: 100ms)"
 
 
@@ -130,13 +117,6 @@ class TestVolumeIOPerformance:
         avg_time = sum(times) / len(times)
         throughput_mb_s = size_mb / avg_time
 
-        logger.info(
-            "Read throughput: %.1f MB/s (%.1f MB in %.2fs)",
-            throughput_mb_s,
-            size_mb,
-            avg_time,
-        )
-
         assert throughput_mb_s > 50, f"Read throughput too low: {throughput_mb_s:.1f} MB/s"
 
     def test_write_throughput(self, temp_dir: "Path", array_3d: np.ndarray) -> None:
@@ -157,13 +137,6 @@ class TestVolumeIOPerformance:
 
         avg_time = sum(times) / len(times)
         throughput_mb_s = size_mb / avg_time
-
-        logger.info(
-            "Write throughput: %.1f MB/s (%.1f MB in %.2fs)",
-            throughput_mb_s,
-            size_mb,
-            avg_time,
-        )
 
         assert throughput_mb_s > 30, f"Write throughput too low: {throughput_mb_s:.1f} MB/s"
 
@@ -191,16 +164,8 @@ class TestCachePerformance:
 
         cache = stats.cache_stats()
 
-        logger.info(
-            "5 repeated reads: hits=%d, misses=%d, hit_rate=%.1f%%",
-            cache.cache_hits,
-            cache.cache_misses,
-            cache.hit_rate * 100,
-        )
-
-        # Stats should be collected (values may be 0 depending on TileDB config)
-        assert cache.cache_hits >= 0
-        assert cache.cache_misses >= 0
+        # Verify stats were actually collected
+        assert cache.cache_hits + cache.cache_misses > 0
 
 
 class TestMetadataPerformance:
@@ -225,8 +190,6 @@ class TestMetadataPerformance:
 
         avg_ms = sum(times) / len(times)
 
-        logger.info("Volume open + metadata: avg=%.1fms", avg_ms)
-
         assert avg_ms < 100, f"Volume open too slow: {avg_ms:.1f}ms"
 
     def test_shape_access_is_cached(self, temp_dir: "Path", array_3d: np.ndarray) -> None:
@@ -249,7 +212,5 @@ class TestMetadataPerformance:
             times.append(elapsed * 1000)
 
         avg_ms = sum(times) / len(times)
-
-        logger.info("Cached shape access: avg=%.3fms", avg_ms)
 
         assert avg_ms < 1, f"Shape not properly cached: {avg_ms:.3f}ms"

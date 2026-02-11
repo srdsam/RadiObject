@@ -9,6 +9,7 @@ import pandas as pd
 import tiledb
 
 from radiobject.ctx import get_radiobject_config, get_tiledb_ctx
+from radiobject.exceptions import SchemaError
 
 # Default index columns for VolumeCollection.obs (2-dim)
 INDEX_COLUMNS = ("obs_subject_id", "obs_id")
@@ -114,9 +115,9 @@ class Dataframe:
         """Validate column names and types (for non-index attributes)."""
         for name, dtype in schema.items():
             if "\x00" in name:
-                raise ValueError(f"Column name contains null byte: {name!r}")
+                raise SchemaError(f"Column name contains null byte: {name!r}")
             if name in index_columns:
-                raise ValueError(f"Column name conflicts with index column: {name!r}")
+                raise SchemaError(f"Column name conflicts with index column: {name!r}")
             if not isinstance(dtype, np.dtype):
                 try:
                     np.dtype(dtype)
@@ -150,9 +151,9 @@ class Dataframe:
             fill: If provided, write this value to all existing rows.
         """
         if name in self.index_columns:
-            raise ValueError(f"Column name conflicts with index column: {name!r}")
+            raise SchemaError(f"Column name conflicts with index column: {name!r}")
         if name in self.columns:
-            raise ValueError(f"Column {name!r} already exists")
+            raise SchemaError(f"Column {name!r} already exists")
 
         ctx = self._effective_ctx()
         se = tiledb.ArraySchemaEvolution(ctx=ctx)
@@ -175,9 +176,9 @@ class Dataframe:
     def drop_column(self, name: str) -> None:
         """Remove an attribute column from the dataframe."""
         if name in self.index_columns:
-            raise ValueError(f"Cannot drop index column: {name!r}")
+            raise SchemaError(f"Cannot drop index column: {name!r}")
         if name not in self.columns:
-            raise ValueError(f"Column {name!r} does not exist")
+            raise SchemaError(f"Column {name!r} does not exist")
 
         ctx = self._effective_ctx()
         se = tiledb.ArraySchemaEvolution(ctx=ctx)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from functools import cached_property
 from pathlib import Path
@@ -15,6 +16,7 @@ import tiledb
 
 from radiobject.ctx import get_tiledb_ctx
 from radiobject.dataframe import Dataframe
+from radiobject.exceptions import AlignmentError, ViewError
 from radiobject.indexing import Index
 from radiobject.parallel import WriteResult, ctx_for_threads
 from radiobject.utils import (
@@ -32,6 +34,8 @@ from radiobject.volume_collection import (
     _normalize_index,
     _write_volumes_parallel,
 )
+
+log = logging.getLogger(__name__)
 
 
 class _SubjectILocIndexer:
@@ -614,14 +618,14 @@ class RadiObject:
         actual_subject_count = len(obs_meta_data)
         stored_subject_count = self._metadata.get("subject_count", 0)
         if actual_subject_count != stored_subject_count:
-            raise ValueError(
+            raise AlignmentError(
                 f"subject_count mismatch: metadata={stored_subject_count}, actual={actual_subject_count}"
             )
 
         actual_n_collections = len(self.collection_names)
         stored_n_collections = self._metadata.get("n_collections", 0)
         if actual_n_collections != stored_n_collections:
-            raise ValueError(
+            raise AlignmentError(
                 f"n_collections mismatch: metadata={stored_n_collections}, actual={actual_n_collections}"
             )
 
@@ -635,7 +639,7 @@ class RadiObject:
             vc_subject_ids = set(vc_obs["obs_subject_id"])
             orphan_subjects = vc_subject_ids - obs_meta_subject_ids
             if orphan_subjects:
-                raise ValueError(
+                raise AlignmentError(
                     f"Collection '{name}' has obs_subject_ids not in obs_meta: "
                     f"{sorted(orphan_subjects)[:5]}"
                 )
@@ -645,7 +649,7 @@ class RadiObject:
             vc = self.collection(name)
             for obs_id in vc.obs_ids:
                 if obs_id in seen_obs_ids:
-                    raise ValueError(
+                    raise AlignmentError(
                         f"obs_id '{obs_id}' is duplicated across collections: "
                         f"'{seen_obs_ids[obs_id]}' and '{name}'"
                     )
@@ -664,7 +668,7 @@ class RadiObject:
                     continue
                 stored_ids = json.loads(stored_row.iloc[0]["obs_ids"])
                 if sorted(expected_ids) != sorted(stored_ids):
-                    raise ValueError(
+                    raise AlignmentError(
                         f"obs_ids mismatch for subject '{sid}': "
                         f"stored={stored_ids}, expected={expected_ids}"
                     )
@@ -740,7 +744,7 @@ class RadiObject:
     def _check_not_view(self, operation: str) -> None:
         """Raise if attempting to modify a view."""
         if self.is_view:
-            raise ValueError(
+            raise ViewError(
                 f"Cannot {operation} on a view. Call write(uri) first to create "
                 "an attached RadiObject."
             )

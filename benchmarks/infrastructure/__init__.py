@@ -11,10 +11,13 @@ from .storage import (
     create_numpy_from_nifti,
     create_tiledb_datasets,
     create_uncompressed_nifti,
+    create_zarr_array,
     get_directory_size_bytes,
     get_directory_size_mb,
     measure_disk_space,
     prepare_nifti_formats,
+    prepare_zarr_formats,
+    upload_zarr_to_s3,
 )
 from .visualization import (
     COLORBLIND_PALETTE,
@@ -36,9 +39,12 @@ __all__ = [
     "get_directory_size_mb",
     "create_uncompressed_nifti",
     "create_numpy_from_nifti",
+    "create_zarr_array",
     "measure_disk_space",
     "prepare_nifti_formats",
+    "prepare_zarr_formats",
     "create_tiledb_datasets",
+    "upload_zarr_to_s3",
     # Visualization
     "COLORBLIND_PALETTE",
     "plot_bar_comparison",

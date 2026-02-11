@@ -26,6 +26,7 @@ RadiObjectConfig
 │   └── orientation: OrientationConfig (canonical_target, reorient_on_load)
 ├── read: ReadConfig
 │   ├── memory_budget_mb (default: 1024)
+│   ├── tile_cache_size_mb (default: 512) → TileDB LRU tile cache
 │   ├── concurrency (default: 4) → TileDB thread pools
 │   └── max_workers (default: 4) → Python ThreadPoolExecutor
 └── s3: S3Config
@@ -50,7 +51,8 @@ Settings for reading TileDB arrays. Affects all reads.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `memory_budget_mb` | 1024 | TileDB operation memory limit |
+| `memory_budget_mb` | 1024 | Per-query memory limit (`sm.memory_budget`) |
+| `tile_cache_size_mb` | 512 | In-memory LRU tile cache (`sm.tile_cache_size`) |
 | `concurrency` | 4 | TileDB thread pool size (`sm.compute/io_concurrency_level`) |
 | `max_workers` | 4 | Python `ThreadPoolExecutor` workers |
 
@@ -139,6 +141,7 @@ TileDB contexts are thread-safe. Sharing a context across threads enables metada
 | Canonical orientation | `write.orientation.canonical_target` | `RAS` |
 | Reorient on load | `write.orientation.reorient_on_load` | `False` |
 | Memory budget | `read.memory_budget_mb` | 1024 MB |
+| Tile cache | `read.tile_cache_size_mb` | 512 MB |
 | I/O concurrency | `read.concurrency` | 4 threads |
 | Max workers | `read.max_workers` | 4 |
 | S3 parallel ops | `s3.max_parallel_ops` | 8 |

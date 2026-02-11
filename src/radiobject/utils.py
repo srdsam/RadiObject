@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import tiledb
 
+from radiobject.exceptions import SchemaError
+
 if TYPE_CHECKING:
     from radiobject.volume_collection import VolumeCollection
 
@@ -134,7 +136,7 @@ def validate_no_column_collisions(
     collisions = (user_columns - {"obs_id", "obs_subject_id"}) & auto_columns
     if collisions:
         prefix = f"{context}: " if context else ""
-        raise ValueError(
+        raise SchemaError(
             f"{prefix}columns collide with auto-generated imaging metadata: "
             f"{sorted(collisions)}"
         )
