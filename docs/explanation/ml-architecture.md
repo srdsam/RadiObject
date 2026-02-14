@@ -28,7 +28,7 @@ DataLoader (batching, shuffling, multi-process prefetch)
 Training loop
 ```
 
-**Key insight**: PATCH & SLICE_2D mode leverages TileDB's sub-array reads — only the requested voxels are decompressed and transferred. No full volume is loaded into memory.
+**Key insight**: PATCH & SLICE_2D mode leverages TileDB's cloud-native sub-array reads — only the requested voxels are decompressed and transferred. No full volume is loaded into memory.
 
 ## Dataset Types
 

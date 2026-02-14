@@ -76,6 +76,9 @@ Works with local paths or S3 URIs (`s3://bucket/dataset`).
 NIfTI requires decompressing entire volumes; TileDB reads only the tiles needed.
 This enables **200-660x faster** partial reads. [See benchmarks →](docs/reference/benchmarks.md)
 
+TileDB also support the hierachical organisation of arrays (and dataframes) aligned on shared
+indexes to organise large datasets. 
+
 ![Benchmark overview](benchmarks/results/figures/benchmark_hero.png)
 
 ## Sample Data
